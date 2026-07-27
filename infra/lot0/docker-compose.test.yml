@@ -1,0 +1,34 @@
+# Container JETABLE de validation Lot 0 — pas l'image finale de l'app.
+# Objectif : confirmer que la configuration Docker exigee par la spec (section 5) suffit
+# a donner a un container un acces fonctionnel au bus D-Bus systeme de l'hote / BlueZ,
+# meme sans dongle Bluetooth branche.
+#
+# Approche par defaut : capabilities fines (NET_ADMIN + NET_RAW) + network_mode host,
+# preferee a --privileged (moins large). Si le test dbus-send timeout ou echoue avec
+# "Failed to connect to bus", decommenter le bloc "privileged: true" en bas et retester.
+
+services:
+  bluetooth-test:
+    image: debian:bookworm-slim
+    container_name: stroyplant-lot0-test
+    network_mode: host
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    volumes:
+      - /var/run/dbus/system_bus_socket:/var/run/dbus/system_bus_socket
+    # privileged: true   # <- alternative a decommenter (avec cap_add/volumes ci-dessus conserves) si le test echoue
+    command: >
+      bash -c "
+      set -e &&
+      apt-get update -qq &&
+      apt-get install -y -qq --no-install-recommends bluez dbus >/dev/null &&
+      echo '=== bluetoothctl version (container) ===' &&
+      bluetoothctl --version &&
+      echo &&
+      echo '=== Test D-Bus vers org.bluez (le test cle) ===' &&
+      timeout 5 dbus-send --system --print-reply --dest=org.bluez / org.freedesktop.DBus.Introspectable.Introspect | head -5 || echo 'ECHEC: pas de reponse D-Bus depuis le container' &&
+      echo &&
+      echo '=== Adaptateurs connus (vide normal sans dongle) ===' &&
+      bluetoothctl list
+      "

@@ -1,0 +1,59 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+enum DeviceKind {
+  PARROT_POT
+  XIAOMI_LYWSD03MMC
+}
+
+model Device {
+  id            String   @id // MAC address, uppercase colon-separated — stable across providers
+  kind          DeviceKind
+  name          String?
+  lastSeenAt    DateTime?
+
+  readings       Reading[]
+  wateringEvents WateringEvent[]
+}
+
+model Reading {
+  id               Int      @id @default(autoincrement())
+  deviceId         String
+  device           Device   @relation(fields: [deviceId], references: [id])
+  timestamp        DateTime @default(now())
+
+  // Parrot Pot
+  soilMoisturePercent    Float?
+  temperatureC           Float?
+  luminosity             Float?
+  waterTankLevelPercent  Float?
+
+  // Xiaomi LYWSD03MMC
+  humidityPercent  Float?
+  batteryPercent   Float?
+
+  @@index([deviceId, timestamp])
+}
+
+enum TriggerSource {
+  MANUAL
+  CRON
+}
+
+model WateringEvent {
+  id            Int           @id @default(autoincrement())
+  deviceId      String
+  device        Device        @relation(fields: [deviceId], references: [id])
+  timestamp     DateTime      @default(now())
+  triggerSource TriggerSource
+  success       Boolean
+  errorDetail   String?
+
+  @@index([deviceId, timestamp])
+}
