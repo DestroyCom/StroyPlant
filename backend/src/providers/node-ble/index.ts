@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import type { GattCharacteristic } from 'node-ble';
 import { createBluetooth } from 'node-ble';
 import { CONNECT_TIMEOUT_MS, withGattRetry, withTimeout } from '../../ble/parrot/retry.js';
 import {
@@ -9,6 +10,12 @@ import {
   WATER_TRIGGER_PAYLOAD,
   WATERING_SERVICE_UUID,
 } from '../../ble/parrot/uuids.js';
+import { parseTempHumidityPayload } from '../../ble/xiaomi/parser.js';
+import {
+  LYWSD03MMC_NAME,
+  TEMP_HUMIDITY_CHARACTERISTIC_UUID,
+  DATA_SERVICE_UUID as XIAOMI_DATA_SERVICE_UUID,
+} from '../../ble/xiaomi/uuids.js';
 import { log } from '../../logger.js';
 import type { DeviceProvider, SensorReading } from '../types.js';
 
@@ -16,6 +23,31 @@ const execFileAsync = promisify(execFile);
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+const XIAOMI_NOTIFY_TIMEOUT_MS = 15000;
+
+// Le LYWSD03MMC (contrairement au Parrot Pot) ne se lit pas par un simple readValue() — il faut
+// souscrire aux notifications sur ebe0ccc1 et attendre la première valeur (validé empiriquement sur
+// device réel, voir backend/src/ble/xiaomi/uuids.ts).
+async function waitForFirstNotification(characteristic: GattCharacteristic, timeoutMs: number): Promise<Buffer> {
+  await characteristic.startNotifications();
+  try {
+    return await new Promise<Buffer>((resolve, reject) => {
+      const timeoutHandle = setTimeout(() => {
+        characteristic.removeListener('valuechanged', onValue);
+        reject(new Error(`TIMEOUT: notification LYWSD03MMC (${timeoutMs}ms)`));
+      }, timeoutMs);
+      function onValue(buf: Buffer) {
+        clearTimeout(timeoutHandle);
+        characteristic.removeListener('valuechanged', onValue);
+        resolve(buf);
+      }
+      characteristic.on('valuechanged', onValue);
+    });
+  } finally {
+    await characteristic.stopNotifications().catch(() => {});
+  }
 }
 
 // Cycle de scan (STROYPLANT_SPEC.md section 7.1) : ~10s de scan puis pause (1 min en usage normal),
@@ -90,11 +122,16 @@ export function createNodeBleProvider(): DeviceProvider {
             try {
               const device = await adapter.getDevice(mac);
               const name = await device.getName().catch(() => undefined);
-              if (!name?.startsWith(PARROT_POT_NAME_PREFIX)) continue;
+              const kind = name?.startsWith(PARROT_POT_NAME_PREFIX)
+                ? 'PARROT_POT'
+                : name === LYWSD03MMC_NAME
+                  ? 'XIAOMI_LYWSD03MMC'
+                  : undefined;
+              if (!kind) continue;
               const rssiRaw = await device.getRSSI().catch(() => undefined);
               const rssi = rssiRaw !== undefined ? Number(rssiRaw) : undefined;
               if (rssi !== undefined && rssi < RSSI_MIN) continue;
-              onDiscovered({ id: mac, kind: 'PARROT_POT', name, rssi });
+              onDiscovered({ id: mac, kind, name, rssi });
             } catch {
               // le device peut disparaître entre devices() et getDevice() — pas une erreur à remonter
             }
@@ -108,7 +145,38 @@ export function createNodeBleProvider(): DeviceProvider {
       }
     },
 
-    async readSensors(deviceId: string): Promise<SensorReading> {
+    async readSensors(deviceId: string, kind): Promise<SensorReading> {
+      if (kind === 'XIAOMI_LYWSD03MMC') {
+        return withGattRetry({
+          label: 'readSensors:xiaomi',
+          deviceId,
+          isGattError133,
+          restartAdapter,
+          attempt: async () => {
+            const device = await connectDevice(deviceId);
+            try {
+              const gatt = await withTimeout(device.gatt(), CONNECT_TIMEOUT_MS, 'gatt');
+              const dataService = await gatt.getPrimaryService(XIAOMI_DATA_SERVICE_UUID);
+              const tempHumidityChar = await dataService.getCharacteristic(TEMP_HUMIDITY_CHARACTERISTIC_UUID);
+              const payload = await waitForFirstNotification(tempHumidityChar, XIAOMI_NOTIFY_TIMEOUT_MS);
+              const data = parseTempHumidityPayload(payload);
+              log({
+                direction: 'READ',
+                label: 'Xiaomi temp/humidity read',
+                deviceId,
+                payloadHex: payload.toString('hex'),
+                result: 'OK',
+                detail: `temp=${data.temperatureC}°C humidity=${data.humidityPercent}%`,
+              });
+              const reading: SensorReading = { kind: 'XIAOMI_LYWSD03MMC', data };
+              return reading;
+            } finally {
+              await device.disconnect().catch(() => {});
+            }
+          },
+        });
+      }
+
       return withGattRetry({
         label: 'readSensors',
         deviceId,

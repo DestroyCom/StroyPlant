@@ -1,13 +1,13 @@
 import { env } from '../../env.js';
 import { log } from '../../logger.js';
-import type { DeviceProvider, DiscoveredDevice, SensorReading } from '../types.js';
+import type { DeviceKind, DeviceProvider, DiscoveredDevice, SensorReading } from '../types.js';
 
 // Provider qui délègue tout le travail BLE réel au process noble-bridge (natif macOS, hors Docker,
 // voir noble-bridge/). Ce provider n'est qu'un client HTTP/WebSocket — voir STROYPLANT_SPEC.md
-// section 6. Les identifiants de device ici sont des ids "logiques" (PARROT-XXXX dérivés du nom
-// annoncé, pas la MAC réelle — CoreBluetooth ne l'expose pas) : ne correspondent PAS aux ids MAC
-// utilisés par le provider node-ble en prod. Attendu — ce provider sert à valider le protocole, pas
-// la continuité des données entre environnements.
+// section 6. Les identifiants de device ici sont des ids "logiques" (PARROT-XXXX / XIAOMI-<uuid noble>,
+// pas la MAC réelle — CoreBluetooth ne l'expose pas) : ne correspondent PAS aux ids MAC utilisés par
+// le provider node-ble en prod. Attendu — ce provider sert à valider le protocole, pas la continuité
+// des données entre environnements.
 
 export function createNobleBridgeProvider(): DeviceProvider {
   return {
@@ -24,8 +24,13 @@ export function createNobleBridgeProvider(): DeviceProvider {
 
         socket.addEventListener('message', (event) => {
           try {
-            const { id, name, rssi } = JSON.parse(event.data as string) as { id: string; name: string; rssi: number };
-            const device: DiscoveredDevice = { id, kind: 'PARROT_POT', name, rssi };
+            const { id, kind, name, rssi } = JSON.parse(event.data as string) as {
+              id: string;
+              kind: DeviceKind;
+              name: string;
+              rssi: number;
+            };
+            const device: DiscoveredDevice = { id, kind, name, rssi };
             onDiscovered(device);
           } catch (error) {
             log({
@@ -51,10 +56,17 @@ export function createNobleBridgeProvider(): DeviceProvider {
       });
     },
 
-    async readSensors(deviceId: string): Promise<SensorReading> {
+    async readSensors(deviceId: string, kind: DeviceKind): Promise<SensorReading> {
       const res = await fetch(`${env.nobleBridgeUrl}/devices/${encodeURIComponent(deviceId)}/sensors`, { method: 'POST' });
       const body = await res.json();
       if (!res.ok) throw new Error(`noble-bridge readSensors ${deviceId}: ${body.error ?? res.statusText}`);
+
+      if (kind === 'XIAOMI_LYWSD03MMC') {
+        return {
+          kind: 'XIAOMI_LYWSD03MMC',
+          data: { temperatureC: body.temperatureC, humidityPercent: body.humidityPercent, batteryPercent: body.batteryPercent },
+        };
+      }
       return {
         kind: 'PARROT_POT',
         data: {

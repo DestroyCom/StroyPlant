@@ -1,7 +1,9 @@
 import type { Characteristic, Peripheral } from '@abandonware/noble';
 import noble from '@abandonware/noble';
 import { log } from './logger.js';
-import { PARROT_POT_NAME_PREFIX } from './uuids.js';
+import { LYWSD03MMC_NAME, PARROT_POT_NAME_PREFIX } from './uuids.js';
+
+export type DeviceKind = 'PARROT_POT' | 'XIAOMI_LYWSD03MMC';
 
 // Adapté de parrot-pot-debug/src/ble-client.ts (PoC déjà validé sur device réel) — voir
 // STROYPLANT_SPEC.md section 6 & 9. Repris quasiment à l'identique : mêmes constantes de retry,
@@ -43,24 +45,30 @@ export async function waitForPoweredOn(timeoutMs = 10000): Promise<void> {
 
 // L'adresse MAC réelle n'est PAS accessible via @abandonware/noble sur macOS (CoreBluetooth la
 // masque pour des raisons de vie privée — `peripheral.uuid` est un identifiant interne macOS, pas
-// la MAC). Le nom annoncé par le Parrot Pot ("Parrot pot XXXX") encode les 4 derniers hex de sa
-// MAC réelle en suffixe — on l'utilise comme identifiant logique stable pour le dev sur Mac. Ne
-// correspond PAS à l'id "MAC complète" utilisé par le provider node-ble en prod — attendu et
-// documenté (section 6 de la spec : noble-bridge valide le protocole, pas l'identité cross-provider).
-export function parrotIdFromName(name: string): string | undefined {
-  if (!name.startsWith(PARROT_POT_NAME_PREFIX)) return undefined;
-  const suffix = name.slice(-4).toUpperCase();
-  return `PARROT-${suffix}`;
+// la MAC). Pour le Parrot Pot, le nom annoncé ("Parrot pot XXXX") encode les 4 derniers hex de sa
+// MAC réelle en suffixe — utilisé comme id logique lisible. Le Xiaomi LYWSD03MMC n'a pas ce suffixe
+// (nom fixe "LYWSD03MMC" pour tous les devices du modèle) — on retombe sur `peripheral.uuid`
+// (stable pour un device donné sur ce Mac, pas la MAC). Dans les deux cas : ne correspond PAS à
+// l'id "MAC complète" utilisé par le provider node-ble en prod — attendu et documenté (section 6 de
+// la spec : noble-bridge valide le protocole, pas l'identité cross-provider).
+export function identifyDevice(peripheral: Peripheral): { id: string; kind: DeviceKind } | undefined {
+  const name = peripheral.advertisement.localName ?? '';
+  if (name.startsWith(PARROT_POT_NAME_PREFIX)) {
+    return { id: `PARROT-${name.slice(-4).toUpperCase()}`, kind: 'PARROT_POT' };
+  }
+  if (name === LYWSD03MMC_NAME) {
+    return { id: `XIAOMI-${peripheral.uuid}`, kind: 'XIAOMI_LYWSD03MMC' };
+  }
+  return undefined;
 }
 
-export async function scanForParrotPot(logicalId: string, timeoutMs = 10000): Promise<Peripheral | undefined> {
+export async function scanForDevice(logicalId: string, timeoutMs = 10000): Promise<Peripheral | undefined> {
   await waitForPoweredOn();
   const start = Date.now();
   let target: Peripheral | undefined;
 
   const onDiscover = (peripheral: Peripheral) => {
-    const name = peripheral.advertisement.localName ?? '';
-    if (parrotIdFromName(name) === logicalId) target = peripheral;
+    if (identifyDevice(peripheral)?.id === logicalId) target = peripheral;
   };
 
   noble.on('discover', onDiscover);
@@ -78,19 +86,21 @@ export async function scanForParrotPot(logicalId: string, timeoutMs = 10000): Pr
 
   log({
     direction: 'SCAN',
-    label: target ? `Parrot Pot trouvé: ${logicalId}` : `Parrot Pot ${logicalId} non trouvé après ${timeoutMs}ms`,
+    label: target ? `Device trouvé: ${logicalId}` : `Device ${logicalId} non trouvé après ${timeoutMs}ms`,
     deviceId: logicalId,
     result: target ? 'OK' : 'ERROR',
   });
   return target;
 }
 
-export async function scanContinuous(onDiscovered: (id: string, name: string, rssi: number) => void, signal: AbortSignal): Promise<void> {
+export async function scanContinuous(
+  onDiscovered: (id: string, kind: DeviceKind, name: string, rssi: number) => void,
+  signal: AbortSignal,
+): Promise<void> {
   await waitForPoweredOn();
   const onDiscover = (peripheral: Peripheral) => {
-    const name = peripheral.advertisement.localName ?? '';
-    const id = parrotIdFromName(name);
-    if (id) onDiscovered(id, name, peripheral.rssi);
+    const identified = identifyDevice(peripheral);
+    if (identified) onDiscovered(identified.id, identified.kind, peripheral.advertisement.localName ?? '', peripheral.rssi);
   };
   noble.on('discover', onDiscover);
   await noble.startScanningAsync([], true); // allowDuplicates=true pour des mises à jour RSSI continues
@@ -103,7 +113,7 @@ export async function scanContinuous(onDiscovered: (id: string, name: string, rs
   noble.removeListener('discover', onDiscover);
 }
 
-export interface ConnectedPot {
+export interface ConnectedDevice {
   peripheral: Peripheral;
   connectedAt: number;
   characteristics: Map<string, Characteristic>;
@@ -116,7 +126,7 @@ const CONNECT_RETRY_PAUSE_MS = 500;
 // STROYPLANT_SPEC.md section 7.1 "Nuance importante"). On applique donc la logique 133 (backoff
 // 500ms, avertissement au 2e échec) à TOUT échec de connexion — pas de redémarrage automatique de
 // l'adaptateur Bluetooth du Mac (couperait tout le Bluetooth du système, décision utilisateur).
-async function withConnectRetry(logicalId: string, attempt: () => Promise<ConnectedPot>): Promise<ConnectedPot> {
+async function withConnectRetry(logicalId: string, attempt: () => Promise<ConnectedDevice>): Promise<ConnectedDevice> {
   let lastError: unknown;
   for (let i = 1; i <= CONNECT_RETRY_ATTEMPTS; i++) {
     try {
@@ -155,7 +165,7 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
   return Promise.race([promise, timeout]).finally(() => clearTimeout(handle));
 }
 
-export async function connectAndDiscover(peripheral: Peripheral, logicalId: string): Promise<ConnectedPot> {
+export async function connectAndDiscover(peripheral: Peripheral, logicalId: string): Promise<ConnectedDevice> {
   return withConnectRetry(logicalId, async () => {
     const start = Date.now();
     await withTimeout(peripheral.connectAsync(), 18000);
@@ -178,7 +188,7 @@ export async function connectAndDiscover(peripheral: Peripheral, logicalId: stri
   });
 }
 
-export async function readCharacteristic(pot: ConnectedPot, uuid: string, label: string, logicalId: string): Promise<Buffer> {
+export async function readCharacteristic(pot: ConnectedDevice, uuid: string, label: string, logicalId: string): Promise<Buffer> {
   const characteristic = pot.characteristics.get(normalizeUuid(uuid));
   if (!characteristic) throw new Error(`Characteristic ${uuid} not found`);
   const start = Date.now();
@@ -210,7 +220,7 @@ export async function readCharacteristic(pot: ConnectedPot, uuid: string, label:
 }
 
 export async function writeCharacteristic(
-  pot: ConnectedPot,
+  pot: ConnectedDevice,
   uuid: string,
   label: string,
   data: Buffer,
@@ -247,6 +257,41 @@ export async function writeCharacteristic(
   }
 }
 
+// Le LYWSD03MMC ne se lit pas par un simple readAsync() — il faut souscrire aux notifications et
+// attendre la première valeur (validé empiriquement sur device réel, voir uuids.ts).
+export async function subscribeAndWaitForFirstValue(
+  pot: ConnectedDevice,
+  uuid: string,
+  label: string,
+  logicalId: string,
+  timeoutMs: number,
+): Promise<Buffer> {
+  const characteristic = pot.characteristics.get(normalizeUuid(uuid));
+  if (!characteristic) throw new Error(`Characteristic ${uuid} not found`);
+
+  await characteristic.subscribeAsync();
+  try {
+    return await withTimeout(
+      new Promise<Buffer>((resolve) => {
+        characteristic.once('data', (data: Buffer) => resolve(data));
+      }),
+      timeoutMs,
+    );
+  } catch (error) {
+    log({
+      direction: 'READ',
+      label,
+      uuid,
+      deviceId: logicalId,
+      result: 'ERROR',
+      detail: error instanceof Error ? error.message : String(error),
+    });
+    throw error;
+  } finally {
+    await characteristic.unsubscribeAsync().catch(() => {});
+  }
+}
+
 export async function disconnect(peripheral: Peripheral, logicalId: string): Promise<void> {
   if (peripheral.state === 'disconnected') return;
   try {
@@ -261,5 +306,18 @@ export async function disconnect(peripheral: Peripheral, logicalId: string): Pro
       detail: error instanceof Error ? error.message : String(error),
     });
     throw error;
+  }
+}
+
+// Scan-puis-connecte, générique pour tout device identifié par identifyDevice() (Parrot Pot ou
+// Xiaomi) — factorisé ici pour être réutilisé par parrot.ts et xiaomi.ts.
+export async function withDevice<T>(logicalId: string, work: (device: ConnectedDevice) => Promise<T>): Promise<T> {
+  const peripheral = await scanForDevice(logicalId);
+  if (!peripheral) throw new Error(`Device ${logicalId} non trouvé au scan`);
+  const connected = await connectAndDiscover(peripheral, logicalId);
+  try {
+    return await work(connected);
+  } finally {
+    await disconnect(peripheral, logicalId).catch(() => {});
   }
 }

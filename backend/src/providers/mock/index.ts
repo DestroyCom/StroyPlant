@@ -6,6 +6,8 @@ import type { DeviceProvider, DiscoveredDevice, SensorReading } from '../types.j
 // - MOCK-POT-DECLINE : humidité qui descend progressivement (pour tester une alerte de santé plus
 //   tard) ET réservoir vide dès le départ (pour tester la gestion d'erreur d'un arrosage qui échoue
 //   — le scénario réaliste où le pot qui a le plus besoin d'eau ne peut justement plus en donner).
+// - MOCK-XIAOMI-01 : capteur ambiant stable (température/humidité), même modèle de connexion GATT
+//   que le Parrot Pot (voir correction section 3 de la spec) — pas d'action déclenchable dessus.
 
 interface MockPotState {
   id: string;
@@ -18,7 +20,16 @@ interface MockPotState {
   lastUpdate: number;
 }
 
-function createInitialState(): MockPotState[] {
+interface MockXiaomiState {
+  id: string;
+  name: string;
+  temperatureC: number;
+  humidityPercent: number;
+  batteryPercent: number;
+  lastUpdate: number;
+}
+
+function createInitialPots(): MockPotState[] {
   const now = Date.now();
   return [
     {
@@ -44,7 +55,13 @@ function createInitialState(): MockPotState[] {
   ];
 }
 
-function applyDecay(state: MockPotState): void {
+function createInitialXiaomi(): MockXiaomiState[] {
+  return [
+    { id: 'MOCK-XIAOMI-01', name: 'LYWSD03MMC', temperatureC: 21.5, humidityPercent: 48, batteryPercent: 85, lastUpdate: Date.now() },
+  ];
+}
+
+function applyPotDecay(state: MockPotState): void {
   const elapsedMinutes = (Date.now() - state.lastUpdate) / 60_000;
   if (elapsedMinutes <= 0) return;
   state.soilMoisturePercent = Math.max(0, state.soilMoisturePercent - state.declinePerMinute * elapsedMinutes);
@@ -53,8 +70,15 @@ function applyDecay(state: MockPotState): void {
   state.lastUpdate = Date.now();
 }
 
+function applyXiaomiNoise(state: MockXiaomiState): void {
+  state.temperatureC += (Math.random() - 0.5) * 0.2;
+  state.humidityPercent = Math.min(100, Math.max(0, state.humidityPercent + (Math.random() - 0.5) * 1.5));
+  state.lastUpdate = Date.now();
+}
+
 export function createMockProvider(): DeviceProvider {
-  const pots = new Map(createInitialState().map((p) => [p.id, p]));
+  const pots = new Map(createInitialPots().map((p) => [p.id, p]));
+  const xiaomiSensors = new Map(createInitialXiaomi().map((x) => [x.id, x]));
 
   return {
     name: 'mock',
@@ -63,6 +87,10 @@ export function createMockProvider(): DeviceProvider {
       const emitAll = () => {
         for (const pot of pots.values()) {
           const device: DiscoveredDevice = { id: pot.id, kind: 'PARROT_POT', name: pot.name, rssi: -50 };
+          onDiscovered(device);
+        }
+        for (const sensor of xiaomiSensors.values()) {
+          const device: DiscoveredDevice = { id: sensor.id, kind: 'XIAOMI_LYWSD03MMC', name: sensor.name, rssi: -60 };
           onDiscovered(device);
         }
       };
@@ -80,10 +108,27 @@ export function createMockProvider(): DeviceProvider {
       });
     },
 
-    async readSensors(deviceId: string): Promise<SensorReading> {
+    async readSensors(deviceId: string, kind): Promise<SensorReading> {
+      if (kind === 'XIAOMI_LYWSD03MMC') {
+        const sensor = xiaomiSensors.get(deviceId);
+        if (!sensor) throw new Error(`Mock device ${deviceId} inconnu`);
+        applyXiaomiNoise(sensor);
+        log({
+          direction: 'READ',
+          label: 'Mock Xiaomi read',
+          deviceId,
+          result: 'OK',
+          detail: `temp=${sensor.temperatureC.toFixed(1)}°C humidity=${sensor.humidityPercent.toFixed(0)}%`,
+        });
+        return {
+          kind: 'XIAOMI_LYWSD03MMC',
+          data: { temperatureC: sensor.temperatureC, humidityPercent: sensor.humidityPercent, batteryPercent: sensor.batteryPercent },
+        };
+      }
+
       const pot = pots.get(deviceId);
       if (!pot) throw new Error(`Mock device ${deviceId} inconnu`);
-      applyDecay(pot);
+      applyPotDecay(pot);
       log({
         direction: 'READ',
         label: 'Mock sensors read',
@@ -105,8 +150,8 @@ export function createMockProvider(): DeviceProvider {
     async triggerAction(deviceId: string, action): Promise<void> {
       if (action !== 'water') throw new Error(`Action non supportée: ${action}`);
       const pot = pots.get(deviceId);
-      if (!pot) throw new Error(`Mock device ${deviceId} inconnu`);
-      applyDecay(pot);
+      if (!pot) throw new Error(`Mock device ${deviceId} inconnu ou sans actionneur (Xiaomi ne s'arrose pas)`);
+      applyPotDecay(pot);
 
       if (pot.waterTankLevelPercent <= 0) {
         log({

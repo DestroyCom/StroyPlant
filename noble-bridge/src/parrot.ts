@@ -1,4 +1,4 @@
-import { connectAndDiscover, disconnect, readCharacteristic, scanForParrotPot, writeCharacteristic } from './ble-client.js';
+import { readCharacteristic, withDevice, writeCharacteristic } from './ble-client.js';
 import { log } from './logger.js';
 import { UUIDS, WATER_TRIGGER_PAYLOAD } from './uuids.js';
 
@@ -9,22 +9,11 @@ export interface ParrotSensorReading {
   waterTankLevelPercent?: number;
 }
 
-async function withPot<T>(logicalId: string, work: (pot: Awaited<ReturnType<typeof connectAndDiscover>>) => Promise<T>): Promise<T> {
-  const peripheral = await scanForParrotPot(logicalId);
-  if (!peripheral) throw new Error(`Parrot Pot ${logicalId} non trouvé au scan`);
-  const pot = await connectAndDiscover(peripheral, logicalId);
-  try {
-    return await work(pot);
-  } finally {
-    await disconnect(peripheral, logicalId).catch(() => {});
-  }
-}
-
 // Prérequis d'activation obligatoire (STROYPLANT_SPEC.md section 8) : sans ce write, le firmware
 // ne rafraîchit pas fa09/0a/0b en continu — un read() renvoie la dernière valeur en mémoire,
 // potentiellement figée depuis très longtemps, sans aucune erreur associée.
 export async function readParrotSensors(logicalId: string): Promise<ParrotSensorReading> {
-  return withPot(logicalId, async (pot) => {
+  return withDevice(logicalId, async (pot) => {
     await writeCharacteristic(pot, UUIDS.live.measurePeriod, 'Activate live measure period', Buffer.from([1]), false, logicalId);
 
     const soilMoisture = await readCharacteristic(pot, UUIDS.live.soilMoisturePercent, 'Soil moisture (calibrated)', logicalId);
@@ -61,7 +50,7 @@ export async function readParrotSensors(logicalId: string): Promise<ParrotSensor
 }
 
 export async function triggerParrotWatering(logicalId: string): Promise<void> {
-  await withPot(logicalId, async (pot) => {
+  await withDevice(logicalId, async (pot) => {
     // WRITE_TYPE_DEFAULT côté app officielle = write WITH response (withoutResponse=false).
     await writeCharacteristic(pot, UUIDS.watering.trigger, 'Watering trigger', WATER_TRIGGER_PAYLOAD, false, logicalId);
   });

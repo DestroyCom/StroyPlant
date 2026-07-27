@@ -3,6 +3,7 @@ import Fastify from 'fastify';
 import { scanContinuous } from './ble-client.js';
 import { log } from './logger.js';
 import { readParrotSensors, triggerParrotWatering } from './parrot.js';
+import { readXiaomiSensors } from './xiaomi.js';
 
 const PORT = Number(process.env.PORT ?? 4100);
 
@@ -15,9 +16,9 @@ app.get('/health', async () => ({ ok: true }));
 // devices. Un seul scan noble actif à la fois sur ce process (limite matérielle d'un adaptateur BLE).
 app.get('/scan-stream', { websocket: true }, (socket) => {
   const controller = new AbortController();
-  scanContinuous((id, name, rssi) => {
+  scanContinuous((id, kind, name, rssi) => {
     if (socket.readyState === socket.OPEN) {
-      socket.send(JSON.stringify({ id, name, rssi }));
+      socket.send(JSON.stringify({ id, kind, name, rssi }));
     }
   }, controller.signal).catch((error) => {
     log({
@@ -32,8 +33,11 @@ app.get('/scan-stream', { websocket: true }, (socket) => {
 });
 
 app.post<{ Params: { id: string } }>('/devices/:id/sensors', async (request, reply) => {
+  const { id } = request.params;
   try {
-    const reading = await readParrotSensors(request.params.id);
+    // L'id logique encode le type de device (voir identifyDevice() dans ble-client.ts) — pas besoin
+    // d'un paramètre séparé, contrairement au provider node-ble qui reçoit un simple MAC.
+    const reading = id.startsWith('XIAOMI-') ? await readXiaomiSensors(id) : await readParrotSensors(id);
     return reading;
   } catch (error) {
     reply.code(502);

@@ -17,3 +17,9 @@ export const UUIDS = {
 
 export const WATER_TRIGGER_PAYLOAD = Buffer.from([0x08, 0x00]);
 export const PARROT_POT_NAME_PREFIX = 'Parrot pot';
+
+// Xiaomi LYWSD03MMC — validé empiriquement en connexion GATT réelle (voir backend/src/ble/xiaomi/uuids.ts
+// pour le détail de la validation). PAS l'annonce passive (chiffrée en MiBeacon sur firmware stock).
+export const XIAOMI_DATA_SERVICE_UUID = 'ebe0ccb0-7a0a-4b0c-8a1a-6ff2997da3a6';
+export const XIAOMI_TEMP_HUMIDITY_CHARACTERISTIC_UUID = 'ebe0ccc1-7a0a-4b0c-8a1a-6ff2997da3a6';
+export const LYWSD03MMC_NAME = 'LYWSD03MMC';

@@ -38,7 +38,8 @@ export function startScanner(
       return;
     }
 
-    // Devices passifs (Xiaomi) : la lecture est déjà dans l'annonce, pas de connexion GATT.
+    // Cas passif (aucun device connu à ce jour ne l'est réellement — voir commentaire sur
+    // DiscoveredDevice.reading dans providers/types.ts) : la lecture est déjà dans l'annonce.
     if (device.reading) {
       callbacks.onReading(device.id, device.kind, device.reading).catch((error) => {
         log({
@@ -52,15 +53,16 @@ export function startScanner(
       return;
     }
 
-    if (device.kind !== 'PARROT_POT') return;
-
+    // Parrot Pot ET Xiaomi LYWSD03MMC nécessitent tous les deux une connexion GATT (voir
+    // STROYPLANT_SPEC.md section 3 correction) — les deux partagent donc la même queue séquentielle,
+    // une seule connexion GATT à la fois quel que soit le type de device.
     const last = lastPolled.get(device.id) ?? 0;
     if (Date.now() - last < pollIntervalMs) return;
     lastPolled.set(device.id, Date.now()); // marqué avant l'exécution pour ne pas ré-empiler pendant qu'une lecture est déjà en vol
 
     connectionQueue.run(async () => {
       try {
-        const reading = await provider.readSensors(device.id);
+        const reading = await provider.readSensors(device.id, device.kind);
         await callbacks.onReading(device.id, device.kind, reading);
       } catch (error) {
         // Ne jamais avaler une erreur silencieusement (STROYPLANT_SPEC.md section 7.1).
