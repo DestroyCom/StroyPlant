@@ -9,7 +9,7 @@ export interface ParrotSensorReading {
   waterTankLevelPercent?: number;
 }
 
-// Prérequis d'activation obligatoire (STROYPLANT_SPEC.md section 8) : sans ce write, le firmware
+// Prérequis d'activation obligatoire (docs/STROYPLANT_SPEC.md section 8) : sans ce write, le firmware
 // ne rafraîchit pas fa09/0a/0b en continu — un read() renvoie la dernière valeur en mémoire,
 // potentiellement figée depuis très longtemps, sans aucune erreur associée.
 export async function readParrotSensors(logicalId: string): Promise<ParrotSensorReading> {
@@ -35,7 +35,7 @@ export async function readParrotSensors(logicalId: string): Promise<ParrotSensor
     }
 
     // Écrire 0 en fin de session pour économiser la batterie côté firmware quand aucun client
-    // n'écoute (STROYPLANT_SPEC.md section 8). Ne doit pas faire échouer la lecture si ça échoue.
+    // n'écoute (docs/STROYPLANT_SPEC.md section 8). Ne doit pas faire échouer la lecture si ça échoue.
     await writeCharacteristic(pot, UUIDS.live.measurePeriod, 'Deactivate live measure period', Buffer.from([0]), false, logicalId).catch(
       () => {},
     );

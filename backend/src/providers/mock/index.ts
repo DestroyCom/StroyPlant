@@ -1,7 +1,7 @@
 import { log } from '../../logger.js';
 import type { DeviceProvider, DiscoveredDevice, SensorReading } from '../types.js';
 
-// Simule des scénarios utiles, pas juste du bruit aléatoire plat (STROYPLANT_SPEC.md section 6) :
+// Simule des scénarios utiles, pas juste du bruit aléatoire plat (docs/STROYPLANT_SPEC.md section 6) :
 // - MOCK-POT-NORMAL : pot sain, réservoir plein, humidité stable — cas nominal.
 // - MOCK-POT-DECLINE : humidité qui descend progressivement (pour tester une alerte de santé plus
 //   tard) ET réservoir vide dès le départ (pour tester la gestion d'erreur d'un arrosage qui échoue

@@ -1,6 +1,6 @@
 import { auth } from './auth.js';
 
-// Crée l'unique compte admin (STROYPLANT_SPEC.md section 7.6 : usage perso mono-admin, pas
+// Crée l'unique compte admin (docs/STROYPLANT_SPEC.md section 7.6 : usage perso mono-admin, pas
 // d'auto-inscription). Utilise auth.api.createUser (plugin admin) qui, contrairement à l'endpoint
 // public de sign-up, ignore emailAndPassword.disableSignUp — voir auth.ts.
 async function main() {

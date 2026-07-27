@@ -1,4 +1,4 @@
-// Queue de connexion séquentielle pour le Parrot Pot (STROYPLANT_SPEC.md section 7.1) : une seule
+// Queue de connexion séquentielle pour le Parrot Pot (docs/STROYPLANT_SPEC.md section 7.1) : une seule
 // connexion GATT à la fois, que ce soit un poll périodique du scanner ou un trigger manuel via l'API
 // — le BLE ne supporte pas bien plusieurs connexions GATT simultanées sur un dongle USB classique.
 export class ConnectionQueue {

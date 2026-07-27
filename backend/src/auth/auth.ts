@@ -4,7 +4,7 @@ import { admin } from 'better-auth/plugins';
 import { prisma } from '../db/client.js';
 import { env } from '../env.js';
 
-// Usage perso mono-admin (STROYPLANT_SPEC.md section 7.6) : pas d'auto-inscription publique.
+// Usage perso mono-admin (docs/STROYPLANT_SPEC.md section 7.6) : pas d'auto-inscription publique.
 // Le plugin `admin` n'est pas là pour de la gestion de rôles multi-utilisateurs — il donne juste
 // accès à `auth.api.createUser()`, le seul moyen documenté par BetterAuth de créer un compte de
 // façon programmatique sans passer par l'endpoint public de sign-up (qui respecte disableSignUp).

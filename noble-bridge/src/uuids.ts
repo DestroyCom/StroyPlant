@@ -1,4 +1,4 @@
-// Source de vérité : PARROT_BLE_REVERSE_ENGINEERING.md + PARROT_BLE_DEEP_DIVE.md (racine du repo
+// Source de vérité : docs/PARROT_BLE_REVERSE_ENGINEERING.md + docs/PARROT_BLE_DEEP_DIVE.md (racine du repo
 // StroyPlant). Dupliqué depuis backend/src/ble/parrot/uuids.ts — ce process est déployé
 // indépendamment (natif macOS, hors Docker), pas de partage de module avec le backend.
 

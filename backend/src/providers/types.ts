@@ -17,7 +17,7 @@ export type SensorReading = { kind: 'PARROT_POT'; data: ParrotPotReading } | { k
 
 // A single BLE advertisement/discovery event. `reading` stays undefined in practice today — both
 // Parrot Pot AND Xiaomi LYWSD03MMC require an active GATT connection to read sensors (the Xiaomi
-// stock-firmware advertisement is encrypted MiBeacon, not plaintext — see STROYPLANT_SPEC.md
+// stock-firmware advertisement is encrypted MiBeacon, not plaintext — see docs/STROYPLANT_SPEC.md
 // section 3 correction). Kept optional for a future passive-capable device (e.g. Xiaomi flashed
 // with pvvx custom firmware in an unencrypted advertising mode).
 export interface DiscoveredDevice {

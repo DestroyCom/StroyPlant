@@ -6,7 +6,7 @@ import { LYWSD03MMC_NAME, PARROT_POT_NAME_PREFIX } from './uuids.js';
 export type DeviceKind = 'PARROT_POT' | 'XIAOMI_LYWSD03MMC';
 
 // Adapté de parrot-pot-debug/src/ble-client.ts (PoC déjà validé sur device réel) — voir
-// STROYPLANT_SPEC.md section 6 & 9. Repris quasiment à l'identique : mêmes constantes de retry,
+// docs/STROYPLANT_SPEC.md section 6 & 9. Repris quasiment à l'identique : mêmes constantes de retry,
 // même limite documentée (CoreBluetooth avale le vrai code GATT, impossible de distinguer un 133
 // d'un autre échec — voir commentaire sur withConnectRetry plus bas).
 
@@ -123,7 +123,7 @@ const CONNECT_RETRY_ATTEMPTS = 3;
 const CONNECT_RETRY_PAUSE_MS = 500;
 
 // Détection GATT 133 impossible sur macOS/noble (CoreBluetooth avale le NSError réel, voir
-// STROYPLANT_SPEC.md section 7.1 "Nuance importante"). On applique donc la logique 133 (backoff
+// docs/STROYPLANT_SPEC.md section 7.1 "Nuance importante"). On applique donc la logique 133 (backoff
 // 500ms, avertissement au 2e échec) à TOUT échec de connexion — pas de redémarrage automatique de
 // l'adaptateur Bluetooth du Mac (couperait tout le Bluetooth du système, décision utilisateur).
 async function withConnectRetry(logicalId: string, attempt: () => Promise<ConnectedDevice>): Promise<ConnectedDevice> {

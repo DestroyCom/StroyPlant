@@ -54,7 +54,7 @@ export function startScanner(
     }
 
     // Parrot Pot ET Xiaomi LYWSD03MMC nécessitent tous les deux une connexion GATT (voir
-    // STROYPLANT_SPEC.md section 3 correction) — les deux partagent donc la même queue séquentielle,
+    // docs/STROYPLANT_SPEC.md section 3 correction) — les deux partagent donc la même queue séquentielle,
     // une seule connexion GATT à la fois quel que soit le type de device.
     const last = lastPolled.get(device.id) ?? 0;
     if (Date.now() - last < pollIntervalMs) return;
@@ -65,7 +65,7 @@ export function startScanner(
         const reading = await provider.readSensors(device.id, device.kind);
         await callbacks.onReading(device.id, device.kind, reading);
       } catch (error) {
-        // Ne jamais avaler une erreur silencieusement (STROYPLANT_SPEC.md section 7.1).
+        // Ne jamais avaler une erreur silencieusement (docs/STROYPLANT_SPEC.md section 7.1).
         log({
           direction: 'READ',
           label: 'Poll readSensors failed',

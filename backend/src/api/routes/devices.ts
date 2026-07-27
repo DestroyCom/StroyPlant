@@ -54,7 +54,7 @@ export function registerDeviceRoutes(app: FastifyInstance, deps: DevicesRouteDep
       return { ok: true };
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
-      // Jamais fire-and-forget (STROYPLANT_SPEC.md section 7.1, bug WatchFlower identifié) — l'échec
+      // Jamais fire-and-forget (docs/STROYPLANT_SPEC.md section 7.1, bug WatchFlower identifié) — l'échec
       // est explicitement journalisé en base ET remonté à l'appelant, pas juste logué côté serveur.
       await prisma.wateringEvent.create({
         data: { deviceId: device.id, triggerSource: 'MANUAL', success: false, errorDetail: detail },

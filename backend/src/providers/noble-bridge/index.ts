@@ -3,7 +3,7 @@ import { log } from '../../logger.js';
 import type { DeviceKind, DeviceProvider, DiscoveredDevice, SensorReading } from '../types.js';
 
 // Provider qui délègue tout le travail BLE réel au process noble-bridge (natif macOS, hors Docker,
-// voir noble-bridge/). Ce provider n'est qu'un client HTTP/WebSocket — voir STROYPLANT_SPEC.md
+// voir noble-bridge/). Ce provider n'est qu'un client HTTP/WebSocket — voir docs/STROYPLANT_SPEC.md
 // section 6. Les identifiants de device ici sont des ids "logiques" (PARROT-XXXX / XIAOMI-<uuid noble>,
 // pas la MAC réelle — CoreBluetooth ne l'expose pas) : ne correspondent PAS aux ids MAC utilisés par
 // le provider node-ble en prod. Attendu — ce provider sert à valider le protocole, pas la continuité

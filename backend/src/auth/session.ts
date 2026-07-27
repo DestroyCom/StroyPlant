@@ -7,7 +7,7 @@ export async function getSession(request: FastifyRequest) {
 }
 
 // Protège toute route/WS en dehors de /api/auth/* — jamais exposé sans protection
-// (STROYPLANT_SPEC.md section 7.6, même exigence pour le futur serveur MCP du Lot 8).
+// (docs/STROYPLANT_SPEC.md section 7.6, même exigence pour le futur serveur MCP du Lot 8).
 export async function requireAuth(request: FastifyRequest, reply: FastifyReply): Promise<void> {
   const session = await getSession(request);
   if (!session) {

@@ -1,4 +1,4 @@
-// Source de vérité : PARROT_BLE_REVERSE_ENGINEERING.md + PARROT_BLE_DEEP_DIVE.md (racine du repo).
+// Source de vérité : docs/PARROT_BLE_REVERSE_ENGINEERING.md + docs/PARROT_BLE_DEEP_DIVE.md (racine du repo).
 // Base UUID custom Parrot : 39e1xxxx-84a8-11e2-afba-0002a5d5c51b.
 
 // Service GATT réel contenant les characteristics watering (f901-f912) — aussi l'UUID annoncé en
@@ -13,7 +13,7 @@ export const UUIDS = {
   live: {
     // UUID_LIVE_MEASURE_PERIOD — write 1 (uint8) avant de lire/souscrire fa09/0a/0b, sinon le
     // firmware ne rafraîchit pas ses valeurs (lectures figées silencieusement). Write 0 en fin de
-    // session. Voir STROYPLANT_SPEC.md section 8.
+    // session. Voir docs/STROYPLANT_SPEC.md section 8.
     measurePeriod: '39e1fa06-84a8-11e2-afba-0002a5d5c51b',
     // Characteristics réellement utilisées par l'app officielle (PAS fa01-05, vestigiales) —
     // float32 LE, déjà calibrées par le firmware, aucune formule de conversion nécessaire.

@@ -50,7 +50,7 @@ async function waitForFirstNotification(characteristic: GattCharacteristic, time
   }
 }
 
-// Cycle de scan (STROYPLANT_SPEC.md section 7.1) : ~10s de scan puis pause (1 min en usage normal),
+// Cycle de scan (docs/STROYPLANT_SPEC.md section 7.1) : ~10s de scan puis pause (1 min en usage normal),
 // filtré par RSSI minimum -90. La notion de "vu depuis 3 cycles avant d'être déclaré perdu" est gérée
 // au niveau du scanner orchestrateur (backend/src/ble/scanner.ts), pas ici — ce provider ne fait
 // que remonter des événements de découverte bruts.
@@ -59,7 +59,7 @@ const SCAN_PAUSE_MS = 60_000;
 const RSSI_MIN = -90;
 
 // BlueZ n'a pas d'équivalent 1:1 du code Android/Bluedroid GATT_ERROR=133 (voir
-// PARROT_BLE_DEEP_DIVE.md section 5 : ce sont des codes Android, pas un standard bas niveau). Cette
+// docs/PARROT_BLE_DEEP_DIVE.md section 5 : ce sont des codes Android, pas un standard bas niveau). Cette
 // heuristique reste donc du best-effort sur les messages d'erreur D-Bus les plus proches
 // fonctionnellement (échec de connexion générique post-déconnexion) — À AFFINER EMPIRIQUEMENT sur
 // l'the production server en conditions réelles, comme demandé explicitement par la spec pour ce pattern de retry.

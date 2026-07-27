@@ -1,7 +1,7 @@
 import { log } from '../../logger.js';
 
-// Pattern de résilience confirmé par l'app officielle Parrot (STROYPLANT_SPEC.md section 7.1,
-// PARROT_BLE_DEEP_DIVE.md section 5) : jusqu'à 3 tentatives de connexion GATT, timeout 15-20s par
+// Pattern de résilience confirmé par l'app officielle Parrot (docs/STROYPLANT_SPEC.md section 7.1,
+// docs/PARROT_BLE_DEEP_DIVE.md section 5) : jusqu'à 3 tentatives de connexion GATT, timeout 15-20s par
 // tentative. Sur GATT_ERROR (133, très fréquente) : backoff fixe de 500ms avant retry ; à la 2e
 // occurrence CONSÉCUTIVE, redémarrer l'adaptateur Bluetooth (disable/enable) plutôt que de continuer
 // à réessayer sur un adaptateur probablement dans un mauvais état.
