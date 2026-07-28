@@ -1,0 +1,17 @@
+.git
+node_modules
+**/node_modules
+dist
+**/dist
+frontend/.tanstack
+frontend/src/routeTree.gen.ts
+backend/prisma/dev.db
+backend/prisma/dev.db-journal
+**/*.db
+**/*.db-journal
+.env
+.env.*
+!.env.example
+*.log
+.DS_Store
+docs/fonts

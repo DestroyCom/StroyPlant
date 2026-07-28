@@ -258,8 +258,33 @@ production server:
     (the code still reaches the client). Not fixed pre-emptively since the real behavior depends on
     the specific `redirect_uri` Claude.ai's connector uses, which can't be verified without a live
     test — tracked as the first thing to check once DestCom tries a real connection.
-- **Next batch**: Batch 9 (Docker environment: Dockerfile, prod/test docker-compose, GHCR GitHub
-  Action).
+- **Batch 9** ✅ (2026-07-28) — Docker environment: `Dockerfile`, `docker-entrypoint.sh`,
+  `docker-compose.prod.yml`, `docker-compose.test.yml`, `.github/workflows/docker-publish.yml` (all
+  repo root). Key points, full detail in `docs/STROYPLANT_SPEC.md` section 14:
+  - **Static frontend serving + SPA fallback finally implemented**
+    (`backend/src/api/staticFrontend.ts`) — required by the spec since section 14 was written, but
+    nothing had built it until now. Registered last in `api/server.ts` so it can never shadow
+    `/api/*`/`/mcp*`/`/.well-known/*`; skipped entirely (not an error) when the build directory is
+    absent, so local `pnpm dev` (Vite's own dev server) is unaffected.
+  - **Multi-stage build using `pnpm deploy --legacy`** (not a manual `node_modules` copy) for a
+    real, non-symlinked, prod-only backend `node_modules` — `noble-bridge` excluded from the
+    install scope entirely (its native macOS-only bindings fail building on Linux).
+  - **Two empirical bugs found and fixed while actually building/running the image** (not just
+    written and assumed correct): (1) `prisma generate` needs `openssl` present at build time too,
+    not just runtime — without it, it silently guesses the wrong libssl version and crashes every
+    query at container startup; (2) `frontend/package.json`'s build script ran `tsc -b` before
+    `vite build`, which only ever worked by accident (a stale `routeTree.gen.ts` already on disk
+    from a prior `pnpm dev`) — a genuinely clean checkout fails. Both fixed; `prisma` also moved
+    from `devDependencies` to `dependencies` since `docker-entrypoint.sh` needs it at runtime to
+    run `prisma migrate deploy` on every container start.
+  - **GitHub Action builds both `linux/amd64` and `linux/arm64`** — the production server's CPU
+    architecture isn't documented anywhere, so both are built rather than guessing one.
+  - **Verified**: built and ran the image locally end-to-end with the mock provider — migrations
+    applying on first boot, no Prisma engine errors, SPA fallback and API/MCP routing all behaving
+    correctly. **Not yet verified**: the real `docker-compose.prod.yml` path against actual
+    Bluetooth hardware on the production server (network_mode: host, node-ble) — tracked as a
+    follow-up.
+- **Next batch**: Batch 10 (extension to other devices — Flower Power, Flower Care).
 - **`noble-bridge` validated with real hardware** ✅ (2026-07-27) — a real Parrot Pot
   (`PARROT-A073`) connected and read end-to-end (scan → connect → activate → read
   humidity/temp/luminosity/reservoir → deactivate → disconnect) via the Mac's Bluetooth, data
@@ -305,6 +330,9 @@ noble-bridge/    Native macOS process (outside Docker), exposes the Mac's Blueto
                  used by the backend's `noble-bridge` provider for dev without a Linux dongle
 infra/lot0/      Docker+Bluetooth setup scripts/checklist on the production server
 docs/            Full spec, Parrot Pot BLE reverse-engineering docs, frontend design import
+Dockerfile, docker-entrypoint.sh, docker-compose.prod.yml, docker-compose.test.yml (Batch 9) —
+  multi-stage image build + prod/smoke-test compose files, see docs/STROYPLANT_SPEC.md section 14
+.github/workflows/docker-publish.yml (Batch 9) — builds + pushes to GHCR on push to main
 ```
 
 ## Backend — technical detail

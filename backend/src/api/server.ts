@@ -6,6 +6,7 @@ import { auth } from '../auth/auth.js';
 import type { ConnectionQueue } from '../ble/connectionQueue.js';
 import { registerMcpRoutes } from '../mcp/routes.js';
 import type { DeviceProvider } from '../providers/types.js';
+import { registerStaticFrontend } from './staticFrontend.js';
 import { createContextFactory } from './trpc/context.js';
 import { appRouter } from './trpc/router.js';
 import { registerRawBodyParser, sendWebResponse, toWebRequest } from './webBridge.js';
@@ -40,6 +41,10 @@ export async function buildServer(provider: DeviceProvider, connectionQueue: Con
     useWSS: true,
     trpcOptions: { router: appRouter, createContext: createContextFactory({ provider, connectionQueue, mqttClient }) },
   });
+
+  // Registered last: its SPA-fallback notFoundHandler must never shadow the API/MCP/auth routes
+  // above, so any request that reaches it genuinely isn't one of those.
+  await registerStaticFrontend(app);
 
   return app;
 }

@@ -591,7 +591,7 @@ divergence.
 | **Batch 6**  | ✅ Plant Dr integration (device-side dry/wet calibration + STATUS_FLAGS), complement to the Health Engine, see section 7.11. `ALGORITHM_STATUS` real-hardware test still pending (follow-up)                                                                                      |
 | **Batch 7**  | ✅ MQTT client + Home Assistant auto-discovery, see section 7.7. No production Mosquitto/HA instance to validate against yet (follow-up)                                                                                                                                          |
 | **Batch 8**  | ✅ MCP server (tools listed in 7.8), protected by auth. Not yet validated against a real MCP client (follow-up)                                                                                                                                                                  |
-| **Batch 9**  | Create the Docker evironnement, dockerfile, dockercompose prod, dockercompose test, GitHub action to build image on GHCR, and all the other necessay things                                                                                                                       |
+| **Batch 9**  | ✅ Docker environment (see section 14): Dockerfile, prod/test compose, GHCR GitHub Action. Not yet validated against real Bluetooth hardware (follow-up)                                                                                                                          |
 | **Batch 10** | Extension to other devices (Flower Power, Flower Care). Also includes an optional empirical exploration: testing raw EC reading on the Parrot Pot (`39e1fa02`) on the real device via the production server, with no guarantee of a usable result — the official app doesn't use it (section 8) |
 
 _(The old historical "Batch 2" removed: final decision in section 7.10 — fallback to live polling only, already covered by Batch 1, no dedicated development needed.)_
@@ -611,7 +611,7 @@ Each batch must be validated before moving to the next. Do not chain several bat
 - The project only supports **device types for which a driver has been written** — this is not a generic "any BLE sensor" system.
 - Never present the project as "universal" or "ready to use on any device" in user documentation — be explicit about these limits in the README.
 
-## 14. Hosting & reverse proxy
+## 14. Hosting & reverse proxy (Batch 9, implemented)
 
 DestCom already runs an nginx-based reverse proxy on his production server for other services. Goal: **a single container, a single domain name, a single deploy** — not two separate front/back containers, not two subdomains.
 
@@ -622,3 +622,70 @@ DestCom already runs an nginx-based reverse proxy on his production server for o
 - On the reverse-proxy side: a single subdomain, a single `proxy_pass` to `container:port` — no `/api` routing rule to manage at the nginx level, all dispatch logic stays in the Node code.
 - **Point of caution**: explicitly verify that the reverse-proxy config generated for this site properly forwards the WebSocket upgrade headers (`Connection: upgrade`, `Upgrade: websocket`) — without this, the WS appears to connect and then silently drops. Do not assume this is the case by default, check the actually-used config file.
 - A single `docker-compose` service for the whole app (the multi-stage Dockerfile from section 7.9 produces a single front+back image).
+
+**Implementation** (`Dockerfile`, `docker-entrypoint.sh`, `docker-compose.prod.yml`,
+`docker-compose.test.yml`, `.github/workflows/docker-publish.yml`, all at the repo root):
+
+- **Static serving + SPA fallback** (`backend/src/api/staticFrontend.ts`, registered last in
+  `api/server.ts` so its catch-all `setNotFoundHandler` can never shadow `/api/*`, `/mcp*`, or
+  `/.well-known/*`): `@fastify/static` serves the Vite build, and any unmatched route outside those
+  prefixes falls back to `index.html`. Skips registering entirely if the build directory doesn't
+  exist (always true in local `pnpm dev`, since Vite's own dev server handles the frontend there) —
+  dev is unaffected.
+- **Multi-stage Dockerfile**: a `build` stage does a full workspace `pnpm install` **scoped to
+  `--filter backend --filter frontend`** — `noble-bridge` is excluded entirely (its native
+  `@abandonware/noble` CoreBluetooth bindings only make sense on macOS and fail outright building
+  on Linux without Python/build tools, found empirically, not assumed). After compiling both
+  packages, `pnpm deploy --filter=backend --prod --legacy` (pnpm v10's non-injected-workspace flag,
+  since backend has no real npm-level dependency on the other workspace packages) produces a fully
+  self-contained, non-symlinked `node_modules` for just the backend — the officially recommended
+  pnpm pattern for multi-stage Docker builds, safer than manually copying pnpm's symlinked
+  workspace `node_modules` across stages. The frontend's build output isn't part of the backend
+  package directory, so it's copied in as a sibling (`frontend-dist/`) afterward.
+- **Prisma client regenerated twice**: once normally during the build, and once more
+  **after** `pnpm deploy`, explicitly pointed at the deployed schema
+  (`prisma generate --schema=/prod/backend/prisma/schema.prisma`) — the isolated deploy's fresh
+  `node_modules` doesn't carry over the first generation's codegen output (it isn't part of
+  dependency resolution), so without this the deployed image ships a `@prisma/client` with no
+  generated code at all.
+- **`openssl` installed in both the build and runtime stages, not just runtime** — found
+  empirically, not assumed: without it in the build stage, `prisma generate` can't detect the
+  local libssl version and silently defaults to a wrong guess (`openssl-1.1.x`), which then doesn't
+  match the runtime stage's real Debian bookworm OpenSSL (3.0.x), crashing every query at container
+  startup with "Prisma Client could not locate the Query Engine for runtime
+  linux-arm64-openssl-3.0.x". `prisma` itself was also moved from `devDependencies` to
+  `dependencies` in `backend/package.json` — the CLI must be present at **runtime**, not just
+  build time, since `docker-entrypoint.sh` runs `prisma migrate deploy` against the real persistent
+  volume before starting the server every time the container boots (never left as a manual
+  post-deploy step).
+- **Build-order bug found and fixed independently of Docker**: `frontend/package.json`'s `build`
+  script was `tsc -b && vite build` — type-checking before Vite (and its TanStack Router plugin)
+  had a chance to generate `src/routeTree.gen.ts` (gitignored, regenerated on every build). This
+  only ever worked by accident, when a prior `pnpm dev` session had already left a stale copy on
+  disk — a genuinely clean checkout (this Docker build, or CI) fails outright. Fixed by reordering
+  to `vite build && tsc -b`, which still gives the same type-safety guarantee, just checked after
+  bundling instead of before.
+- **`docker-compose.prod.yml`**: `network_mode: host` + `cap_add: [NET_ADMIN, NET_RAW]` +
+  the system D-Bus socket mounted (section 5, validated in `infra/lot0/CHECKLIST.md`) + a named
+  volume for the SQLite file (`DATABASE_URL=file:/app/data/prod.db`, an absolute path — sidesteps
+  the schema-relative-path gotcha noted elsewhere in this doc). Pulls the image from GHCR rather
+  than building on the production server.
+- **`docker-compose.test.yml`**: a separate, lighter-weight smoke test — `BLE_PROVIDER=mock`, no
+  Bluetooth capabilities, normal port mapping instead of host networking — verifies a built image
+  actually boots and serves traffic. Distinct purpose from `infra/lot0`'s disposable container
+  (validates real Bluetooth/D-Bus access on the production server specifically); this one only
+  checks the image itself.
+- **GitHub Action** (adapted from an example DestCom uses on another project): builds and pushes to
+  GHCR on every push to `main` touching backend/frontend/Docker files, tagged `latest` +
+  `main-<short-sha>`. Builds **both `linux/amd64` and `linux/arm64`** via buildx + QEMU — the
+  production server's exact CPU architecture isn't pinned down in this spec, so building both
+  avoids depending on that assumption at all.
+- **Verified empirically, not just written**: built and ran the image locally (mock provider,
+  `docker-compose.test.yml`) end to end — migrations applying against a fresh volume on first boot,
+  the server starting with no Prisma engine errors, the SPA fallback serving `index.html` for a
+  deep route like `/devices/123` while `/api/*`/`/mcp` correctly return real 404s/401s instead of
+  the app shell, and a static asset serving with the right content type. Not yet validated: the
+  actual `docker-compose.prod.yml` path against real Bluetooth hardware on the production server
+  (network_mode: host, node-ble) — the image build and mock-provider boot are confirmed, the real
+  BLE capabilities config was already independently validated in Batch 0, but the two haven't been
+  exercised together yet.

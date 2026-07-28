@@ -11,7 +11,8 @@ ADMIN_PASSWORD ?= changeme
 
 .PHONY: help install dev backend frontend noble-bridge \
 	db-migrate db-seed db-wipe db-studio import-species \
-	lint lint-fix typecheck stop
+	lint lint-fix typecheck stop \
+	docker-build docker-test docker-test-down docker-up docker-down docker-logs
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*## "}; {printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}'
@@ -79,3 +80,24 @@ typecheck: ## Typecheck all 3 packages
 	cd backend && pnpm exec tsc -p tsconfig.json --noEmit
 	cd frontend && pnpm typecheck
 	cd noble-bridge && pnpm exec tsc -p tsconfig.json --noEmit
+
+## --- Docker (Batch 9) ---
+
+docker-build: ## Build the production image locally (single-arch, current machine)
+	docker build -t stroyplant:local .
+
+docker-test: ## Build + run the mock-provider smoke test (no real Bluetooth needed)
+	docker compose -f docker-compose.test.yml up --build -d
+	@echo "Smoke test running at http://localhost:3299 — 'make docker-test-down' to stop"
+
+docker-test-down: ## Stop and remove the smoke-test container/volume
+	docker compose -f docker-compose.test.yml down -v
+
+docker-up: ## Start the real production stack (docker-compose.prod.yml) — production server only
+	docker compose -f docker-compose.prod.yml up -d
+
+docker-down: ## Stop the production stack
+	docker compose -f docker-compose.prod.yml down
+
+docker-logs: ## Tail the production stack's logs
+	docker compose -f docker-compose.prod.yml logs -f

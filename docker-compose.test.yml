@@ -1,0 +1,24 @@
+# Smoke-test compose (Batch 9) — verifies a built image actually starts and serves traffic,
+# entirely with the mock BLE provider (no real Bluetooth/host networking/capabilities needed,
+# unlike docker-compose.prod.yml). Not a substitute for infra/lot0's disposable container, which
+# validates real Bluetooth/D-Bus access on the production server specifically — this one only
+# checks that the image itself boots and the HTTP server responds.
+services:
+  stroyplant-test:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: stroyplant-smoke-test
+    ports:
+      - '3299:3000'
+    environment:
+      DATABASE_URL: file:/app/data/test.db
+      BLE_PROVIDER: mock
+      PORT: 3000
+      BETTER_AUTH_SECRET: smoke-test-only-secret-not-for-real-use
+      BETTER_AUTH_URL: http://localhost:3299
+    volumes:
+      - stroyplant-test-data:/app/data
+
+volumes:
+  stroyplant-test-data:

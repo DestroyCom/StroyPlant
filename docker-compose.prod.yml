@@ -1,0 +1,25 @@
+# Production deployment (docs/STROYPLANT_SPEC.md sections 5 and 14) — real BLE hardware access via
+# node-ble/BlueZ over D-Bus needs network_mode: host + NET_ADMIN/NET_RAW + the system D-Bus socket
+# mounted (validated in infra/lot0/CHECKLIST.md — fine-grained capabilities, no `privileged: true`
+# needed). Only works on native Linux Docker Engine, never Docker Desktop macOS/Windows.
+services:
+  stroyplant:
+    image: ghcr.io/destroycom/stroyplant:latest
+    container_name: stroyplant
+    restart: unless-stopped
+    network_mode: host
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    volumes:
+      - /var/run/dbus/system_bus_socket:/var/run/dbus/system_bus_socket
+      - stroyplant-data:/app/data
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: file:/app/data/prod.db
+      BLE_PROVIDER: node-ble
+      PORT: 3000
+
+volumes:
+  stroyplant-data:
