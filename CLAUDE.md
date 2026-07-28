@@ -200,7 +200,66 @@ the production server:
     with the updated name. **Not yet validated against a real Mosquitto/Home Assistant instance**
     (none exists yet) — tracked as a follow-up once DestCom sets one up.
   - Full design detail in `docs/STROYPLANT_SPEC.md` section 7.7.
-- **Next batch**: Batch 8 (MCP server).
+- **Batch 8** ✅ (2026-07-28) — MCP server (`backend/src/mcp/`: `context.ts`, `server.ts`,
+  `routes.ts`), exposing `list_devices`, `get_plant_status`, `get_plant_history`, `trigger_watering`
+  (spec section 7.8) via `@modelcontextprotocol/sdk`. Key decisions, confirmed with DestCom rather
+  than assumed:
+  - **Mounted on the existing backend, in HTTP** — a `/mcp` Streamable HTTP endpoint on the same
+    always-running Fastify process (not a separate stdio process), reusing the same BLE
+    provider/connectionQueue/MQTT client. Each request builds a fresh `McpServer` + stateless
+    transport (`sessionIdGenerator: undefined`, `enableJsonResponse: true`) bound to that request's
+    authenticated caller — no session state kept in memory between calls, matching the SDK's own
+    documented stateless-deployment pattern; simple request/response tools don't need more.
+  - **Auth: BetterAuth's official `mcp` plugin (OAuth 2.1)**, not a static API key — chosen because
+    it ships in the already-installed `better-auth` package (no new dependency) and is the
+    protocol-correct mechanism real MCP clients expect. Wired in `auth.ts` (`loginPage: '/login'`,
+    `oidcConfig.allowDynamicClientRegistration: true`). Needed 3 new Prisma models
+    (`OauthApplication`/`OauthAccessToken`/`OauthConsent`, migration
+    `20260728155824_add_mcp_oauth_tables`) — same schema the plugin's underlying `oidcProvider`
+    uses, managed entirely by BetterAuth, never read/written by StroyPlant's own code.
+  - **No custom consent page** — BetterAuth serves its own default consent HTML when `consentPage`
+    is omitted, sufficient for this single-admin, personal-use deployment. No new frontend work at
+    all: an unauthenticated `/mcp/authorize` redirects to the *existing* `/login` page, and
+    BetterAuth's own after-hook (a signed `oidc_login_prompt` cookie) resumes the OAuth flow
+    automatically once the user signs in normally.
+  - **A tRPC context is synthesized from the OAuth session** (`mcp/context.ts`): only `userId` is
+    real (resolved via Prisma), the rest is a minimal but type-compliant `Session`-shaped object —
+    no procedure reads session fields beyond the truthiness check `protectedProcedure` already does,
+    so this is safe. Lets the 4 tools call `appRouter.createCaller(ctx)` directly, reusing the exact
+    same procedures the frontend uses rather than duplicating device/health/watering logic.
+  - **`trigger_watering` never fails silently** (7.1, extended to the MCP-visible side): a caught
+    `TRPCError` becomes a tool result with `isError: true` and the real error message, never an
+    unhandled exception or a false success.
+  - **Investigation correction, not an assumption**: initially believed (from an incomplete read of
+    `better-auth`'s `mcp` plugin source) that it lacked Dynamic Client Registration (RFC 7591),
+    entirely unlike a real MCP client's needs — flagged to DestCom, who chose to stay on stable
+    `better-auth` regardless of that apparent gap. A closer, complete read of the same file found a
+    `registerMcpClient` endpoint at `/mcp/register` after all — DCR **does** work out of the box,
+    confirmed empirically (see below), and no version tradeoff was actually needed.
+  - **`backend/src/api/webBridge.ts`** (new, shared by the pre-existing `/api/auth/*` passthrough
+    and the new MCP/discovery routes): found and fixed a real gap while testing — Fastify only
+    parses JSON bodies by default, but the OAuth token endpoint needs
+    `application/x-www-form-urlencoded` per RFC 6749 (what real OAuth clients send); a raw
+    passthrough content-type parser was added (`registerRawBodyParser`) so that content type
+    reaches BetterAuth's handler unparsed instead of getting rejected with a Fastify 415.
+  - **Verified end-to-end against the mock provider via curl**, entirely from outside the app (no
+    real MCP client available in this environment): discovery metadata
+    (`/.well-known/oauth-authorization-server`, `/.well-known/oauth-protected-resource`), anonymous
+    Dynamic Client Registration, the unauthenticated `/mcp/authorize` → `/login` redirect with the
+    signed cookie, sign-in resuming the flow and redirecting back to the client's `redirect_uri`
+    with a code, the PKCE token exchange, and all 4 tools called over `/mcp` with the resulting
+    bearer token — including `trigger_watering`'s explicit failure on the empty-reservoir mock pot.
+  - **Not yet validated**: an actual connection from Claude Desktop/Claude.ai's remote-connector UI.
+    One specific open risk flagged to DestCom: the frontend's `/login` page signs in via a `fetch()`
+    call (`authClient.signIn.email()`), and BetterAuth's OAuth-resume mechanism overrides that same
+    response into a redirect toward the MCP client's `redirect_uri` — since `fetch()` follows
+    redirects internally rather than navigating the browser tab, this may surface as a confusing
+    "Connexion impossible" error in the UI even when the underlying authorization actually succeeded
+    (the code still reaches the client). Not fixed pre-emptively since the real behavior depends on
+    the specific `redirect_uri` Claude.ai's connector uses, which can't be verified without a live
+    test — tracked as the first thing to check once DestCom tries a real connection.
+- **Next batch**: Batch 9 (Docker environment: Dockerfile, prod/test docker-compose, GHCR GitHub
+  Action).
 - **`noble-bridge` validated with real hardware** ✅ (2026-07-27) — a real Parrot Pot
   (`PARROT-A073`) connected and read end-to-end (scan → connect → activate → read
   humidity/temp/luminosity/reservoir → deactivate → disconnect) via the Mac's Bluetooth, data
@@ -233,6 +292,8 @@ backend/         API + business logic (Fastify, Prisma/SQLite, auth, BLE) — ru
   src/health/      Health Engine (Batch 4): plant_profiles CSV import + scoring engine
   src/mqtt/        MQTT client + Home Assistant auto-discovery (Batch 7): topics, discovery
                    payloads, publisher (state/health/watering-result), commands (HA button → watering)
+  src/mcp/         MCP server (Batch 8): OAuth session → tRPC context (context.ts), the 4 tools
+                   (server.ts), Fastify routes for /mcp + OAuth discovery metadata (routes.ts)
   src/db/          Prisma client
   prisma/          schema.prisma + migrations
 frontend/        Vite + React SPA + TanStack Router/Query + Tailwind v4 + shadcn/ui (Batch 3)
@@ -340,7 +401,9 @@ docs/            Full spec, Parrot Pot BLE reverse-engineering docs, frontend de
   `http://localhost:5173` — needed for dev (the Vite proxy doesn't rewrite the `Origin` header,
   only `Host`); without it BetterAuth rejects the login with "Invalid origin". No impact in prod
   (front+back on the same origin, section 14). Ready for a future OIDC plugin addition (Authentik)
-  with no rewrite needed — not added now.
+  with no rewrite needed — not added now. Since Batch 8, also runs the `mcp` plugin (OAuth 2.1 for
+  the MCP server, see Project status) — a second, independent auth mechanism from the cookie session
+  above, used only by `/mcp` and its OAuth endpoints under `/api/auth/mcp/*`.
 - Homegrown structured logging (`src/logger.ts`): timestamp, direction (SCAN/CONNECT/READ/WRITE/
   ...), uuid, hex payload, result — never a silent log for a BLE operation.
 

@@ -1,6 +1,6 @@
 import { betterAuth } from 'better-auth';
 import { prismaAdapter } from 'better-auth/adapters/prisma';
-import { admin } from 'better-auth/plugins';
+import { admin, mcp } from 'better-auth/plugins';
 import { prisma } from '../db/client.js';
 import { env } from '../env.js';
 
@@ -29,5 +29,24 @@ export const auth = betterAuth({
   // Kept conditional on NODE_ENV=production — still to be set explicitly when the prod
   // Dockerfile is written (nothing sets it today, so env.nodeEnv stays 'development' everywhere).
   trustedOrigins: env.nodeEnv === 'production' ? [] : ['http://localhost:5173'],
-  plugins: [admin()],
+  plugins: [
+    admin(),
+    // MCP server (Batch 8, docs/STROYPLANT_SPEC.md section 7.8) — OAuth 2.1 authorization for MCP
+    // clients (Claude Desktop/Code, remote connectors), confirmed with DestCom over a simpler
+    // static API-key mechanism since this ships in the already-installed `better-auth` package (no
+    // new dependency) and is the protocol-correct mechanism real MCP clients expect. Reuses the
+    // existing /login page — no separate frontend work: an unauthenticated `/mcp/authorize` redirects
+    // there, and BetterAuth's own after-hook resumes the OAuth flow once the user signs in normally.
+    // No `consentPage` set — BetterAuth serves its own built-in consent HTML, sufficient for this
+    // single-admin, personal-use deployment.
+    mcp({
+      loginPage: '/login',
+      oidcConfig: {
+        loginPage: '/login',
+        // Real MCP clients self-register via RFC 7591 (Dynamic Client Registration) — there's no
+        // UI in this project to pre-provision an OAuth client by hand.
+        allowDynamicClientRegistration: true,
+      },
+    }),
+  ],
 });

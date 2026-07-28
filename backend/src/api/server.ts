@@ -1,17 +1,19 @@
 import websocketPlugin from '@fastify/websocket';
 import { fastifyTRPCPlugin } from '@trpc/server/adapters/fastify';
-import { fromNodeHeaders } from 'better-auth/node';
 import Fastify from 'fastify';
 import type { MqttClient } from 'mqtt';
 import { auth } from '../auth/auth.js';
 import type { ConnectionQueue } from '../ble/connectionQueue.js';
+import { registerMcpRoutes } from '../mcp/routes.js';
 import type { DeviceProvider } from '../providers/types.js';
 import { createContextFactory } from './trpc/context.js';
 import { appRouter } from './trpc/router.js';
+import { registerRawBodyParser, sendWebResponse, toWebRequest } from './webBridge.js';
 
 export async function buildServer(provider: DeviceProvider, connectionQueue: ConnectionQueue, mqttClient: MqttClient | null = null) {
   const app = Fastify({ logger: false });
   await app.register(websocketPlugin);
+  registerRawBodyParser(app);
 
   // BetterAuth handler (login/logout/session/...) — never behind requireAuth, it manages
   // its own access logic (official pattern, see docs/integrations/fastify).
@@ -19,26 +21,20 @@ export async function buildServer(provider: DeviceProvider, connectionQueue: Con
     method: ['GET', 'POST'],
     url: '/api/auth/*',
     async handler(request, reply) {
-      const url = new URL(request.url, `http://${request.headers.host}`);
-      const headers = fromNodeHeaders(request.headers);
-      const req = new Request(url.toString(), {
-        method: request.method,
-        headers,
-        ...(request.body ? { body: JSON.stringify(request.body) } : {}),
-      });
-      const response = await auth.handler(req);
-      reply.status(response.status);
-      response.headers.forEach((value, key) => {
-        reply.header(key, value);
-      });
-      return reply.send(response.body ? await response.text() : null);
+      const response = await auth.handler(toWebRequest(request));
+      return sendWebResponse(reply, response);
     },
   });
 
+  // MCP server (Batch 8, docs/STROYPLANT_SPEC.md section 7.8) — OAuth discovery metadata + the
+  // /mcp tool endpoint, protected by BetterAuth's `mcp` plugin.
+  registerMcpRoutes(app, { provider, connectionQueue, mqttClient });
+
   // All devices/health/readings procedures require a session (protectedProcedure, see
-  // api/trpc/trpc.ts) — never exposed without protection (section 7.6, same requirement for the
-  // future MCP server in Batch 8). useWSS shares this same prefix for the readings.onReading
-  // subscription's WS upgrade, reusing the @fastify/websocket plugin registered above.
+  // api/trpc/trpc.ts) — never exposed without protection (section 7.6, same requirement enforced
+  // for the MCP server above via a different mechanism, OAuth rather than a cookie session).
+  // useWSS shares this same prefix for the readings.onReading subscription's WS upgrade, reusing
+  // the @fastify/websocket plugin registered above.
   await app.register(fastifyTRPCPlugin, {
     prefix: '/api/trpc',
     useWSS: true,

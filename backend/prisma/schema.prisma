@@ -92,10 +92,10 @@ model Reading {
   // Plant Dr STATUS_FLAGS (39e1FD86, Batch 6) — firmware-computed soil/reservoir/probe state, see
   // docs/STROYPLANT_SPEC.md section 7.11. `isInAir` readings are excluded from the Health Engine's
   // rolling-baseline calculations (section 7.3) — a probe out of the soil isn't a plant state.
-  isDrySoil   Boolean?
-  isWetSoil   Boolean?
-  isEmptyTank Boolean?
-  isInAir     Boolean?
+  isDrySoil                Boolean?
+  isWetSoil                Boolean?
+  isEmptyTank              Boolean?
+  isInAir                  Boolean?
 
   // Xiaomi LYWSD03MMC
   humidityPercent Float?
@@ -135,6 +135,13 @@ model User {
   banExpires    DateTime?
   sessions      Session[]
   accounts      Account[]
+
+  // Batch 8 (docs/STROYPLANT_SPEC.md section 7.8) — OAuth 2.1 client/token/consent rows for the
+  // MCP server, managed entirely by BetterAuth's `mcp` plugin (same schema as its `oidcProvider`
+  // plugin).
+  oauthApplications OauthApplication[]
+  oauthAccessTokens OauthAccessToken[]
+  oauthConsents     OauthConsent[]
 
   @@unique([email])
   @@map("user")
@@ -187,4 +194,65 @@ model Verification {
 
   @@index([identifier])
   @@map("verification")
+}
+
+// Batch 8 (docs/STROYPLANT_SPEC.md section 7.8) — BetterAuth's `mcp` plugin schema (identical to
+// its `oidcProvider` plugin, which it wraps): OAuth 2.1 client registrations, issued access/refresh
+// tokens, and recorded user consent, all owned by the plugin — StroyPlant's own code never reads or
+// writes these tables directly.
+model OauthApplication {
+  id           String   @id
+  name         String
+  icon         String?
+  metadata     String?
+  clientId     String   @unique
+  clientSecret String?
+  redirectUrls String
+  type         String
+  disabled     Boolean  @default(false)
+  userId       String?
+  user         User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  accessTokens OauthAccessToken[]
+  consents     OauthConsent[]
+
+  @@index([userId])
+  @@map("oauth_application")
+}
+
+model OauthAccessToken {
+  id                    String           @id
+  accessToken           String           @unique
+  refreshToken          String           @unique
+  accessTokenExpiresAt  DateTime
+  refreshTokenExpiresAt DateTime
+  clientId              String
+  application           OauthApplication @relation(fields: [clientId], references: [clientId], onDelete: Cascade)
+  userId                String?
+  user                  User?            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  scopes                String
+  createdAt             DateTime         @default(now())
+  updatedAt             DateTime         @updatedAt
+
+  @@index([clientId])
+  @@index([userId])
+  @@map("oauth_access_token")
+}
+
+model OauthConsent {
+  id           String           @id
+  clientId     String
+  application  OauthApplication @relation(fields: [clientId], references: [clientId], onDelete: Cascade)
+  userId       String
+  user         User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  scopes       String
+  consentGiven Boolean
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
+
+  @@index([clientId])
+  @@index([userId])
+  @@map("oauth_consent")
 }

@@ -347,11 +347,65 @@ procedure list and the Date-serialization note. Current procedures:
   Mosquitto/HA instance exists yet to validate against — this remains to be re-confirmed once one
   is available.
 
-### 7.8 MCP server
+### 7.8 MCP server (Batch 8, implemented)
 
 - Tools to expose: `list_devices()`, `get_plant_status(device_id)`, `get_plant_history(device_id, range)`, `trigger_watering(device_id)`
 - Directly reuses the Health Engine (the AI agent consumes the already-computed score, doesn't reinvent the threshold logic)
 - Protected by the Auth layer (7.6)
+
+**Implementation** (`backend/src/mcp/`: `context.ts`, `server.ts`, `routes.ts`, using
+`@modelcontextprotocol/sdk`): a `/mcp` Streamable HTTP endpoint mounted directly on the same
+always-running Fastify backend — confirmed with DestCom over a separate stdio process, since it
+lets the MCP server reuse the same BLE provider/connectionQueue/MQTT client with no extra process to
+run on the the production server. Each request builds a fresh `McpServer` and a stateless transport
+(`sessionIdGenerator: undefined`, `enableJsonResponse: true`) bound to that request's authenticated
+caller — the 4 tools are simple request/response calls with no server-initiated push, so there's no
+session state worth keeping between calls (the MCP SDK's own documented stateless-deployment
+pattern). The 4 tools call `appRouter.createCaller(ctx)` directly (`mcp/server.ts`), reusing the
+exact same tRPC procedures the frontend uses rather than duplicating device/health/watering logic a
+second time. `trigger_watering` never fails silently (7.1): a caught `TRPCError` becomes a tool
+result with `isError: true` and the real error message.
+
+**Auth: BetterAuth's official `mcp` plugin (OAuth 2.1)**, confirmed with DestCom over a simpler
+static API-key mechanism — it ships in the already-installed `better-auth` package (no new
+dependency) and is the protocol-correct mechanism real MCP clients expect (discovery metadata,
+Dynamic Client Registration, PKCE authorization code flow). Registered in `auth.ts` with
+`loginPage: '/login'` (the app's existing login page — no new frontend work) and
+`oidcConfig.allowDynamicClientRegistration: true`. Needs 3 new Prisma models
+(`OauthApplication`/`OauthAccessToken`/`OauthConsent`, migration `20260728155824_add_mcp_oauth_tables`)
+— the same schema the plugin's underlying `oidcProvider` plugin uses, owned entirely by BetterAuth.
+No `consentPage` configured — BetterAuth serves its own default consent HTML, sufficient for this
+single-admin, personal-use deployment. An unauthenticated `/mcp/authorize` redirects to `/login`; a
+signed `oidc_login_prompt` cookie lets BetterAuth's own after-hook resume the OAuth flow
+automatically once the user signs in normally, redirecting to the client's `redirect_uri` with a
+code — no bespoke continuation logic needed on StroyPlant's side.
+
+`buildMcpContext` (`mcp/context.ts`) synthesizes a tRPC `Context` from the OAuth session: only
+`userId` is real (resolved via Prisma), the rest is a minimal but type-compliant `Session`-shaped
+object, since no procedure reads session fields beyond the truthiness check `protectedProcedure`
+already does.
+
+`backend/src/api/webBridge.ts` (new, shared by the pre-existing `/api/auth/*` passthrough and the
+new MCP/discovery routes) fixes a real gap found while testing: Fastify only parses JSON bodies by
+default, but the OAuth token endpoint needs `application/x-www-form-urlencoded` per RFC 6749 (what
+real OAuth clients send) — a raw passthrough content-type parser (`registerRawBodyParser`) lets that
+content type reach BetterAuth's handler unparsed instead of a Fastify 415.
+
+**Verified end-to-end against the mock provider via curl** (no real MCP client available in this
+environment): discovery metadata (`/.well-known/oauth-authorization-server`,
+`/.well-known/oauth-protected-resource`), anonymous Dynamic Client Registration, the unauthenticated
+`/mcp/authorize` → `/login` redirect with the signed cookie, sign-in resuming the flow and
+redirecting back to the client's `redirect_uri` with a code, the PKCE token exchange, and all 4
+tools called over `/mcp` with the resulting bearer token — including `trigger_watering`'s explicit
+failure on the empty-reservoir mock pot. **Not yet validated**: an actual connection from Claude
+Desktop/Claude.ai's remote-connector UI. One open risk flagged to DestCom: the frontend's `/login`
+page signs in via `fetch()` (`authClient.signIn.email()`), and BetterAuth's OAuth-resume mechanism
+overrides that same response into a redirect toward the MCP client's `redirect_uri` — since
+`fetch()` follows redirects internally rather than navigating the browser tab, this may surface as a
+confusing "Connexion impossible" error in the UI even when the underlying authorization actually
+succeeded. Not fixed pre-emptively since the real behavior depends on the specific `redirect_uri`
+Claude.ai's connector uses, unverifiable without a live test — first thing to check at the next real
+connection attempt.
 
 ### 7.9 Frontend
 
@@ -536,7 +590,7 @@ divergence.
 | **Batch 5**  | ✅ Auto-watering scheduler (wired to the Health Engine) — see section 7.4                                                                                                                                                                                                         |
 | **Batch 6**  | ✅ Plant Dr integration (device-side dry/wet calibration + STATUS_FLAGS), complement to the Health Engine, see section 7.11. `ALGORITHM_STATUS` real-hardware test still pending (follow-up)                                                                                      |
 | **Batch 7**  | ✅ MQTT client + Home Assistant auto-discovery, see section 7.7. No production Mosquitto/HA instance to validate against yet (follow-up)                                                                                                                                          |
-| **Batch 8**  | MCP server (tools listed in 7.8), protected by auth                                                                                                                                                                                                                               |
+| **Batch 8**  | ✅ MCP server (tools listed in 7.8), protected by auth. Not yet validated against a real MCP client (follow-up)                                                                                                                                                                  |
 | **Batch 9**  | Create the Docker evironnement, dockerfile, dockercompose prod, dockercompose test, GitHub action to build image on GHCR, and all the other necessay things                                                                                                                       |
 | **Batch 10** | Extension to other devices (Flower Power, Flower Care). Also includes an optional empirical exploration: testing raw EC reading on the Parrot Pot (`39e1fa02`) on the real device via the the production server, with no guarantee of a usable result — the official app doesn't use it (section 8) |
 
