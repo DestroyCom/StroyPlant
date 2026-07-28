@@ -9,7 +9,7 @@ au point rapidement).
 Service self-hosted (remplaçant WatchFlower) qui tourne en continu sur un serveur Linux (the production server,
 Debian) : scan BLE de capteurs de plantes, historique, scoring de santé par profil d'espèce,
 arrosage automatique (Parrot Pot), intégration Home Assistant (MQTT), serveur MCP pour agents IA.
-Usage perso, un seul utilisateur admin. Antoine (freelance fullstack, ~3.5 ans d'XP, pas expert
+Usage perso, un seul utilisateur admin. DestCom (freelance fullstack, ~3.5 ans d'XP, pas expert
 BLE/hardware — expliquer les choix non triviaux).
 
 **Toujours lire `docs/STROYPLANT_SPEC.md` avant toute décision d'architecture** — c'est la source de
@@ -29,7 +29,7 @@ officiel Parrot) priment sur toute déduction depuis des sources tierces (WatchF
   section 7.1) — toute opération d'écriture (surtout `trigger_watering`) doit se voir confirmer ou
   échouer explicitement, jamais fire-and-forget.
 - En cas de doute technique ou de divergence entre la spec et ce qu'on observe en réel : poser la
-  question à Antoine plutôt que de deviner. Précédents concrets où deviner aurait été faux :
+  question à DestCom plutôt que de deviner. Précédents concrets où deviner aurait été faux :
   - Le Xiaomi LYWSD03MMC était supposé pvvx (annonce passive en clair) — en réalité firmware stock,
     annonce chiffrée en MiBeacon. Résolu par capture BLE réelle (`btmon`) sur l'the production server, pas supposition.
   - WatchFlower (et donc nous) lit le LYWSD03MMC en connexion GATT, pas en passif comme la spec le
@@ -58,14 +58,22 @@ revalider à son arrivée (chipset Realtek différent). Devices détectés à po
   connectionQueue séquentielle, API REST + WebSocket. Voir détail stack ci-dessous.
 - **Lot 2** ✅ — Auth BetterAuth (credentials, mono-admin, `disableSignUp: true`), toutes les routes
   `/api/*` et le WS protégées par session.
-- **Prochain lot** : Lot 3 (frontend Vite + React + TanStack Query/Router + Tailwind + shadcn/ui).
-  Un import de design existe déjà : **voir `docs/webdesign_claudecode.md`** — projet claude.ai/design
-  avec un design system StroyPlant (tokens couleurs/fonts/spacing) à utiliser comme base, via
-  `claude_design` MCP. Utiliser lucide + simple-icons pour les icônes. Le nom correct du projet est
-  **StroyPlant** (pas "StoryPlant", erreur présente dans les mockups à corriger).
+- **Lot 3** ✅ (partiel, voir portée ci-dessous) — Frontend Vite + React + TanStack Query/Router +
+  Tailwind v4 + shadcn/ui. Voir détail stack ci-dessous.
+- **Prochain lot** : Lot 4 (Health Engine — import CSV plant DB, scoring de santé par profil
+  d'espèce). Éventuellement compléter d'abord le Lot 3 avec les écrans "Ajouter un appareil" et
+  "Paramètres" du prototype claude.ai/design (voir ci-dessous) une fois qu'une confirmation explicite
+  aura été donnée — pas fait pour l'instant car ces écrans dépendent de fonctionnalités pas encore
+  implémentées (pairing manuel, notifications, arrosage auto = Lots 5/7/8).
+- **`noble-bridge` validé avec du vrai matériel** ✅ (2026-07-27) — un vrai Parrot Pot (`PARROT-A073`)
+  connecté et lu de bout en bout (scan → connexion → activation → lecture humidité/temp/luminosité/
+  réservoir → désactivation → déconnexion) via le Bluetooth du Mac, données remontées jusqu'au
+  dashboard frontend. Les autres devices à portée (2e Parrot Pot, plusieurs Xiaomi) ont été détectés
+  mais pas toujours lus au premier essai ("non trouvé au scan" — la fenêtre de scan de noble-bridge
+  ferme avant la prochaine annonce BLE du device ; le retry au poll suivant (~5 min) résout ça en
+  pratique). Validation ponctuelle, pas un test de régression automatisé.
 - **Non fait / reporté** : validation de `node-ble` en conditions réelles sur l'the production server (build Docker +
-  déploiement complet) et de `noble-bridge` avec un vrai device à portée du Mac — repoussé
-  volontairement à plus tard par Antoine.
+  déploiement complet) — repoussé volontairement à plus tard par DestCom.
 
 ## Structure du repo
 
@@ -77,6 +85,10 @@ backend/         API + logique métier (Fastify, Prisma/SQLite, auth, BLE) — t
   src/providers/   implémentations DeviceProvider (mock, noble-bridge, node-ble) + factory
   src/db/          client Prisma
   prisma/          schema.prisma + migrations
+frontend/        SPA Vite + React + TanStack Router/Query + Tailwind v4 + shadcn/ui (Lot 3)
+  src/routes/      pages TanStack Router (file-based) : login, _authenticated (layout+guard) et ses enfants
+  src/components/  Shell (sidebar), DeviceCard, SensorGauge, HistoryChart, composants shadcn dans ui/
+  src/lib/         auth-client (BetterAuth), api.ts (fetch typé), queries.ts (TanStack Query), use-live-readings (WS)
 noble-bridge/    Process natif macOS (hors Docker), expose le Bluetooth du Mac en HTTP/WS —
                  utilisé par le provider `noble-bridge` du backend pour dev sans dongle Linux
 infra/lot0/      Scripts/checklist setup Docker+Bluetooth sur l'the production server
@@ -122,25 +134,62 @@ docs/            Spec complète, docs rétro-ingénierie BLE Parrot Pot, import 
 - **Xiaomi LYWSD03MMC** : GATT, service `ebe0ccb0-...`, notify sur `ebe0ccc1-...`, payload 5 octets
   `[int16 LE temp/100][uint8 humidity][int16 LE tension mV/1000]`, batterie% = `(tension-2.1)*100`
   clampé 0-100. Formule confirmée par WatchFlower ET revalidée empiriquement sur device réel.
-- **API** : `GET /api/devices`, `GET /api/devices/:id/history?hours=N`, `POST
-  /api/devices/:id/water` (échec = 502 + détail, jamais silencieux). WebSocket `/ws` pousse chaque
-  nouvelle lecture (`{type:'reading', deviceId, kind, reading}`).
+- **API** : `GET /api/devices`, `GET /api/devices/:id/history?hours=N`, `GET
+  /api/devices/:id/watering-events` (10 derniers, ajouté au Lot 3 pour la timeline de la page détail
+  frontend), `POST /api/devices/:id/water` (échec = 502 + détail, jamais silencieux). WebSocket `/ws`
+  pousse chaque nouvelle lecture (`{type:'reading', deviceId, kind, reading}`).
 - **Auth (BetterAuth)** : `src/auth/auth.ts`. `emailAndPassword` activé mais `disableSignUp: true` —
   pas d'auto-inscription. Plugin `admin` utilisé uniquement pour `auth.api.createUser()` (seul moyen
   documenté de créer un compte sans passer par l'endpoint public de sign-up qui respecte
   `disableSignUp`) — pas de gestion de rôles multi-utilisateurs réelle. `pnpm seed:admin`
   (`ADMIN_EMAIL`/`ADMIN_PASSWORD`) crée l'unique compte. Toutes les routes `/api/devices/*` et `/ws`
-  passent par `requireAuth` (401 sans session). Prêt pour l'ajout futur du plugin OIDC (Authentik)
-  sans réécriture — pas ajouté maintenant.
+  passent par `requireAuth` (401 sans session). `trustedOrigins` inclut `http://localhost:5173` en dur
+  — nécessaire pour le dev (le proxy Vite ne réécrit pas l'en-tête `Origin`, seulement `Host`) ; sans
+  ça BetterAuth rejette le login avec "Invalid origin". Sans impact en prod (front+back sur la même
+  origine, section 14). Prêt pour l'ajout futur du plugin OIDC (Authentik) sans réécriture — pas
+  ajouté maintenant.
 - Logging structuré maison (`src/logger.ts`) : timestamp, direction (SCAN/CONNECT/READ/WRITE/...),
   uuid, payload hex, résultat — jamais de log muet sur une opération BLE.
+
+## Frontend — détail technique (Lot 3)
+
+- **Vite + React 19 + TypeScript**, **Tailwind v4** (`@tailwindcss/vite`, config CSS-first via
+  `@theme inline` dans `src/index.css`, pas de `tailwind.config.js`) + **shadcn/ui** (CLI `shadcn`
+  v4, style `radix-nova`, composants dans `src/components/ui/` — traités comme du code vendored, pas
+  reformatés à la main ; `biome.json` a une section `overrides` qui désactive
+  `noDangerouslySetInnerHtml`/`noArrayIndexKey` sur ce dossier pour cette raison).
+- **TanStack Router** (file-based, plugin `@tanstack/router-plugin/vite`, génère
+  `src/routeTree.gen.ts` — gitignored, régénéré par `pnpm dev`/`pnpm build`) + **TanStack Query**
+  (cache mis à jour en direct par le WebSocket via `queryClient.setQueryData`, voir
+  `src/lib/use-live-readings.ts`, monté uniquement dans `AppShell` donc actif seulement après login).
+- **BetterAuth React client** (`src/lib/auth-client.ts`, `createAuthClient()` sans `baseURL` —
+  résout sur `/api/auth` relatif, correct tant que front et back sont sur la même origine). Guard
+  d'authentification dans `src/routes/_authenticated.tsx` (`beforeLoad` + `authClient.getSession()`).
+- **Design** : deux projets claude.ai/design distincts référencés par `docs/webdesign_claudecode.md`
+  — le design system (tokens couleurs/typo/spacing + composants shadcn-like) et **le vrai prototype à
+  7 écrans `StoryPlant.dc.html`** (login, dashboard, détail, historique, paramètres, ajout, calibration)
+  qui fait foi pour le contenu/la mise en page réels. **Le prototype est entièrement en français** —
+  l'UI de l'app suit donc cette langue, pas l'anglais du README du design system. Polices Satoshi
+  auto-hébergées dans `public/fonts/` (4 graisses seulement : Regular/Medium/Bold/Black — pas les
+  italiques ni la variable, pour rester léger).
+- **Portée actuellement couverte** : login, tableau de bord (grille d'appareils avec bandeau coloré
+  selon statut réel — hors ligne / réservoir bas / normal), détail appareil (gauges, historique/graph
+  24h-7j-30j via `recharts`, timeline "Derniers arrosages", déclenchement d'arrosage avec confirmation
+  pour les Parrot Pot). **Pas encore fait** (dépendent de fonctionnalités non implémentées) : écran
+  "Ajouter un appareil" (pairing manuel), "Paramètres" (notifications, arrosage auto, MCP),
+  "Historique" global, "Calibration" — voir section État du projet.
+- Les titres/statuts affichés (`src/lib/format.ts`, `statusHeadline`/`statusDetail`) se limitent
+  volontairement à des faits vérifiables (connectivité, niveau réservoir) — pas de jugement genre "le
+  sol est sec" qui relèverait du Health Engine (Lot 4, pas encore implémenté).
+- Icônes : `lucide-react` partout, `simple-icons` pour le logo Xiaomi. Pas de logo Parrot dans
+  simple-icons (seul "Parrot Security", sans rapport) — fallback lucide pour le Parrot Pot.
 
 ## Outillage
 
 - **Biome** pour lint/format (`pnpm lint` / `pnpm lint:fix` depuis la racine) — 2 espaces, quotes
   simples, pas de tabs (config custom dans `biome.json`, différente du défaut Biome).
 - **Git** initialisé à la racine, commits sans Co-Authored-By (règle globale).
-- Workspace `pnpm` (`pnpm-workspace.yaml`) : `backend`, `noble-bridge` (frontend à ajouter au Lot 3).
+- Workspace `pnpm` (`pnpm-workspace.yaml`) : `backend`, `frontend`, `noble-bridge`.
 
 ## Gotchas déjà rencontrés (pour ne pas les re-découvrir)
 
@@ -151,11 +200,23 @@ docs/            Spec complète, docs rétro-ingénierie BLE Parrot Pot, import 
 - Heuristique GATT_ERROR=133 sur `node-ble`/BlueZ est du best-effort, à affiner sur l'the production server.
 - `BETTER_AUTH_SECRET` tourne sur un fallback dev non sécurisé si absent de `.env` (juste un warning
   au démarrage) — générer une vraie valeur (`openssl rand -base64 32`) avant tout déploiement réel.
+- BetterAuth rejette le login en dev avec "Invalid origin" si `trustedOrigins` n'inclut pas l'origine
+  du frontend Vite (voir section Auth ci-dessus) — le proxy Vite ne réécrit que `Host`, pas `Origin`.
+- Deux projets claude.ai/design distincts pour ce projet (design system vs prototype à 7 écrans, voir
+  section Frontend) — bien vérifier lequel fait foi avant de coder un écran : le prototype prime pour
+  le contenu/layout réel, le design system pour les tokens/composants réutilisables.
+- `@abandonware/noble` (utilisé par `noble-bridge`) : le binaire natif prébuilt livré dans le paquet
+  ne couvre pas toujours `darwin-arm64` + les ABI Node récentes (erreur "No native build was found").
+  Le module utilise N-API (ABI-stable), donc un simple rebuild depuis les sources suffit — pas besoin
+  de downgrade Node : `cd node_modules/.pnpm/@abandonware+noble@*/node_modules/@abandonware/noble &&
+  pnpm dlx node-gyp rebuild` (nécessite Xcode Command Line Tools, déjà présents sur la machine
+  de DestCom). À refaire si `pnpm install` réinstalle le paquet (ex. après suppression de
+  `node_modules`).
 
 ## Accès infra
 
 - the production server accessible via `ssh the production server` (clé déjà configurée, user `[user]`). `sudo` y demande un mot de passe
   interactif (pas de NOPASSWD) — pour toute commande nécessitant root sur l'the production server, la demander à
-  Antoine plutôt que d'essayer de contourner.
+  DestCom plutôt que d'essayer de contourner.
 - Docker sur l'the production server ne nécessite pas `sudo` pour l'utilisateur `[user]` — `docker run`/`docker compose`
   fonctionnent directement en SSH pour des tests empiriques (containers jetables recommandés).

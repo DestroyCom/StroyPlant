@@ -1,6 +1,10 @@
 node_modules/
 dist/
 *.log
+frontend/src/routeTree.gen.ts
+frontend/.tanstack/
+frontend/README.md
+docs/fonts/
 .env
 .env.*
 !.env.example

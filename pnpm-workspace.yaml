@@ -1,5 +1,6 @@
 packages:
   - backend
+  - frontend
   - noble-bridge
 allowBuilds:
   '@abandonware/noble': true

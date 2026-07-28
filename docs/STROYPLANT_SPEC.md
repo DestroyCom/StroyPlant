@@ -1,7 +1,7 @@
 # StroyPlant — Spécification projet complète
 
 > Nom du projet : **StroyPlant** (décidé, définitif).
-> Ce document est la source de vérité du projet. Il consolide toutes les décisions d'architecture prises en amont. Toute ambiguïté non couverte ici doit être posée en question à l'utilisateur (Antoine), jamais devinée.
+> Ce document est la source de vérité du projet. Il consolide toutes les décisions d'architecture prises en amont. Toute ambiguïté non couverte ici doit être posée en question à l'utilisateur (DestCom), jamais devinée.
 
 ---
 
@@ -68,11 +68,11 @@ the production server (Debian 12, dongle BLE USB — TP-Link UB500 Plus, Bluetoo
 - Le container backend a besoin d'accès matériel réel non virtualisable proprement : soit `--privileged`, soit capabilities `NET_ADMIN` + `NET_RAW` + `network_mode: host` + montage de `/var/run/dbus/system_bus_socket`.
 - **Fonctionne uniquement sur Docker Engine natif Linux** (the production server, autre Debian/Ubuntu, Raspberry Pi sous Linux). Le dongle recommandé (TP-Link UB500 Plus, chipset Realtek RTL8761B) devrait fonctionner avec n'importe quel dongle reconnu par le kernel Linux — BlueZ absorbe les différences de chipset.
 - **Ne fonctionne PAS sur Docker Desktop macOS/Windows.** Confirmé et non négociable : Docker Desktop tourne dans une VM Linux cachée sans passthrough Bluetooth natif fiable. Le seul contournement (USB/IP) est lent, lourd, et non adapté à un usage réel — ne pas essayer de le mettre en place, ce n'est pas l'approche retenue (voir section 6 pour la stratégie de dev sur Mac).
-- Sur Coolify (déjà utilisé par ailleurs par Antoine), ces réglages (`privileged`, `network_mode: host`, montages) demanderont une édition manuelle du docker-compose généré, pas un déploiement "standard" via l'UI.
+- Sur Coolify (déjà utilisé par ailleurs par DestCom), ces réglages (`privileged`, `network_mode: host`, montages) demanderont une édition manuelle du docker-compose généré, pas un déploiement "standard" via l'UI.
 
 ## 6. Stratégie de développement — 3 providers BLE interchangeables
 
-Antoine développe sur un **MacBook Air M3 (macOS)**, mais la cible de production est **Linux (the production server)**. Docker ne permettant pas de BLE réel sur macOS (section 5), il ne faut **jamais développer/tester la vraie couche BLE directement dans le container en local sur Mac**. Utiliser une interface abstraite `DeviceProvider`, avec trois implémentations interchangeables via une variable d'environnement `BLE_PROVIDER` :
+DestCom développe sur un **MacBook Air M3 (macOS)**, mais la cible de production est **Linux (the production server)**. Docker ne permettant pas de BLE réel sur macOS (section 5), il ne faut **jamais développer/tester la vraie couche BLE directement dans le container en local sur Mac**. Utiliser une interface abstraite `DeviceProvider`, avec trois implémentations interchangeables via une variable d'environnement `BLE_PROVIDER` :
 
 | Provider       | Où il tourne                                                                                                      | Lib utilisée                         | Ce qu'il valide                                                           |
 | -------------- | ----------------------------------------------------------------------------------------------------------------- | ------------------------------------ | ------------------------------------------------------------------------- |
@@ -85,7 +85,7 @@ Notes :
 - Le `mock` doit permettre de simuler des scénarios utiles (ex : humidité qui descend progressivement pour tester qu'une alerte se déclenche, un trigger d'arrosage qui échoue pour tester la gestion d'erreur), pas juste des valeurs aléatoires plates.
 - Le `noble-bridge` peut réutiliser telle quelle la logique du PoC CLI `parrotpot-poc/` déjà développé (voir section 9) — mêmes UUIDs, mêmes commandes de lecture/écriture, juste exposées via une petite API HTTP au lieu d'un CLI.
 - Le passage du `mock`/`noble-bridge` au vrai `node-ble` ne doit **jamais** être considéré comme acquis simplement parce que les deux autres passent — ce sont des libs différentes (noble vs node-ble), donc le comportement (timing, gestion d'erreurs GATT, format des events) doit être revalidé sur l'the production server avec la checklist de la section 9.
-- **Avant de commencer le Lot 0 (voir section 11)**, demander à Antoine s'il souhaite que ce lot (et la validation finale du provider `node-ble`) soit fait en travaillant en direct sur l'the production server via connexion SSH (accès bash réel à la machine cible, itération autonome possible), plutôt qu'en local sur son Mac avec des allers-retours manuels de test. Ne pas supposer la réponse.
+- **Avant de commencer le Lot 0 (voir section 11)**, demander à DestCom s'il souhaite que ce lot (et la validation finale du provider `node-ble`) soit fait en travaillant en direct sur l'the production server via connexion SSH (accès bash réel à la machine cible, itération autonome possible), plutôt qu'en local sur son Mac avec des allers-retours manuels de test. Ne pas supposer la réponse.
 
 ## 7. Modules fonctionnels détaillés
 
@@ -134,7 +134,7 @@ Au lancement en prod, les pots seront déjà en terre avec des plantes existante
 
 **Calibration 3 points (service Plant Dr, `DRY_N`/`DRY_VWC`/`WET_N`/`WET_VWC`) — option secondaire, pas un prérequis d'onboarding** :
 
-Reste disponible et utile pour les **nouveaux devices ajoutés après le lancement** (pot pas encore planté, donc calibration réaliste), ou si Antoine choisit volontairement de recalibrer un pot existant en le vidant temporairement. Ne pas la bloquer/exiger à l'ajout d'un device — proposer comme action optionnelle dans le dashboard, la baseline glissante prenant le relais par défaut pour tous les devices qui ne passeront jamais par cette étape.
+Reste disponible et utile pour les **nouveaux devices ajoutés après le lancement** (pot pas encore planté, donc calibration réaliste), ou si DestCom choisit volontairement de recalibrer un pot existant en le vidant temporairement. Ne pas la bloquer/exiger à l'ajout d'un device — proposer comme action optionnelle dans le dashboard, la baseline glissante prenant le relais par défaut pour tous les devices qui ne passeront jamais par cette étape.
 
 ### 7.4 Scheduler / auto-watering
 
@@ -152,7 +152,7 @@ Reste disponible et utile pour les **nouveaux devices ajoutés après le lanceme
 
 ### 7.6 Auth
 
-- **BetterAuth** (déjà utilisé par Antoine sur d'autres projets, ne pas réinventer une auth custom)
+- **BetterAuth** (déjà utilisé par DestCom sur d'autres projets, ne pas réinventer une auth custom)
 - Démarrer en credentials (email/password), un seul compte admin
 - Concevoir dès maintenant pour un ajout futur du plugin OIDC natif de BetterAuth, sans réécriture — la cible future est un IdP self-hosted type **Authentik** (LDAP outpost + OIDC provider en un seul endroit), pas Keycloak (trop lourd pour cet usage)
 - Le serveur MCP (7.8) doit être protégé par cette même couche d'auth, ou au minimum restreint au réseau local — jamais exposé sans protection puisqu'il expose une action réelle (`trigger_watering`)
@@ -281,11 +281,11 @@ L'app officielle **n'utilise PAS** `39e1fa01` à `39e1fa05` en mode live (ce son
 
 ## 10. Règles de collaboration
 
-- **En cas de doute technique ou de choix d'implémentation ambigu, poser la question à Antoine directement plutôt que de choisir arbitrairement et continuer.** Il préfère être interrompu pour clarifier que découvrir plus tard une hypothèse fausse silencieusement intégrée au code.
+- **En cas de doute technique ou de choix d'implémentation ambigu, poser la question à DestCom directement plutôt que de choisir arbitrairement et continuer.** Il préfère être interrompu pour clarifier que découvrir plus tard une hypothèse fausse silencieusement intégrée au code.
 - Avant le Lot 0, demander explicitement s'il veut travailler en SSH direct sur l'the production server pour ce lot (voir section 6, dernier point) — ne pas supposer.
-- Stack imposée : TypeScript/JavaScript partout, pas de Python, cohérence avec l'écosystème existant d'Antoine (Next.js habituel pour d'autres projets, Prisma, shadcn/ui, BetterAuth, Docker/Coolify/Hetzner/Cloudflare).
+- Stack imposée : TypeScript/JavaScript partout, pas de Python, cohérence avec l'écosystème existant de DestCom (Next.js habituel pour d'autres projets, Prisma, shadcn/ui, BetterAuth, Docker/Coolify/Hetzner/Cloudflare).
 - **Gestionnaire de paquets : `pnpm` exclusivement, jamais `npm` ni `yarn`** — que ce soit pour le backend, le frontend, ou tout script/outil annexe du projet (y compris les Dockerfile : utiliser `pnpm install`, pas `npm install`).
-- Antoine est freelance fullstack, ~3.5 ans d'expérience, à l'aise techniquement mais pas expert BLE/hardware bas niveau — expliquer les choix non triviaux plutôt que les appliquer sans contexte.
+- DestCom est freelance fullstack, ~3.5 ans d'expérience, à l'aise techniquement mais pas expert BLE/hardware bas niveau — expliquer les choix non triviaux plutôt que les appliquer sans contexte.
 
 ## 11. Découpage en lots (roadmap)
 
@@ -304,7 +304,7 @@ L'app officielle **n'utilise PAS** `39e1fa01` à `39e1fa05` en mode live (ce son
 
 _(Ancien "Lot 2" historique retiré : décision finale en section 7.10 — fallback sur polling live uniquement, déjà couvert par le Lot 1, aucun développement dédié nécessaire.)_
 
-Chaque lot doit être validé avant de passer au suivant. Ne pas enchaîner plusieurs lots sans confirmation explicite d'Antoine que le précédent fonctionne comme attendu.
+Chaque lot doit être validé avant de passer au suivant. Ne pas enchaîner plusieurs lots sans confirmation explicite de DestCom que le précédent fonctionne comme attendu.
 
 ## 12. Pourquoi pas Next.js / pas TanStack Start (contexte des décisions, pour éviter de revenir dessus)
 
@@ -321,7 +321,7 @@ Chaque lot doit être validé avant de passer au suivant. Ne pas enchaîner plus
 
 ## 14. Hébergement & reverse proxy (the reverse proxy)
 
-Antoine utilise déjà **the reverse proxy** (reverse proxy nginx) sur son the production server pour d'autres services. Objectif : **un seul container, un seul nom de domaine, un seul deploy** — pas deux containers front/back séparés, pas deux sous-domaines.
+DestCom utilise déjà **the reverse proxy** (reverse proxy nginx) sur son the production server pour d'autres services. Objectif : **un seul container, un seul nom de domaine, un seul deploy** — pas deux containers front/back séparés, pas deux sous-domaines.
 
 - Le backend Node (Express/Fastify) sert **tout** depuis un seul process/port :
   - `/api/*` → routes API REST

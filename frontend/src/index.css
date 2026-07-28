@@ -1,0 +1,152 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+
+@font-face {
+  font-family: "Satoshi";
+  src: url("/fonts/Satoshi-Regular.otf") format("opentype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Satoshi";
+  src: url("/fonts/Satoshi-Medium.otf") format("opentype");
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Satoshi";
+  src: url("/fonts/Satoshi-Bold.otf") format("opentype");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Satoshi";
+  src: url("/fonts/Satoshi-Black.otf") format("opentype");
+  font-weight: 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+@custom-variant dark (&:is(.dark *));
+
+/* Tokens repris du design system StroyPlant (docs/webdesign_claudecode.md) — source :
+   https://claude.ai/design/p/9ff1b1f4-a13e-489b-bc8b-84b9a2a59c6e */
+@theme inline {
+  --font-sans: "Satoshi", -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "SF Mono", ui-monospace, monospace;
+
+  --color-teal-50: #eafaf4;
+  --color-teal-100: #c8f0e0;
+  --color-teal-300: #6ecfae;
+  --color-teal-500: #29ab87;
+  --color-teal-600: #1f8e70;
+  --color-teal-700: #186f59;
+  --color-teal-900: #0f4438;
+  --color-spring-300: #7dffce;
+  --color-spring-400: #3bffbb;
+  --color-spring-500: #00f59f;
+  --color-spring-600: #00c983;
+  --color-spring-700: #009c69;
+  --color-ink-500: #0c1618;
+  --color-ink-400: #16262a;
+  --color-ink-300: #22383d;
+  --color-ink-200: #3a5a60;
+  --color-ink-100: #6b8a8f;
+  --color-blue-300: #6ea8cf;
+  --color-blue-500: #2274a5;
+  --color-blue-600: #1b5c84;
+  --color-blue-700: #154660;
+  --color-paper-500: #f4edea;
+  --color-paper-400: #eee4df;
+  --color-paper-300: #e3d5cd;
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-accent-brand: var(--accent-brand);
+  --color-accent-brand-foreground: var(--accent-brand-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-warning-surface: var(--warning-surface);
+  --color-warning-foreground: var(--warning-foreground);
+  --color-border: var(--border);
+  --color-border-subtle: var(--border-subtle);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 10px;
+  --radius-xl: 14px;
+}
+
+:root {
+  --radius: 10px;
+  --background: var(--color-paper-500);
+  --foreground: var(--color-ink-500);
+  --card: #ffffff;
+  --card-foreground: var(--color-ink-500);
+  --popover: #ffffff;
+  --popover-foreground: var(--color-ink-500);
+  --primary: var(--color-teal-500);
+  --primary-foreground: #ffffff;
+  --accent-brand: var(--color-spring-500);
+  --accent-brand-foreground: var(--color-ink-500);
+  --secondary: var(--color-paper-400);
+  --secondary-foreground: var(--color-ink-500);
+  --muted: var(--color-paper-400);
+  --muted-foreground: var(--color-ink-100);
+  --accent: var(--color-paper-400);
+  --accent-foreground: var(--color-ink-500);
+  --destructive: #d1495b;
+  --destructive-foreground: #ffffff;
+  --success: var(--color-teal-50);
+  --success-foreground: var(--color-teal-700);
+  --warning-surface: #fbf1dc;
+  --warning-foreground: #8a6412;
+  --border: #d8cabf;
+  --border-subtle: var(--color-paper-300);
+  --input: #d8cabf;
+  --ring: var(--color-teal-500);
+  --sidebar: var(--background);
+  --sidebar-foreground: var(--foreground);
+  --sidebar-accent: var(--muted);
+  --sidebar-accent-foreground: var(--color-teal-500);
+  --sidebar-border: var(--border-subtle);
+  --sidebar-ring: var(--color-teal-500);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+  html {
+    @apply font-sans;
+  }
+}

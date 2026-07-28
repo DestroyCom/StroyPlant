@@ -14,6 +14,7 @@ Also read these files the selection imports:
 - `_ds/stroyplant-design-system-9ff1b1f4-a13e-489b-bc8b-84b9a2a59c6e/tokens/spacing.css`
 - `_ds/stroyplant-design-system-9ff1b1f4-a13e-489b-bc8b-84b9a2a59c6e/tokens/typography.css`
 - `support.js`
+- `https://claude.ai/design/p/9ff1b1f4-a13e-489b-bc8b-84b9a2a59c6e?via=share`
 
 Implement: Use thoses pages as an example for create the frontend, for icons use lucide and simple icons for brands.
 If there is missing something that be defined inside the specs, be creative.

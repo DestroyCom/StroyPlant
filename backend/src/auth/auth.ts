@@ -22,5 +22,10 @@ export const auth = betterAuth({
     enabled: true,
     disableSignUp: true,
   },
+  // En prod (docs/STROYPLANT_SPEC.md section 14) un seul process sert front+back sur la même
+  // origine, donc trustedOrigins n'a besoin de rien d'autre. En dev, le frontend Vite tourne sur un
+  // port distinct (5173) : le navigateur envoie cet Origin même via le proxy Vite (qui ne réécrit
+  // que le Host, pas l'Origin), et BetterAuth le rejetterait sinon ("Invalid origin").
+  trustedOrigins: ['http://localhost:5173'],
   plugins: [admin()],
 });

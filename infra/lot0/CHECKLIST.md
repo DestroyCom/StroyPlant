@@ -2,7 +2,7 @@
 
 > Contexte initial : le dongle TP-Link UB500 Plus n'était pas encore arrivé. En vérifiant
 > l'the production server, on a découvert un adaptateur Bluetooth **intégré** déjà fonctionnel (Intel
-> Wireless-AC 3168, Bluetooth 4.2, USB interne) — décision prise avec Antoine (2026-07-27)
+> Wireless-AC 3168, Bluetooth 4.2, USB interne) — décision prise avec DestCom (2026-07-27)
 > de valider le Lot 0 avec cet adaptateur dès maintenant, le TP-Link viendra en
 > remplacement/complément à son arrivée (revalidation nécessaire, chipset différent —
 > Realtek RTL8761B vs Intel, voir note en fin de fichier).
@@ -15,7 +15,7 @@ Exécuté via SSH direct (`ssh the production server`) sur l'the production serv
 
 - Docker Engine natif confirmé : version 29.6.1, Debian 12 (bookworm), cgroup driver `cgroupfs`
 - **BlueZ n'était pas installé par défaut** (the production server = distro orientée NAS, pas de paquets
-  desktop/Bluetooth de base) → installé manuellement par Antoine (`apt-get install -y bluez`
+  desktop/Bluetooth de base) → installé manuellement par DestCom (`apt-get install -y bluez`
   + `systemctl enable --now bluetooth`)
 - Une fois installé : `bluetooth.service` actif, `bluetoothctl: 5.66`
 - Socket D-Bus système présent à l'emplacement attendu

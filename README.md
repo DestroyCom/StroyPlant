@@ -17,6 +17,7 @@ source de vérité du projet (architecture, stack, roadmap par lots, règles de 
 
 ```text
 backend/         API + logique métier (Fastify, Prisma/SQLite, auth, BLE) — tourne en Docker en prod
+frontend/        SPA Vite + React + TanStack Router/Query + Tailwind v4 + shadcn/ui
 noble-bridge/    Process natif macOS (hors Docker) qui expose le Bluetooth du Mac en HTTP/WS,
                  utilisé par le provider `noble-bridge` du backend pour développer sans dongle Linux
 infra/           Scripts/checklists d'infrastructure (setup Docker+Bluetooth sur l'the production server, etc.)
@@ -45,6 +46,10 @@ pnpm dev
 
 # noble-bridge (uniquement si BLE_PROVIDER=noble-bridge côté backend)
 cd noble-bridge
+pnpm dev
+
+# Frontend (proxy Vite vers le backend sur le port 3000, voir frontend/vite.config.ts)
+cd frontend
 pnpm dev
 ```
 

@@ -39,6 +39,19 @@ export function registerDeviceRoutes(app: FastifyInstance, deps: DevicesRouteDep
     return readings;
   });
 
+  app.get<{ Params: { id: string } }>('/api/devices/:id/watering-events', async (request, reply) => {
+    const device = await prisma.device.findUnique({ where: { id: request.params.id } });
+    if (!device) {
+      reply.code(404);
+      return { error: 'Device not found' };
+    }
+    return prisma.wateringEvent.findMany({
+      where: { deviceId: device.id },
+      orderBy: { timestamp: 'desc' },
+      take: 10,
+    });
+  });
+
   app.post<{ Params: { id: string } }>('/api/devices/:id/water', async (request, reply) => {
     const device = await prisma.device.findUnique({ where: { id: request.params.id } });
     if (!device) {
