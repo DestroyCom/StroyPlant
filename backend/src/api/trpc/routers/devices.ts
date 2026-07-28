@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { prisma } from '../../../db/client.js';
 import { getMqttState } from '../../../mqtt/manager.js';
 import { publishDiscovery } from '../../../mqtt/publisher.js';
+import { persistReading } from '../../../readings.js';
 import { triggerWatering } from '../../../watering.js';
 import { serializeDate, serializeReading, serializeWateringEvent } from '../serialize.js';
 import { protectedProcedure, router } from '../trpc.js';
@@ -120,5 +121,28 @@ export const devicesRouter = router({
     const result = await triggerWatering(device.id, 'MANUAL', ctx.provider, ctx.connectionQueue);
     if (!result.success) throw new TRPCError({ code: 'BAD_GATEWAY', message: result.errorDetail });
     return { ok: true as const };
+  }),
+
+  // Manual "sync now" — reads the device immediately instead of waiting for the scanner's next
+  // ~5min poll (backend/src/ble/scanner.ts). Goes through the same connectionQueue as every other
+  // GATT operation (only one connection at a time, shared with the scanner/scheduler) and persists
+  // through the exact same persistReading() the automatic poll cycle uses (backend/src/readings.ts)
+  // — a manual sync is not a separate, parallel code path, matching how devices.water already
+  // shares triggerWatering() with the auto-watering scheduler.
+  sync: protectedProcedure.input(z.object({ deviceId: z.string() })).mutation(async ({ ctx, input }) => {
+    const device = await prisma.device.findUnique({ where: { id: input.deviceId } });
+    if (!device) throw new TRPCError({ code: 'NOT_FOUND', message: 'Device not found' });
+
+    let reading: Awaited<ReturnType<typeof ctx.provider.readSensors>>;
+    try {
+      reading = await ctx.connectionQueue.run(() => ctx.provider.readSensors(device.id, device.kind));
+    } catch (error) {
+      throw new TRPCError({ code: 'BAD_GATEWAY', message: error instanceof Error ? error.message : String(error) });
+    }
+
+    await persistReading(device.id, device.kind, reading);
+
+    const updated = await prisma.device.findUniqueOrThrow({ where: { id: device.id }, include: { plantProfile: true } });
+    return withLastReading(updated);
   }),
 });

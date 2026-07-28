@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import type { GattCharacteristic, Device as NodeBleDevice } from 'node-ble';
+import type { GattCharacteristic, GattService, Device as NodeBleDevice } from 'node-ble';
 import { createBluetooth } from 'node-ble';
 import { extractParrotManufacturerPayload } from '../../ble/parrot/advertisement.js';
 import { decodePlantDrStatusFlags, type PlantDrCalibration, type PlantDrWriteValues } from '../../ble/parrot/plantDr.js';
@@ -28,22 +28,37 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-// node-ble's Device wrapper (node_modules/node-ble/src/BusHelper.js, verified against the
-// installed 1.13.0 source) registers a D-Bus PropertiesChanged match rule the moment any property
-// is read, and only ever releases it via removeListeners() — which the public Device API calls
-// exclusively from disconnect(). Two places in this file need that release without going through
-// disconnect(): scan() reads advertisement props without ever connecting, and connectDevice()'s
-// own device.connect() can fail before a Device is ever handed to a caller's try/finally. Left
-// unreleased, each of these leaks one match rule forever; production hit BlueZ's dbus-daemon
-// max_match_rules_per_connection (512) within minutes of uptime and crashed the whole process on
-// every occurrence (12 consecutive restarts observed) — root-caused 2026-07-29 via the actual
-// installed node-ble source on the production server, not guessed.
-function releaseDeviceListeners(device: NodeBleDevice): void {
+// node-ble's Device AND GattCharacteristic wrappers (node_modules/node-ble/src/BusHelper.js and
+// GattCharacteristic.js, verified against the installed 1.13.0 source) both register a D-Bus
+// PropertiesChanged match rule the moment any property/method is used — for GattCharacteristic
+// that means every single readValue()/writeValue() call, not just notification subscriptions —
+// and only ever release it via removeListeners(), which the public API calls exclusively from
+// Device.disconnect() / GattCharacteristic.stopNotifications(). Every characteristic obtained via
+// getCharacteristic() for a plain read/write (soil/temp/lux/tank/conductivity/statusFlags/
+// watering-trigger/Plant-Dr-calibration — none of which are notification-based) was leaking one
+// match rule forever with no code path that ever released it. Left unreleased (this one plus the
+// scan()/connectDevice() leaks below), production hit BlueZ's dbus-daemon
+// max_match_rules_per_connection (512) and crashed the whole process — first found via 12
+// consecutive crash-loop restarts (root-caused 2026-07-29), then found AGAIN, more slowly, after
+// only fixing the Device-level leak: production survived several minutes of real activity
+// (scanning, a full watering cycle) instead of crashing within seconds, but still went down once —
+// tracing it against the same installed source showed GattCharacteristic has the identical
+// usePropsEvents pattern as Device, just triggered by ordinary sensor reads instead of scan ticks.
+function releaseDbusListeners(target: NodeBleDevice | GattCharacteristic): void {
   try {
-    (device as unknown as { helper: { removeListeners(): void } }).helper.removeListeners();
+    (target as unknown as { helper: { removeListeners(): void } }).helper.removeListeners();
   } catch {
-    // best-effort — cleanup must never fail a scan tick or a connect attempt
+    // best-effort — cleanup must never fail a scan tick, a connect attempt, or a sensor read/write
   }
+}
+
+// Fetches a characteristic and records it for cleanup in the caller's finally block — every GATT
+// read/write path below uses this instead of calling service.getCharacteristic() directly, so no
+// characteristic can be added to a read/write sequence without also being released afterward.
+async function trackedCharacteristic(service: GattService, uuid: string, tracked: GattCharacteristic[]): Promise<GattCharacteristic> {
+  const characteristic = await service.getCharacteristic(uuid);
+  tracked.push(characteristic);
+  return characteristic;
 }
 
 // Raw payload only — NO bit-level interpretation as long as the correlation protocol
@@ -81,7 +96,13 @@ async function waitForFirstNotification(characteristic: GattCharacteristic, time
       characteristic.on('valuechanged', onValue);
     });
   } finally {
+    // stopNotifications() only reaches its own internal listener cleanup if the underlying
+    // StopNotify D-Bus call succeeds (node-ble's GattCharacteristic.stopNotifications()) — if the
+    // device already dropped off (realistic: this is the Xiaomi path, which routinely times out/
+    // GATT-errors in production), that call can throw and the .catch() below only swallows it at
+    // our level, leaving the match rule registered. releaseDbusListeners is an idempotent backstop.
     await characteristic.stopNotifications().catch(() => {});
+    releaseDbusListeners(characteristic);
   }
 }
 
@@ -143,7 +164,7 @@ export function createNodeBleProvider(): DeviceProvider {
       // device.connect() itself registers a PropertiesChanged listener before calling BlueZ's
       // Connect() (node-ble's Device.connect()) — on failure this Device is never returned to a
       // caller's try/finally, so disconnect() (the only public path that releases it) never runs.
-      releaseDeviceListeners(device);
+      releaseDbusListeners(device);
       throw error;
     }
     return device;
@@ -193,7 +214,7 @@ export function createNodeBleProvider(): DeviceProvider {
             } catch {
               // the device can disappear between devices() and getDevice() — not an error to report
             } finally {
-              if (device) releaseDeviceListeners(device);
+              if (device) releaseDbusListeners(device);
             }
           }
           await sleep(1000);
@@ -231,7 +252,13 @@ export function createNodeBleProvider(): DeviceProvider {
               const reading: SensorReading = { kind: 'XIAOMI_LYWSD03MMC', data };
               return reading;
             } finally {
+              // disconnect() only reaches its own internal listener cleanup if the underlying
+              // Disconnect D-Bus call succeeds (node-ble's Device.disconnect()) — if the device
+              // already dropped off, that call can throw and .catch() below only swallows it at our
+              // level, leaving the match rule registered. releaseDbusListeners is an idempotent
+              // backstop, safe to call whether or not disconnect()'s own cleanup already ran.
               await device.disconnect().catch(() => {});
+              releaseDbusListeners(device);
             }
           },
         });
@@ -244,11 +271,12 @@ export function createNodeBleProvider(): DeviceProvider {
         restartAdapter,
         attempt: async () => {
           const device = await connectDevice(deviceId);
+          const characteristics: GattCharacteristic[] = [];
           try {
             const gatt = await withTimeout(device.gatt(), CONNECT_TIMEOUT_MS, 'gatt');
             const sensorService = await gatt.getPrimaryService(SENSOR_SERVICE_UUID);
 
-            const measurePeriod = await sensorService.getCharacteristic(UUIDS.live.measurePeriod);
+            const measurePeriod = await trackedCharacteristic(sensorService, UUIDS.live.measurePeriod, characteristics);
             await measurePeriod.writeValueWithResponse(Buffer.from([1]));
             log({
               direction: 'WRITE',
@@ -259,9 +287,9 @@ export function createNodeBleProvider(): DeviceProvider {
               result: 'OK',
             });
 
-            const soilChar = await sensorService.getCharacteristic(UUIDS.live.soilMoisturePercent);
-            const tempChar = await sensorService.getCharacteristic(UUIDS.live.temperatureC);
-            const luxChar = await sensorService.getCharacteristic(UUIDS.live.luminosity);
+            const soilChar = await trackedCharacteristic(sensorService, UUIDS.live.soilMoisturePercent, characteristics);
+            const tempChar = await trackedCharacteristic(sensorService, UUIDS.live.temperatureC, characteristics);
+            const luxChar = await trackedCharacteristic(sensorService, UUIDS.live.luminosity, characteristics);
             const soilMoisture = await soilChar.readValue();
             const temperature = await tempChar.readValue();
             const luminosity = await luxChar.readValue();
@@ -276,7 +304,7 @@ export function createNodeBleProvider(): DeviceProvider {
             let waterTankLevelPercent: number | undefined;
             try {
               const wateringService = await gatt.getPrimaryService(WATERING_SERVICE_UUID);
-              const tankChar = await wateringService.getCharacteristic(UUIDS.watering.waterTankLevel);
+              const tankChar = await trackedCharacteristic(wateringService, UUIDS.watering.waterTankLevel, characteristics);
               waterTankLevelPercent = (await tankChar.readValue()).readUInt8(0);
             } catch (error) {
               log({
@@ -294,9 +322,9 @@ export function createNodeBleProvider(): DeviceProvider {
             let soilConductivityEcb: number | undefined;
             let soilConductivityEcPorous: number | undefined;
             try {
-              const ecbChar = await sensorService.getCharacteristic(UUIDS.live.soilConductivityEcb);
+              const ecbChar = await trackedCharacteristic(sensorService, UUIDS.live.soilConductivityEcb, characteristics);
               soilConductivityEcb = (await ecbChar.readValue()).readFloatLE(0);
-              const ecPorousChar = await sensorService.getCharacteristic(UUIDS.live.soilConductivityEcPorous);
+              const ecPorousChar = await trackedCharacteristic(sensorService, UUIDS.live.soilConductivityEcPorous, characteristics);
               soilConductivityEcPorous = (await ecPorousChar.readValue()).readFloatLE(0);
               log({
                 direction: 'READ',
@@ -322,7 +350,7 @@ export function createNodeBleProvider(): DeviceProvider {
             let statusFlags: ReturnType<typeof decodePlantDrStatusFlags> | undefined;
             try {
               const plantDrService = await gatt.getPrimaryService(PLANT_DR_SERVICE_UUID);
-              const statusFlagsChar = await plantDrService.getCharacteristic(UUIDS.plantDr.statusFlags);
+              const statusFlagsChar = await trackedCharacteristic(plantDrService, UUIDS.plantDr.statusFlags, characteristics);
               statusFlags = decodePlantDrStatusFlags((await statusFlagsChar.readValue()).readUInt8(0));
               log({
                 direction: 'READ',
@@ -358,7 +386,14 @@ export function createNodeBleProvider(): DeviceProvider {
             };
             return reading;
           } finally {
+            for (const characteristic of characteristics) releaseDbusListeners(characteristic);
+            // disconnect() only reaches its own internal listener cleanup if the underlying
+            // Disconnect D-Bus call succeeds (node-ble's Device.disconnect()) — if the device
+            // already dropped off, that call can throw and .catch() below only swallows it at our
+            // level, leaving the match rule registered. releaseDbusListeners is an idempotent
+            // backstop, safe to call whether or not disconnect()'s own cleanup already ran.
             await device.disconnect().catch(() => {});
+            releaseDbusListeners(device);
           }
         },
       });
@@ -373,10 +408,11 @@ export function createNodeBleProvider(): DeviceProvider {
         restartAdapter,
         attempt: async () => {
           const device = await connectDevice(deviceId);
+          const characteristics: GattCharacteristic[] = [];
           try {
             const gatt = await withTimeout(device.gatt(), CONNECT_TIMEOUT_MS, 'gatt');
             const wateringService = await gatt.getPrimaryService(WATERING_SERVICE_UUID);
-            const trigger = await wateringService.getCharacteristic(UUIDS.watering.trigger);
+            const trigger = await trackedCharacteristic(wateringService, UUIDS.watering.trigger, characteristics);
             await trigger.writeValueWithResponse(WATER_TRIGGER_PAYLOAD);
             log({
               direction: 'WRITE',
@@ -387,7 +423,14 @@ export function createNodeBleProvider(): DeviceProvider {
               result: 'OK',
             });
           } finally {
+            for (const characteristic of characteristics) releaseDbusListeners(characteristic);
+            // disconnect() only reaches its own internal listener cleanup if the underlying
+            // Disconnect D-Bus call succeeds (node-ble's Device.disconnect()) — if the device
+            // already dropped off, that call can throw and .catch() below only swallows it at our
+            // level, leaving the match rule registered. releaseDbusListeners is an idempotent
+            // backstop, safe to call whether or not disconnect()'s own cleanup already ran.
             await device.disconnect().catch(() => {});
+            releaseDbusListeners(device);
           }
         },
       });
@@ -401,10 +444,12 @@ export function createNodeBleProvider(): DeviceProvider {
         restartAdapter,
         attempt: async () => {
           const device = await connectDevice(deviceId);
+          const characteristics: GattCharacteristic[] = [];
           try {
             const gatt = await withTimeout(device.gatt(), CONNECT_TIMEOUT_MS, 'gatt');
             const plantDrService = await gatt.getPrimaryService(PLANT_DR_SERVICE_UUID);
-            const readU16 = async (uuid: string) => (await (await plantDrService.getCharacteristic(uuid)).readValue()).readUInt16LE(0);
+            const readU16 = async (uuid: string) =>
+              (await (await trackedCharacteristic(plantDrService, uuid, characteristics)).readValue()).readUInt16LE(0);
 
             const dryN = await readU16(UUIDS.plantDr.dryN);
             const dryVwcRaw = await readU16(UUIDS.plantDr.dryVwc);
@@ -422,7 +467,14 @@ export function createNodeBleProvider(): DeviceProvider {
             log({ direction: 'READ', label: 'Plant Dr calibration read', deviceId, result: 'OK', detail: JSON.stringify(calibration) });
             return calibration;
           } finally {
+            for (const characteristic of characteristics) releaseDbusListeners(characteristic);
+            // disconnect() only reaches its own internal listener cleanup if the underlying
+            // Disconnect D-Bus call succeeds (node-ble's Device.disconnect()) — if the device
+            // already dropped off, that call can throw and .catch() below only swallows it at our
+            // level, leaving the match rule registered. releaseDbusListeners is an idempotent
+            // backstop, safe to call whether or not disconnect()'s own cleanup already ran.
             await device.disconnect().catch(() => {});
+            releaseDbusListeners(device);
           }
         },
       });
@@ -436,12 +488,13 @@ export function createNodeBleProvider(): DeviceProvider {
         restartAdapter,
         attempt: async () => {
           const device = await connectDevice(deviceId);
+          const characteristics: GattCharacteristic[] = [];
           try {
             const gatt = await withTimeout(device.gatt(), CONNECT_TIMEOUT_MS, 'gatt');
             const plantDrService = await gatt.getPrimaryService(PLANT_DR_SERVICE_UUID);
 
             const writeU16 = async (uuid: string, value: number, label: string) => {
-              const characteristic = await plantDrService.getCharacteristic(uuid);
+              const characteristic = await trackedCharacteristic(plantDrService, uuid, characteristics);
               const payload = Buffer.alloc(2);
               payload.writeUInt16LE(value & 0xffff, 0);
               await characteristic.writeValueWithResponse(payload);
@@ -456,7 +509,14 @@ export function createNodeBleProvider(): DeviceProvider {
             await writeU16(UUIDS.plantDr.wetVwc, values.wetVwcRaw, 'Plant Dr WET_VWC');
             await writeU16(UUIDS.plantDr.configId, values.configId, 'Plant Dr CONFIG_ID (commit)');
           } finally {
+            for (const characteristic of characteristics) releaseDbusListeners(characteristic);
+            // disconnect() only reaches its own internal listener cleanup if the underlying
+            // Disconnect D-Bus call succeeds (node-ble's Device.disconnect()) — if the device
+            // already dropped off, that call can throw and .catch() below only swallows it at our
+            // level, leaving the match rule registered. releaseDbusListeners is an idempotent
+            // backstop, safe to call whether or not disconnect()'s own cleanup already ran.
             await device.disconnect().catch(() => {});
+            releaseDbusListeners(device);
           }
         },
       });

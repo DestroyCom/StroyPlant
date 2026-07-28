@@ -1,6 +1,4 @@
 import { buildServer } from './api/server.js';
-import { emitReading } from './api/trpc/readingsEmitter.js';
-import { serializeReading } from './api/trpc/serialize.js';
 import { ConnectionQueue } from './ble/connectionQueue.js';
 import { startScanner } from './ble/scanner.js';
 import { prisma } from './db/client.js';
@@ -8,8 +6,9 @@ import { env } from './env.js';
 import { startScheduler } from './health/scheduler.js';
 import { log } from './logger.js';
 import { getMqttState, initMqttManager } from './mqtt/manager.js';
-import { publishDiscovery, publishHealthState, publishReadingState } from './mqtt/publisher.js';
+import { publishDiscovery } from './mqtt/publisher.js';
 import { createDeviceProvider } from './providers/factory.js';
+import { persistReading } from './readings.js';
 
 async function main() {
   const provider = createDeviceProvider();
@@ -43,34 +42,7 @@ async function main() {
         }
       },
       async onReading(deviceId, kind, reading) {
-        const data =
-          reading.kind === 'PARROT_POT'
-            ? {
-                soilMoisturePercent: reading.data.soilMoisturePercent,
-                temperatureC: reading.data.temperatureC,
-                luminosity: reading.data.luminosity,
-                waterTankLevelPercent: reading.data.waterTankLevelPercent,
-                soilConductivityEcb: reading.data.soilConductivityEcb,
-                soilConductivityEcPorous: reading.data.soilConductivityEcPorous,
-                isDrySoil: reading.data.isDrySoil,
-                isWetSoil: reading.data.isWetSoil,
-                isEmptyTank: reading.data.isEmptyTank,
-                isInAir: reading.data.isInAir,
-              }
-            : {
-                temperatureC: reading.data.temperatureC,
-                humidityPercent: reading.data.humidityPercent,
-                batteryPercent: reading.data.batteryPercent,
-              };
-
-        const created = await prisma.reading.create({ data: { deviceId, ...data } });
-        emitReading({ deviceId, kind, reading: serializeReading(created) });
-
-        const mqttState = getMqttState();
-        if (mqttState) {
-          publishReadingState(mqttState.client, deviceId, data, mqttState.baseTopic);
-          void publishHealthState(mqttState.client, deviceId, mqttState.baseTopic);
-        }
+        await persistReading(deviceId, kind, reading);
       },
     },
     connectionQueue,

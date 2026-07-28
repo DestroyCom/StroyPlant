@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient, useSuspenseQuery } from '@tanstack/react-query';
 import { createFileRoute, Link, notFound } from '@tanstack/react-router';
-import { ArrowLeft, BatteryMedium, Check, ChevronDown, Droplets, Info, Pencil, Sun, Thermometer, X } from 'lucide-react';
+import { ArrowLeft, BatteryMedium, Check, ChevronDown, Droplets, Info, Pencil, RefreshCw, Sun, Thermometer, X } from 'lucide-react';
 import { useState } from 'react';
 import { toast } from 'sonner';
 import { AutoWateringSection } from '@/components/auto-watering-section';
@@ -96,6 +96,21 @@ function DeviceDetailPage() {
     }),
   );
 
+  // Manual "sync now" — reads the sensor immediately instead of waiting for the scanner's next
+  // ~5min poll. Available for both device kinds (unlike watering, which is Parrot Pot only).
+  const syncMutation = useMutation(
+    trpc.devices.sync.mutationOptions({
+      onSuccess: () => {
+        toast.success('Capteur synchronisé');
+        void queryClient.invalidateQueries({ queryKey: trpc.devices.list.queryKey() });
+        void queryClient.invalidateQueries({ queryKey: trpc.devices.history.queryKey({ deviceId, hours: PERIOD_HOURS[period] }) });
+      },
+      onError: (error) => {
+        toast.error('Échec de la synchronisation', { description: error.message });
+      },
+    }),
+  );
+
   const reading = device.lastReading;
   const canWater = device.kind === 'PARROT_POT';
   // The Xiaomi LYWSD03MMC is a simple ambient temperature/humidity sensor, not planted in a
@@ -180,11 +195,23 @@ function DeviceDetailPage() {
         </div>
         <h1 className="max-w-lg text-[32px] leading-tight font-black tracking-tight text-foreground">{statusHeadline(device, health)}</h1>
         <p className="mt-3.5 max-w-md text-base text-muted-foreground">{statusDetail(device)}</p>
-        {canWater && (
-          <Button variant="accent" size="lg" className="mt-5.5 h-11" onClick={() => setConfirmOpen(true)}>
-            Arroser maintenant
+        <div className="mt-5.5 flex items-center gap-2.5">
+          <Button
+            variant="outline"
+            size="lg"
+            className="h-11"
+            disabled={syncMutation.isPending}
+            onClick={() => syncMutation.mutate({ deviceId })}
+          >
+            <RefreshCw size={16} className={syncMutation.isPending ? 'animate-spin' : undefined} />
+            {syncMutation.isPending ? 'Synchronisation…' : 'Synchroniser'}
           </Button>
-        )}
+          {canWater && (
+            <Button variant="accent" size="lg" className="h-11" onClick={() => setConfirmOpen(true)}>
+              Arroser maintenant
+            </Button>
+          )}
+        </div>
       </div>
 
       {supportsSpeciesProfile && (
