@@ -1,3 +1,8 @@
+export interface MqttTopicSettings {
+  baseTopic: string;
+  discoveryPrefix: string;
+}
+
 // MAC-based device ids (e.g. "A0:14:3D:CD:A3:D3") contain ':', invalid in an MQTT topic segment
 // and in HA's discovery node_id — sanitized once here, everywhere a topic is built from a device id.
 export function sanitizeDeviceId(deviceId: string): string {

@@ -1,7 +1,6 @@
 import type { MqttClient } from 'mqtt';
 import type { ConnectionQueue } from '../ble/connectionQueue.js';
 import { prisma } from '../db/client.js';
-import { env } from '../env.js';
 import { log } from '../logger.js';
 import type { DeviceProvider } from '../providers/types.js';
 import { triggerWatering } from '../watering.js';
@@ -12,7 +11,7 @@ async function findDeviceBySanitizedId(sanitizedId: string) {
   return devices.find((device) => sanitizeDeviceId(device.id) === sanitizedId) ?? null;
 }
 
-async function handleWateringPress(sanitizedId: string, provider: DeviceProvider, connectionQueue: ConnectionQueue, client: MqttClient) {
+async function handleWateringPress(sanitizedId: string, provider: DeviceProvider, connectionQueue: ConnectionQueue) {
   const device = await findDeviceBySanitizedId(sanitizedId);
   if (!device) {
     log({ direction: 'INFO', label: 'MQTT watering command for unknown device', result: 'ERROR', detail: sanitizedId });
@@ -23,17 +22,23 @@ async function handleWateringPress(sanitizedId: string, provider: DeviceProvider
     return;
   }
 
-  await triggerWatering(device.id, 'MANUAL', provider, connectionQueue, client);
+  await triggerWatering(device.id, 'MANUAL', provider, connectionQueue);
 }
 
 // Subscribes once to every device's watering command topic (wildcard) — the HA "Arroser
 // maintenant" button (mqtt/discovery.ts) publishes here on press. Reuses the exact same
 // `triggerWatering` shared with the tRPC `devices.water` mutation and the CRON scheduler, so the
 // never-fire-and-forget guarantee (docs/STROYPLANT_SPEC.md section 7.1) applies identically no
-// matter which surface triggered the watering.
-export function subscribeWateringCommands(client: MqttClient, provider: DeviceProvider, connectionQueue: ConnectionQueue): void {
-  const filter = wateringCommandFilter(env.mqttBaseTopic);
-  const filterRegex = new RegExp(`^${env.mqttBaseTopic}/([^/]+)/watering/set$`);
+// matter which surface triggered the watering — `triggerWatering` itself looks up the current MQTT
+// state to publish the result, so it isn't threaded through here.
+export function subscribeWateringCommands(
+  client: MqttClient,
+  provider: DeviceProvider,
+  connectionQueue: ConnectionQueue,
+  baseTopic: string,
+): void {
+  const filter = wateringCommandFilter(baseTopic);
+  const filterRegex = new RegExp(`^${baseTopic}/([^/]+)/watering/set$`);
 
   client.subscribe(filter, { qos: 1 }, (error) => {
     if (error) log({ direction: 'INFO', label: 'MQTT subscribe to watering commands failed', result: 'ERROR', detail: error.message });
@@ -42,6 +47,6 @@ export function subscribeWateringCommands(client: MqttClient, provider: DevicePr
   client.on('message', (topic) => {
     const match = topic.match(filterRegex);
     if (!match) return;
-    void handleWateringPress(match[1], provider, connectionQueue, client);
+    void handleWateringPress(match[1], provider, connectionQueue);
   });
 }

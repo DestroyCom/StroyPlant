@@ -284,6 +284,34 @@ production server:
     correctly. **Not yet verified**: the real `docker-compose.prod.yml` path against actual
     Bluetooth hardware on the production server (network_mode: host, node-ble) — tracked as a
     follow-up.
+- **MQTT + Health Engine settings moved from env vars to the Settings page** (2026-07-28,
+  post-Batch-9) — DestCom's explicit request: both were originally env-var-only (Batch 7's
+  `MQTT_*`, Batch 4's `HEALTH_BASELINE_WINDOW_DAYS`/`HEALTH_WARMUP_MIN_DAYS`), now DB-backed and
+  editable live with no restart/redeploy.
+  - **`MqttSettings`** (singleton DB row) + `backend/src/mqtt/manager.ts`: the MQTT client is now a
+    live-reconfigurable module-level singleton (`getMqttState()`/`reloadMqttClient()`, same pattern
+    `db/client.js`'s `prisma` export uses) instead of a value dependency-injected once at startup
+    through `TrpcDeps`/the scheduler/`triggerWatering()` — all of those dropped their `mqttClient`
+    parameter entirely, now importing the manager directly where needed. New `mqtt.get`/`mqtt.upsert`
+    tRPC procedures + a "MQTT / Home Assistant" card in `/settings`
+    (`frontend/src/components/mqtt-settings-section.tsx`) with a live connected/disconnected badge.
+    Password stored in cleartext (consistent with `BETTER_AUTH_SECRET`, no vault for this
+    single-admin deployment), never sent back to the client (`hasPassword: boolean` only; a blank
+    password field on save keeps the existing value, distinguished via `undefined` vs `null` in the
+    zod input).
+  - **`HealthSettings`** (singleton DB row) + `backend/src/health/settings.ts`
+    (`getHealthSettings`/`upsertHealthSettings`): `computeDeviceHealth()` (`health/scoring.ts`) now
+    takes `warmupMinDays` as an explicit parameter instead of reading `env` directly, keeping it a
+    pure function — the 3 call sites (scheduler, `health.deviceHealth` tRPC query,
+    `mqtt/publisher.ts`'s `publishHealthState`) each fetch the settings once and pass both values
+    through. New `health.getSettings`/`health.upsertSettings` tRPC procedures + a "Moteur de santé"
+    card in `/settings` (`frontend/src/components/health-engine-settings-section.tsx`).
+  - **Verified against the mock provider**: MQTT settings round-trip via a disposable embedded
+    broker (`aedes`) — save applying live (discovery republished, new connection established with
+    no restart), the watering-button → `triggerWatering` → `publishWateringResult` chain still
+    working end-to-end with the new parameterized topic settings, and the "blank password keeps
+    existing" behavior. Health settings verified via the tRPC round trip
+    (`getSettings`/`upsertSettings`/`deviceHealth` all consistent).
 - **Next batch**: Batch 10 (extension to other devices — Flower Power, Flower Care).
 - **`noble-bridge` validated with real hardware** ✅ (2026-07-27) — a real Parrot Pot
   (`PARROT-A073`) connected and read end-to-end (scan → connect → activate → read
@@ -314,9 +342,11 @@ backend/         API + business logic (Fastify, Prisma/SQLite, auth, BLE) — ru
   src/auth/        BetterAuth (instance, session/middleware, admin seed)
   src/ble/         scanner, connectionQueue, Parrot protocol logic (ble/parrot/) and Xiaomi (ble/xiaomi/)
   src/providers/   DeviceProvider implementations (mock, noble-bridge, node-ble) + factory
-  src/health/      Health Engine (Batch 4): plant_profiles CSV import + scoring engine
-  src/mqtt/        MQTT client + Home Assistant auto-discovery (Batch 7): topics, discovery
-                   payloads, publisher (state/health/watering-result), commands (HA button → watering)
+  src/health/      Health Engine (Batch 4): plant_profiles CSV import + scoring engine + settings.ts
+                   (HealthSettings, DB-backed baseline/warm-up config, see Project status)
+  src/mqtt/        MQTT + Home Assistant auto-discovery (Batch 7): topics, discovery payloads,
+                   manager.ts (live-reconfigurable client singleton, DB-backed via MqttSettings),
+                   publisher (state/health/watering-result), commands (HA button → watering)
   src/mcp/         MCP server (Batch 8): OAuth session → tRPC context (context.ts), the 4 tools
                    (server.ts), Fastify routes for /mcp + OAuth discovery metadata (routes.ts)
   src/db/          Prisma client
@@ -394,7 +424,9 @@ Dockerfile, docker-entrypoint.sh, docker-compose.prod.yml, docker-compose.test.y
   on a real device.
 - **tRPC (`src/api/trpc/`)**: `router.ts` combines `devices` (`list`, `listUnnamed`, `rename`,
   `history`, `wateringEvents`, `water`), `health` (`plantProfiles`, `assignPlantProfile`,
-  `deviceHealth`), `schedule` (`get`, `upsert` — Batch 5 auto-watering config, see Project status),
+  `deviceHealth`, `getSettings`/`upsertSettings` — Health Engine baseline/warm-up config, DB-backed,
+  see Project status), `mqtt` (`get`, `upsert` — MQTT broker config, DB-backed, see Project status),
+  `schedule` (`get`, `upsert` — Batch 5 auto-watering config, see Project status),
   `plantDr` (`getCalibration`, `calibrateWet` — Batch 6 device-side calibration, see Project status)
   and `readings`
   (`onReading`, a subscription) into `appRouter`; its type (`AppRouter`) is the single source of

@@ -1,0 +1,7 @@
+-- CreateTable
+CREATE TABLE "HealthSettings" (
+    "id" INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT DEFAULT 1,
+    "baselineWindowDays" INTEGER NOT NULL DEFAULT 14,
+    "warmupMinDays" INTEGER NOT NULL DEFAULT 3,
+    "updatedAt" DATETIME NOT NULL
+);

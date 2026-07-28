@@ -46,6 +46,32 @@ model Schedule {
   updatedAt DateTime @updatedAt
 }
 
+// MQTT + Home Assistant auto-discovery (Batch 7) — instance-wide settings, editable from the
+// Settings page instead of env vars (DestCom's explicit choice: a single source of truth, no env
+// var fallback to keep in sync). Singleton row enforced at the application level (always
+// read/upsert `where: {id: 1}`), not by the schema itself. `password` is stored in cleartext —
+// consistent with how every other secret in this project is handled (e.g. BETTER_AUTH_SECRET in
+// .env), no vault/encryption-at-rest for this single-admin, self-hosted deployment.
+model MqttSettings {
+  id              Int      @id @default(1)
+  url             String?
+  username        String?
+  password        String?
+  discoveryPrefix String   @default("homeassistant")
+  baseTopic       String   @default("stroyplant")
+  updatedAt       DateTime @updatedAt
+}
+
+// Health Engine (Batch 4, docs/STROYPLANT_SPEC.md section 7.3) — same singleton-row-editable-from-
+// Settings pattern as MqttSettings above, moved off env vars for the same reason (DestCom's
+// explicit choice: a single source of truth, no env var fallback to keep in sync).
+model HealthSettings {
+  id                 Int      @id @default(1)
+  baselineWindowDays Int      @default(14)
+  warmupMinDays      Int      @default(3)
+  updatedAt          DateTime @updatedAt
+}
+
 // Imported from assets/plants/watchflower_plantdb.csv (emericg/WatchFlower repo, GPLv3) — see
 // backend/src/health/importSpeciesProfiles.ts. A MIN/MAX pair set to `null;null` means the
 // parameter doesn't apply to this species in the source CSV (encoded `0;0`), not a real zero.

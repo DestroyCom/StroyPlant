@@ -1,7 +1,6 @@
 import websocketPlugin from '@fastify/websocket';
 import { fastifyTRPCPlugin } from '@trpc/server/adapters/fastify';
 import Fastify from 'fastify';
-import type { MqttClient } from 'mqtt';
 import { auth } from '../auth/auth.js';
 import type { ConnectionQueue } from '../ble/connectionQueue.js';
 import { registerMcpRoutes } from '../mcp/routes.js';
@@ -11,7 +10,7 @@ import { createContextFactory } from './trpc/context.js';
 import { appRouter } from './trpc/router.js';
 import { registerRawBodyParser, sendWebResponse, toWebRequest } from './webBridge.js';
 
-export async function buildServer(provider: DeviceProvider, connectionQueue: ConnectionQueue, mqttClient: MqttClient | null = null) {
+export async function buildServer(provider: DeviceProvider, connectionQueue: ConnectionQueue) {
   const app = Fastify({ logger: false });
   await app.register(websocketPlugin);
   registerRawBodyParser(app);
@@ -29,7 +28,7 @@ export async function buildServer(provider: DeviceProvider, connectionQueue: Con
 
   // MCP server (Batch 8, docs/STROYPLANT_SPEC.md section 7.8) — OAuth discovery metadata + the
   // /mcp tool endpoint, protected by BetterAuth's `mcp` plugin.
-  registerMcpRoutes(app, { provider, connectionQueue, mqttClient });
+  registerMcpRoutes(app, { provider, connectionQueue });
 
   // All devices/health/readings procedures require a session (protectedProcedure, see
   // api/trpc/trpc.ts) — never exposed without protection (section 7.6, same requirement enforced
@@ -39,7 +38,7 @@ export async function buildServer(provider: DeviceProvider, connectionQueue: Con
   await app.register(fastifyTRPCPlugin, {
     prefix: '/api/trpc',
     useWSS: true,
-    trpcOptions: { router: appRouter, createContext: createContextFactory({ provider, connectionQueue, mqttClient }) },
+    trpcOptions: { router: appRouter, createContext: createContextFactory({ provider, connectionQueue }) },
   });
 
   // Registered last: its SPA-fallback notFoundHandler must never shadow the API/MCP/auth routes

@@ -22,22 +22,9 @@ export const env = {
   parrotPollIntervalMs: process.env.PARROT_POLL_INTERVAL_MS ? Number(process.env.PARROT_POLL_INTERVAL_MS) : undefined,
   betterAuthSecret: process.env.BETTER_AUTH_SECRET ?? DEV_ONLY_FALLBACK_SECRET,
   betterAuthUrl: process.env.BETTER_AUTH_URL ?? `http://localhost:${Number(process.env.PORT ?? 3000)}`,
-  // Health Engine (Batch 4, docs/STROYPLANT_SPEC.md section 7.3) — rolling baseline window per
-  // device and minimum number of days before leaving "warm-up" mode (no alert as long as the
-  // personal baseline doesn't have enough data, to avoid false positives from day 1).
-  healthBaselineWindowDays: Number(process.env.HEALTH_BASELINE_WINDOW_DAYS ?? 14),
-  healthWarmupMinDays: Number(process.env.HEALTH_WARMUP_MIN_DAYS ?? 3),
   // Auto-watering scheduler (Batch 5, docs/STROYPLANT_SPEC.md section 7.4) — how often the cron
   // re-evaluates every device's schedule. Deliberately independent from the BLE scan/poll
   // interval: the scheduler only reads already-collected Reading rows, it never triggers its own
   // BLE read cycle (only a watering write, when it decides to act).
   schedulerTickIntervalMs: Number(process.env.SCHEDULER_TICK_INTERVAL_MS ?? 15 * 60_000),
-  // MQTT + Home Assistant auto-discovery (Batch 7, docs/STROYPLANT_SPEC.md section 7.7).
-  // MQTT_URL unset means the integration is entirely disabled — DestCom has no broker to test
-  // against yet, so this must never be required for the backend to start.
-  mqttUrl: process.env.MQTT_URL,
-  mqttUsername: process.env.MQTT_USERNAME,
-  mqttPassword: process.env.MQTT_PASSWORD,
-  mqttDiscoveryPrefix: process.env.MQTT_DISCOVERY_PREFIX ?? 'homeassistant',
-  mqttBaseTopic: process.env.MQTT_BASE_TOPIC ?? 'stroyplant',
 };

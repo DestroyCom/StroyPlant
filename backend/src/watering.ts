@@ -1,8 +1,8 @@
 import type { TriggerSource } from '@prisma/client';
-import type { MqttClient } from 'mqtt';
 import type { ConnectionQueue } from './ble/connectionQueue.js';
 import { prisma } from './db/client.js';
 import { log } from './logger.js';
+import { getMqttState } from './mqtt/manager.js';
 import { publishWateringResult } from './mqtt/publisher.js';
 import type { DeviceProvider } from './providers/types.js';
 
@@ -22,7 +22,6 @@ export async function triggerWatering(
   triggerSource: TriggerSource,
   provider: DeviceProvider,
   connectionQueue: ConnectionQueue,
-  mqttClient?: MqttClient | null,
 ): Promise<WateringResult> {
   let result: WateringResult;
   try {
@@ -36,6 +35,7 @@ export async function triggerWatering(
     result = { success: false, errorDetail: detail };
   }
 
-  if (mqttClient) publishWateringResult(mqttClient, deviceId, result);
+  const mqttState = getMqttState();
+  if (mqttState) publishWateringResult(mqttState.client, deviceId, result, mqttState.baseTopic);
   return result;
 }

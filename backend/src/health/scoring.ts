@@ -1,5 +1,4 @@
 import type { Device, PlantProfile, Reading } from '@prisma/client';
-import { env } from '../env.js';
 
 export type ParameterKey = 'soilMoisturePercent' | 'temperatureC' | 'humidityPercent' | 'luminosity' | 'soilConductivityEcPorous';
 
@@ -96,10 +95,15 @@ function valuesFor(key: ParameterKey, readings: Reading[]): number[] {
 /**
  * Computes a device's health score by combining the species profile's generic ranges
  * (coarse guardrail) and a device-specific rolling baseline (docs/STROYPLANT_SPEC.md section
- * 7.3). `readings` must cover the `env.healthBaselineWindowDays` window — it's up to the caller
- * to bound the Prisma query upstream.
+ * 7.3). `readings` must cover the configured baseline window (see health/settings.ts) — it's up to
+ * the caller to bound the Prisma query upstream and pass the matching `warmupMinDays`.
  */
-export function computeDeviceHealth(device: Pick<Device, 'kind'>, readings: Reading[], profile: PlantProfile | null): DeviceHealth {
+export function computeDeviceHealth(
+  device: Pick<Device, 'kind'>,
+  readings: Reading[],
+  profile: PlantProfile | null,
+  warmupMinDays: number,
+): DeviceHealth {
   if (!profile) {
     return { status: 'no_profile', parameters: {}, trend: 'unknown' };
   }
@@ -110,7 +114,7 @@ export function computeDeviceHealth(device: Pick<Device, 'kind'>, readings: Read
   const sorted = readings.filter((reading) => reading.isInAir !== true).sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
   const oldest = sorted[0];
   const daysCovered = oldest ? (Date.now() - oldest.timestamp.getTime()) / (24 * 3600_000) : 0;
-  const warmingUp = daysCovered < env.healthWarmupMinDays;
+  const warmingUp = daysCovered < warmupMinDays;
 
   const now = Date.now();
   const recentReadings = sorted.filter((reading) => now - reading.timestamp.getTime() <= RECENT_WINDOW_MS);

@@ -7,23 +7,20 @@ import { prisma } from './db/client.js';
 import { env } from './env.js';
 import { startScheduler } from './health/scheduler.js';
 import { log } from './logger.js';
-import { connectMqtt } from './mqtt/client.js';
-import { subscribeWateringCommands } from './mqtt/commands.js';
+import { getMqttState, initMqttManager } from './mqtt/manager.js';
 import { publishDiscovery, publishHealthState, publishReadingState } from './mqtt/publisher.js';
 import { createDeviceProvider } from './providers/factory.js';
 
 async function main() {
   const provider = createDeviceProvider();
   const connectionQueue = new ConnectionQueue();
-  const mqttClient = connectMqtt();
 
   log({ direction: 'INFO', label: `Starting StroyPlant backend — provider=${provider.name}`, result: 'OK' });
 
-  if (mqttClient) {
-    subscribeWateringCommands(mqttClient, provider, connectionQueue);
-    const namedDevices = await prisma.device.findMany({ where: { name: { not: null } } });
-    for (const device of namedDevices) publishDiscovery(mqttClient, device);
-  }
+  // Connects (or logs "disabled" if no broker is configured in Settings) and publishes discovery
+  // for every already-named device — subscribing to watering commands and republishing discovery
+  // happen again automatically on every `reloadMqttClient()` call too (mqttSettings.upsert, tRPC).
+  await initMqttManager(provider, connectionQueue);
 
   startScanner(
     provider,
@@ -40,8 +37,9 @@ async function main() {
         // separately, claims a device) — this only fires for the mock provider's pre-named
         // devices, so their MQTT discovery still gets published once without waiting on a rename
         // that will never happen in that case.
-        if (mqttClient && upserted.name != null && previous?.name == null) {
-          publishDiscovery(mqttClient, upserted);
+        const mqttState = getMqttState();
+        if (mqttState && upserted.name != null && previous?.name == null) {
+          publishDiscovery(mqttState.client, upserted, mqttState);
         }
       },
       async onReading(deviceId, kind, reading) {
@@ -68,9 +66,10 @@ async function main() {
         const created = await prisma.reading.create({ data: { deviceId, ...data } });
         emitReading({ deviceId, kind, reading: serializeReading(created) });
 
-        if (mqttClient) {
-          publishReadingState(mqttClient, deviceId, data);
-          void publishHealthState(mqttClient, deviceId);
+        const mqttState = getMqttState();
+        if (mqttState) {
+          publishReadingState(mqttState.client, deviceId, data, mqttState.baseTopic);
+          void publishHealthState(mqttState.client, deviceId, mqttState.baseTopic);
         }
       },
     },
@@ -78,9 +77,9 @@ async function main() {
     env.parrotPollIntervalMs,
   );
 
-  startScheduler(provider, connectionQueue, mqttClient);
+  startScheduler(provider, connectionQueue);
 
-  const app = await buildServer(provider, connectionQueue, mqttClient);
+  const app = await buildServer(provider, connectionQueue);
   await app.listen({ port: env.port, host: '0.0.0.0' });
   log({ direction: 'INFO', label: `API listening on port ${env.port}`, result: 'OK' });
 }

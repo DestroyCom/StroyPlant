@@ -2,6 +2,7 @@ import type { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { z } from 'zod';
 import { prisma } from '../../../db/client.js';
+import { getMqttState } from '../../../mqtt/manager.js';
 import { publishDiscovery } from '../../../mqtt/publisher.js';
 import { triggerWatering } from '../../../watering.js';
 import { serializeDate, serializeReading, serializeWateringEvent } from '../serialize.js';
@@ -33,7 +34,7 @@ export const devicesRouter = router({
     return Promise.all(devices.map(withLastReading));
   }),
 
-  rename: protectedProcedure.input(z.object({ deviceId: z.string(), name: z.string().trim().min(1) })).mutation(async ({ ctx, input }) => {
+  rename: protectedProcedure.input(z.object({ deviceId: z.string(), name: z.string().trim().min(1) })).mutation(async ({ input }) => {
     const device = await prisma.device.findUnique({ where: { id: input.deviceId } });
     if (!device) throw new TRPCError({ code: 'NOT_FOUND', message: 'Device not found' });
 
@@ -45,7 +46,8 @@ export const devicesRouter = router({
 
     // A device is only published to Home Assistant once claimed (named) — matches `devices.list`'s
     // own filter, so nothing appears in HA that isn't already tracked in StroyPlant's own dashboard.
-    if (ctx.mqttClient) publishDiscovery(ctx.mqttClient, updated);
+    const mqttState = getMqttState();
+    if (mqttState) publishDiscovery(mqttState.client, updated, mqttState);
 
     return withLastReading(updated);
   }),
@@ -79,7 +81,7 @@ export const devicesRouter = router({
     const device = await prisma.device.findUnique({ where: { id: input.deviceId } });
     if (!device) throw new TRPCError({ code: 'NOT_FOUND', message: 'Device not found' });
 
-    const result = await triggerWatering(device.id, 'MANUAL', ctx.provider, ctx.connectionQueue, ctx.mqttClient);
+    const result = await triggerWatering(device.id, 'MANUAL', ctx.provider, ctx.connectionQueue);
     if (!result.success) throw new TRPCError({ code: 'BAD_GATEWAY', message: result.errorDetail });
     return { ok: true as const };
   }),

@@ -180,7 +180,7 @@ Tables at minimum:
 
 At launch in prod, the pots will already be in soil with existing plants — **no controlled calibration window available for almost all devices** (impossible to test "probe in air" / "dry soil" / "saturated soil" without disturbing an already-installed plant). The system must therefore be able to start blind and progressively build its own personalized reference, rather than depending on an initial calibration:
 
-- Calculate rolling statistics (min/max/average/standard deviation) per device and per metric (VWC, temperature, conductivity, luminosity) over a configurable window (e.g. 7/14/30 days)
+- Calculate rolling statistics (min/max/average/standard deviation) per device and per metric (VWC, temperature, conductivity, luminosity) over a configurable window (e.g. 7/14/30 days) — the window and the warm-up minimum below are both editable from the Settings page (`HealthSettings` DB row, `backend/src/health/settings.ts`), not env vars, applied on the next computation with no restart needed (moved off the original env-var-only design, same reasoning as MQTT below)
 - **"Warm-up" period**: for a newly seen device, reduce confidence in health alerts (or suspend them entirely) until a sufficient personal baseline has been accumulated (e.g. at least a few days of data) — avoids false positives from day 1 based solely on a generic species range that may not exactly match this real sensor/pot
 - **Combining both sources**: species ranges (CSV, absolute, generic) act as a coarse guard rail (detecting a totally aberrant value); the per-device rolling baseline (relative, personalized) refines the actual scoring over time, once enough data has accumulated
 - Drift of the rolling baseline itself (e.g. the average gradually shifts with no watering event or seasonal explanation) is a signal in its own right — may indicate a sensor problem (fouling, calcification) rather than a plant problem, to be distinguished in the dashboard
@@ -295,15 +295,24 @@ procedure list and the Date-serialization note. Current procedures:
 - **MQTT + auto-discovery** (no HACS Python custom component — consistent with the refusal to mix Python into a 100% TS stack)
 - The backend publishes sensors on an MQTT topic in HA's discovery format; Home Assistant detects them automatically with no custom code on the HA side
 
-**Implementation** (`backend/src/mqtt/`: `topics.ts`, `discovery.ts`, `client.ts`, `publisher.ts`,
+**Implementation** (`backend/src/mqtt/`: `topics.ts`, `discovery.ts`, `manager.ts`, `publisher.ts`,
 `commands.ts`):
 
-- **Entirely optional, off by default**: `MQTT_URL` unset means `connectMqtt()` returns `null` and
-  every call site treats that as "skip publishing", never as an error — DestCom has no
-  Mosquitto/Home Assistant instance to test against yet in production, so the integration must
-  never block the backend from starting. `MQTT_USERNAME`/`MQTT_PASSWORD` optional,
-  `MQTT_DISCOVERY_PREFIX` (default `homeassistant`) and `MQTT_BASE_TOPIC` (default `stroyplant`)
-  configurable.
+- **Configured from the Settings page, not env vars** (`MqttSettings` DB row, singleton
+  `id: 1`) — moved off the original env-var-only design at DestCom's explicit request, so the
+  broker URL/credentials/topics are user-scoped and editable without a redeploy. Entirely optional,
+  off by default: no row (or an empty `url`) means `getMqttState()` returns `null` and every call
+  site treats that as "skip publishing", never as an error.
+- **Live-reconfigurable, not fixed at process startup**: `backend/src/mqtt/manager.ts` holds the
+  current `{client, baseTopic, discoveryPrefix}` as a module-level singleton (the same pattern
+  `db/client.js`'s `prisma` export already uses, rather than dependency-injecting a value that can
+  now change at runtime through every constructor call site). `reloadMqttClient()` disconnects the
+  current client and reconnects with the latest DB settings — called once at boot
+  (`initMqttManager`) and again every time the `mqtt.upsert` tRPC mutation saves a change, with no
+  backend restart needed. The password is stored in cleartext in SQLite, consistent with how every
+  other secret in this project is handled (e.g. `BETTER_AUTH_SECRET` in `.env`) — no vault for this
+  single-admin, self-hosted deployment. The Settings UI never reads the real password back
+  (`hasPassword: boolean` only); leaving the password field blank on save keeps the existing value.
 - **One JSON state topic per device** (`stroyplant/<sanitized-id>/state`), not one raw topic per
   sensor field — each HA entity's discovery config points at the same state topic with its own
   `value_template` (e.g. `{{ value_json.soilMoisturePercent }}`). A separate

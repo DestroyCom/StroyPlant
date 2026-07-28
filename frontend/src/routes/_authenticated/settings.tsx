@@ -1,6 +1,8 @@
 import { createFileRoute, Link } from '@tanstack/react-router';
 import { Bell, Bot } from 'lucide-react';
 import type { ReactNode } from 'react';
+import { HealthEngineSettingsSection } from '@/components/health-engine-settings-section';
+import { MqttSettingsSection } from '@/components/mqtt-settings-section';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { authClient } from '@/lib/auth-client';
@@ -58,6 +60,8 @@ function SettingsPage() {
             </CardDescription>
           </CardHeader>
         </Card>
+        <MqttSettingsSection />
+        <HealthEngineSettingsSection />
         <ComingSoonSection
           icon={<Bell size={18} className="text-muted-foreground" />}
           title="Notifications"

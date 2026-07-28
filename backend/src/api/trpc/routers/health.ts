@@ -1,12 +1,19 @@
 import { TRPCError } from '@trpc/server';
 import { z } from 'zod';
 import { prisma } from '../../../db/client.js';
-import { env } from '../../../env.js';
 import { computeDeviceHealth } from '../../../health/scoring.js';
+import { getHealthSettings, upsertHealthSettings } from '../../../health/settings.js';
 import { serializeDate } from '../serialize.js';
 import { protectedProcedure, router } from '../trpc.js';
 
 export const healthRouter = router({
+  // Instance-wide, editable from the Settings page instead of env vars — see health/settings.ts.
+  getSettings: protectedProcedure.query(() => getHealthSettings()),
+
+  upsertSettings: protectedProcedure
+    .input(z.object({ baselineWindowDays: z.number().int().min(1).max(365), warmupMinDays: z.number().int().min(0).max(365) }))
+    .mutation(({ input }) => upsertHealthSettings(input)),
+
   plantProfiles: protectedProcedure.input(z.object({ search: z.string().optional() })).query(async ({ input }) => {
     const search = input.search?.trim();
     return prisma.plantProfile.findMany({
@@ -39,12 +46,13 @@ export const healthRouter = router({
     const device = await prisma.device.findUnique({ where: { id: input.deviceId }, include: { plantProfile: true } });
     if (!device) throw new TRPCError({ code: 'NOT_FOUND', message: 'Device not found' });
 
-    const since = new Date(Date.now() - env.healthBaselineWindowDays * 24 * 3600_000);
+    const healthSettings = await getHealthSettings();
+    const since = new Date(Date.now() - healthSettings.baselineWindowDays * 24 * 3600_000);
     const readings = await prisma.reading.findMany({
       where: { deviceId: device.id, timestamp: { gte: since } },
       orderBy: { timestamp: 'asc' },
     });
 
-    return computeDeviceHealth(device, readings, device.plantProfile);
+    return computeDeviceHealth(device, readings, device.plantProfile, healthSettings.warmupMinDays);
   }),
 });
