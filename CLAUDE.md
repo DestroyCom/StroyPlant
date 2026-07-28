@@ -537,6 +537,13 @@ Dockerfile, docker-entrypoint.sh, docker-compose.prod.yml, docker-compose.test.y
 - Xiaomi LYWSD03MMC: GATT is mandatory, no passive reading possible on stock firmware (see above).
 - `noble-bridge` (macOS) never exposes the real MAC (see above).
 - The GATT_ERROR=133 heuristic on `node-ble`/BlueZ is best-effort, to be refined on the production server.
+- `docker-entrypoint.sh` runs `prisma migrate deploy` **and** `node dist/auth/seed-admin.js` on
+  every boot, not just the first one — DestCom's explicit preference over the original manual
+  one-off step. `seed-admin.ts` is idempotent (checks for an existing user by `ADMIN_EMAIL` first,
+  skips if found), so a restart/redeploy never fails just because the account already exists. Note
+  the dev shortcut `pnpm seed:admin` still only works locally (needs `tsx`, a devDependency
+  excluded from `pnpm deploy --prod`) — the entrypoint calls the compiled
+  `dist/auth/seed-admin.js` directly instead.
 - `BETTER_AUTH_SECRET` runs on an insecure dev fallback if absent from `.env` (just a startup
   warning) — generate a real value (`openssl rand -base64 32`) before any real deployment.
 - BetterAuth rejects the login in dev with "Invalid origin" if `trustedOrigins` doesn't include
