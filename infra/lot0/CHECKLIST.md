@@ -1,122 +1,124 @@
-# Lot 0 — Checklist de validation Docker + Bluetooth sur l'the production server
+# Batch 0 — Docker + Bluetooth validation checklist on the the production server
 
-> Contexte initial : le dongle TP-Link UB500 Plus n'était pas encore arrivé. En vérifiant
-> l'the production server, on a découvert un adaptateur Bluetooth **intégré** déjà fonctionnel (Intel
-> Wireless-AC 3168, Bluetooth 4.2, USB interne) — décision prise avec DestCom (2026-07-27)
-> de valider le Lot 0 avec cet adaptateur dès maintenant, le TP-Link viendra en
-> remplacement/complément à son arrivée (revalidation nécessaire, chipset différent —
-> Realtek RTL8761B vs Intel, voir note en fin de fichier).
+> Initial context: the TP-Link UB500 Plus dongle had not arrived yet. While checking
+> the the production server, we discovered an already functional **integrated** Bluetooth adapter (Intel
+> Wireless-AC 3168, Bluetooth 4.2, internal USB) — decision made with DestCom (2026-07-27)
+> to validate Batch 0 with this adapter right away, the TP-Link will come as a
+> replacement/complement once it arrives (revalidation required, different chipset —
+> Realtek RTL8761B vs Intel, see note at the end of the file).
 
-## Statut : Lot 0 validé (2026-07-27)
+## Status: Batch 0 validated (2026-07-27)
 
-Exécuté via SSH direct (`ssh the production server`) sur l'the production server réel, résultats complets ci-dessous.
+Executed via direct SSH (`ssh the production server`) on the real the production server, full results below.
 
-### Étape A — hôte
+### Step A — host
 
-- Docker Engine natif confirmé : version 29.6.1, Debian 12 (bookworm), cgroup driver `cgroupfs`
-- **BlueZ n'était pas installé par défaut** (the production server = distro orientée NAS, pas de paquets
-  desktop/Bluetooth de base) → installé manuellement par DestCom (`apt-get install -y bluez`
+- Native Docker Engine confirmed: version 29.6.1, Debian 12 (bookworm), `cgroupfs` cgroup driver
+- **BlueZ was not installed by default** (the production server = NAS-oriented distro, no base
+  desktop/Bluetooth packages) → installed manually by DestCom (`apt-get install -y bluez`
   + `systemctl enable --now bluetooth`)
-- Une fois installé : `bluetooth.service` actif, `bluetoothctl: 5.66`
-- Socket D-Bus système présent à l'emplacement attendu
-- Adaptateur détecté sur l'hôte : `hci0`, Intel Corp. Wireless-AC 3168, `UP RUNNING`,
+- Once installed: `bluetooth.service` active, `bluetoothctl: 5.66`
+- System D-Bus socket present at the expected location
+- Adapter detected on the host: `hci0`, Intel Corp. Wireless-AC 3168, `UP RUNNING`,
   BD Address `10:F0:05:0F:40:4B`, HCI Version 4.2
 
-### Étape B — accès Bluetooth depuis un container Docker
+### Step B — Bluetooth access from a Docker container
 
-Testé avec la config **capabilities fines** (pas `privileged: true`) :
-`cap_add: NET_ADMIN, NET_RAW` + `network_mode: host` + montage
+Tested with the **fine-grained capabilities** config (not `privileged: true`):
+`cap_add: NET_ADMIN, NET_RAW` + `network_mode: host` + mounting
 `/var/run/dbus/system_bus_socket`.
 
-- `dbus-send --system --dest=org.bluez / ... Introspect` → **répond correctement** (pas de
-  timeout, pas de "Failed to connect to bus")
-- `bluetoothctl list` depuis le container → voit le même contrôleur que l'hôte
-- **Conclusion : la config capabilities fines suffit, pas besoin de `privileged: true`.**
+- `dbus-send --system --dest=org.bluez / ... Introspect` → **responds correctly** (no
+  timeout, no "Failed to connect to bus")
+- `bluetoothctl list` from the container → sees the same controller as the host
+- **Conclusion: the fine-grained capabilities config is sufficient, no need for `privileged: true`.**
 
-### Étape C — scan BLE réel depuis le container (bonus, validation complète)
+### Step C — real BLE scan from the container (bonus, full validation)
 
-`bluetoothctl scan on` pendant 10s depuis le container a détecté, parmi d'autres devices
-BLE alentour, les **devices P0 de la spec** :
+`bluetoothctl scan on` for 10s from the container detected, among other BLE devices
+nearby, the **P0 devices from the spec**:
 
 - `A0:14:3D:CD:A3:D3` — "Parrot pot a3d3"
-- `A0:14:3D:CD:A0:73` — "Parrot pot a073" (deux Parrot Pot détectés, pas un seul)
-- `A4:C1:38:51:3B:54` — "LYWSD03MMC" (Xiaomi, firmware pvvx confirmé par le nom d'annonce)
+- `A0:14:3D:CD:A0:73` — "Parrot pot a073" (two Parrot Pots detected, not just one)
+- `A4:C1:38:51:3B:54` — "LYWSD03MMC" (Xiaomi, pvvx firmware confirmed by the advertised name)
 
-Le pipeline complet (container Docker → capabilities → D-Bus → BlueZ hôte → adaptateur →
-scan BLE → détection des vrais devices cibles) est validé de bout en bout.
+The full pipeline (Docker container → capabilities → D-Bus → host BlueZ → adapter →
+BLE scan → detection of the real target devices) is validated end-to-end.
 
-## Reste à faire à l'arrivée du dongle TP-Link
+## Remaining work once the TP-Link dongle arrives
 
-Le chipset Realtek RTL8761B (TP-Link) est différent de l'Intel Wireless-AC 3168 déjà validé
-— BlueZ absorbe en théorie ces différences, mais à revérifier concrètement :
+The Realtek RTL8761B chipset (TP-Link) is different from the already validated Intel
+Wireless-AC 3168 — BlueZ theoretically absorbs these differences, but it needs concrete
+re-verification:
 
-- `dmesg | grep -i -E "usb|blue"` juste après branchement — confirmer que le kernel
-  reconnaît le chipset sans erreur de firmware manquant
-- `hciconfig -a` — le nouvel adaptateur doit apparaître `UP RUNNING`
-- Si les deux adaptateurs (Intel intégré + TP-Link) sont présents en même temps, décider
-  lequel utiliser par défaut pour le Lot 1 (probablement le TP-Link, recommandé dans la
-  spec pour sa fiabilité/portée — mais l'intégré reste un bon fallback)
-- Refaire le test de scan de l'étape C avec le TP-Link pour confirmer une portée/fiabilité
-  au moins équivalente
+- `dmesg | grep -i -E "usb|blue"` right after plugging it in — confirm that the kernel
+  recognizes the chipset with no missing firmware error
+- `hciconfig -a` — the new adapter must appear as `UP RUNNING`
+- If both adapters (integrated Intel + TP-Link) are present at the same time, decide
+  which one to use by default for Batch 1 (probably the TP-Link, recommended in the
+  spec for its reliability/range — but the integrated one remains a good fallback)
+- Redo the Step C scan test with the TP-Link to confirm at least equivalent
+  range/reliability
 
 ---
 
-## Contenu original de ce dossier (pour référence / re-run futur)
+## Original content of this folder (for reference / future re-run)
 
-## 1. Préparation
+## 1. Preparation
 
-Copier ce dossier `infra/lot0/` sur l'the production server (scp, rsync, ou clone du repo une fois qu'il existera).
+Copy this `infra/lot0/` folder to the the production server (scp, rsync, or clone of the repo once it exists).
 
-## 2. Étape A — vérifs sur l'hôte (hors Docker)
+## 2. Step A — host checks (outside Docker)
 
 ```bash
 chmod +x check-host.sh
 ./check-host.sh
 ```
 
-Ce script vérifie :
-- que Docker Engine est natif Linux (pas de sens de le vérifier sur macOS/Windows, mais on
-  confirme la version et le cgroup driver)
-- que `bluez` est installé sur l'hôte et que le service `bluetooth.service` tourne (il doit
-  tourner même sans adaptateur branché, sauf s'il a été désactivé manuellement)
-- que le socket D-Bus système existe à l'emplacement attendu (`/var/run/dbus/system_bus_socket`)
-  — c'est ce socket qu'on montera dans le container plus tard
-- liste des adaptateurs connus de BlueZ (vide, normal sans dongle)
+This script checks:
+- that Docker Engine is native Linux (doesn't make sense to check on macOS/Windows, but we
+  confirm the version and the cgroup driver)
+- that `bluez` is installed on the host and that the `bluetooth.service` service is running (it
+  must run even without an adapter plugged in, unless it was manually disabled)
+- that the system D-Bus socket exists at the expected location (`/var/run/dbus/system_bus_socket`)
+  — this is the socket we will mount into the container later
+- list of adapters known to BlueZ (empty, normal without a dongle)
 
-**Me renvoyer la sortie complète.**
+**Send me the full output.**
 
-## 3. Étape B — accès Bluetooth depuis un container Docker
+## 3. Step B — Bluetooth access from a Docker container
 
 ```bash
 docker compose -f docker-compose.test.yml up --abort-on-container-exit
 docker compose -f docker-compose.test.yml down
 ```
 
-Ce test lance un container **jetable** (pas encore l'image de l'app, juste `debian:bookworm-slim`
-+ `bluez` installé à la volée) avec la configuration Docker exigée par la spec (section 5) :
-`cap_add: NET_ADMIN, NET_RAW` + `network_mode: host` + montage du socket D-Bus système.
+This test launches a **disposable** container (not yet the app image, just `debian:bookworm-slim`
++ `bluez` installed on the fly) with the Docker configuration required by the spec (section 5):
+`cap_add: NET_ADMIN, NET_RAW` + `network_mode: host` + mounting the system D-Bus socket.
 
-Il essaie de :
-1. Afficher la version de `bluetoothctl` installée dans le container
-2. Faire un appel D-Bus direct vers `org.bluez` (`dbus-send`) — **c'est le test clé** : si ça
-   répond (même une erreur "no such adapter"), le container parle bien à BlueZ via le bus système
-   de l'hôte. Si ça timeout ou renvoie "Failed to connect to bus", la conf capabilities/mount ne
-   suffit pas et il faudra basculer sur `privileged: true` (alternative commentée dans le fichier).
-3. Lister les adaptateurs connus (vide, normal sans dongle)
+It tries to:
+1. Display the version of `bluetoothctl` installed in the container
+2. Make a direct D-Bus call to `org.bluez` (`dbus-send`) — **this is the key test**: if it
+   responds (even a "no such adapter" error), the container is indeed talking to BlueZ via the
+   host's system bus. If it times out or returns "Failed to connect to bus", the
+   capabilities/mount config is not sufficient and we'll need to switch to `privileged: true`
+   (alternative commented out in the file).
+3. List known adapters (empty, normal without a dongle)
 
-**Me renvoyer la sortie complète, en particulier si l'étape `dbus-send` répond ou timeout.**
+**Send me the full output, especially whether the `dbus-send` step responds or times out.**
 
-## 4. Ce qui reste bloqué sans le dongle (à refaire dès réception)
+## 4. What remains blocked without the dongle (to redo once received)
 
-Une fois le dongle branché sur l'the production server, il faudra revalider (Lot 0 complet) :
-- `dmesg | grep -i -E "usb|blue"` juste après branchement — confirmer que le kernel reconnaît
-  le chipset Realtek RTL8761B sans erreur de firmware manquant
-- `hciconfig -a` sur l'hôte — l'adaptateur doit apparaître avec un statut `UP RUNNING`
-- Refaire le test de l'étape B avec le dongle branché — `bluetoothctl list` doit maintenant
-  montrer l'adaptateur réel, et `bluetoothctl scan on` doit détecter des devices BLE alentour
-  depuis l'intérieur du container
-- Décider définitivement entre `privileged: true` et l'approche capabilities fines, selon ce
-  qui a fonctionné à l'étape B
+Once the dongle is plugged into the the production server, Batch 0 will need to be fully revalidated:
+- `dmesg | grep -i -E "usb|blue"` right after plugging it in — confirm that the kernel recognizes
+  the Realtek RTL8761B chipset with no missing firmware error
+- `hciconfig -a` on the host — the adapter must appear with `UP RUNNING` status
+- Redo the Step B test with the dongle plugged in — `bluetoothctl list` must now
+  show the real adapter, and `bluetoothctl scan on` must detect BLE devices nearby
+  from inside the container
+- Definitively decide between `privileged: true` and the fine-grained capabilities approach,
+  depending on what worked in Step B
 
-Ne pas considérer le Lot 0 comme "terminé" tant que cette section n'est pas validée avec le
-dongle réel — ce qui précède n'est qu'une préparation partielle.
+Do not consider Batch 0 "done" until this section is validated with the
+real dongle — the above is only partial preparation.

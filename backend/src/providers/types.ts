@@ -5,6 +5,12 @@ export interface ParrotPotReading {
   temperatureC: number;
   luminosity: number;
   waterTankLevelPercent?: number;
+  // Two raw candidates for "Soil conductivity" (WatchFlower CSV) — see
+  // docs/STROYPLANT_SPEC.md section 8 and ble/parrot/uuids.ts. Optional: the reading can fail
+  // silently without failing the whole read (the official app never uses them,
+  // their actual behavior on the Parrot Pot firmware isn't guaranteed).
+  soilConductivityEcb?: number;
+  soilConductivityEcPorous?: number;
 }
 
 export interface XiaomiReading {
@@ -26,6 +32,10 @@ export interface DiscoveredDevice {
   name?: string;
   rssi?: number;
   reading?: SensorReading;
+  // Parrot Pot only — raw manufacturer data payload (hex), see ble/parrot/advertisement.ts.
+  // Deliberately left uninterpreted (see docs/STROYPLANT_SPEC.md section 7.1, correlation protocol
+  // not executed yet) — logged for diagnostics, never used to decide a connection.
+  advertisementPayloadHex?: string;
 }
 
 export type DeviceAction = 'water';

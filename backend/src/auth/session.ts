@@ -6,8 +6,8 @@ export async function getSession(request: FastifyRequest) {
   return auth.api.getSession({ headers: fromNodeHeaders(request.headers) });
 }
 
-// Protège toute route/WS en dehors de /api/auth/* — jamais exposé sans protection
-// (docs/STROYPLANT_SPEC.md section 7.6, même exigence pour le futur serveur MCP du Lot 8).
+// Protects every route/WS outside /api/auth/* — never exposed without protection
+// (docs/STROYPLANT_SPEC.md section 7.6, same requirement for the future MCP server in Batch 8).
 export async function requireAuth(request: FastifyRequest, reply: FastifyReply): Promise<void> {
   const session = await getSession(request);
   if (!session) {

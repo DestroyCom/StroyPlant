@@ -4,9 +4,12 @@ import { tanstackRouter } from '@tanstack/router-plugin/vite';
 import react from '@vitejs/plugin-react';
 import { defineConfig } from 'vite';
 
-// Backend Fastify (Lot 1/2) écoute sur BACKEND_PORT (défaut 3000, voir backend/.env.example) —
-// proxy nécessaire en dev pour que /api et /ws partagent la même origine que le frontend Vite,
-// sinon les cookies de session BetterAuth (SameSite) ne suivent pas les requêtes cross-origin.
+// The Fastify backend (Batch 1/2) listens on BACKEND_PORT (default 3000, see backend/.env.example) —
+// a dev proxy is needed so /api shares the same origin as the Vite frontend, otherwise BetterAuth's
+// session cookies (SameSite) don't follow cross-origin requests. `ws: true` also forwards the WS
+// upgrade for the readings.onReading tRPC subscription, which shares the /api/trpc prefix with the
+// regular HTTP calls (fastifyTRPCPlugin's useWSS option, see backend/src/api/server.ts) — there is
+// no separate /ws endpoint anymore.
 const backendPort = process.env.BACKEND_PORT ?? '3000';
 const backendUrl = `http://localhost:${backendPort}`;
 
@@ -20,8 +23,7 @@ export default defineConfig({
   },
   server: {
     proxy: {
-      '/api': { target: backendUrl, changeOrigin: true },
-      '/ws': { target: backendUrl, ws: true, changeOrigin: true },
+      '/api': { target: backendUrl, changeOrigin: true, ws: true },
     },
   },
 });

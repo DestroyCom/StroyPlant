@@ -7,10 +7,10 @@ export interface ScannerCallbacks {
   onReading: (deviceId: string, kind: DeviceKind, reading: SensorReading) => Promise<void>;
 }
 
-// Intervalle de polling des capteurs Parrot Pot (connexion GATT via la connectionQueue). Pas de
-// valeur imposée par la spec pour le Lot 1 (qui ne couvre que la capture des lectures — le rythme
-// de scoring/alerting est une préoccupation du Health Engine, Lot 4) — 5 minutes est un défaut
-// raisonnable, ajustable via PARROT_POLL_INTERVAL_MS.
+// Polling interval for Parrot Pot sensors (GATT connection via the connectionQueue). No value
+// mandated by the spec for Batch 1 (which only covers reading capture — scoring/alerting cadence
+// is a Health Engine concern, Batch 4) — 5 minutes is a reasonable default, adjustable via
+// PARROT_POLL_INTERVAL_MS.
 const DEFAULT_POLL_INTERVAL_MS = 5 * 60_000;
 
 export function startScanner(
@@ -24,8 +24,8 @@ export function startScanner(
 
   const onDiscovered = async (device: DiscoveredDevice) => {
     try {
-      // Le upsert du device DOIT être terminé avant toute écriture de reading (clé étrangère) —
-      // jamais lancer les deux en parallèle.
+      // The device upsert MUST complete before any reading write (foreign key) —
+      // never run the two in parallel.
       await callbacks.onDeviceSeen(device);
     } catch (error) {
       log({
@@ -38,8 +38,8 @@ export function startScanner(
       return;
     }
 
-    // Cas passif (aucun device connu à ce jour ne l'est réellement — voir commentaire sur
-    // DiscoveredDevice.reading dans providers/types.ts) : la lecture est déjà dans l'annonce.
+    // Passive case (no currently known device actually is one — see comment on
+    // DiscoveredDevice.reading in providers/types.ts): the reading is already in the advertisement.
     if (device.reading) {
       callbacks.onReading(device.id, device.kind, device.reading).catch((error) => {
         log({
@@ -53,19 +53,19 @@ export function startScanner(
       return;
     }
 
-    // Parrot Pot ET Xiaomi LYWSD03MMC nécessitent tous les deux une connexion GATT (voir
-    // docs/STROYPLANT_SPEC.md section 3 correction) — les deux partagent donc la même queue séquentielle,
-    // une seule connexion GATT à la fois quel que soit le type de device.
+    // Both Parrot Pot AND Xiaomi LYWSD03MMC require a GATT connection (see
+    // docs/STROYPLANT_SPEC.md section 3 correction) — so they share the same sequential queue,
+    // only one GATT connection at a time regardless of device type.
     const last = lastPolled.get(device.id) ?? 0;
     if (Date.now() - last < pollIntervalMs) return;
-    lastPolled.set(device.id, Date.now()); // marqué avant l'exécution pour ne pas ré-empiler pendant qu'une lecture est déjà en vol
+    lastPolled.set(device.id, Date.now()); // marked before execution so it isn't re-queued while a reading is already in flight
 
     connectionQueue.run(async () => {
       try {
         const reading = await provider.readSensors(device.id, device.kind);
         await callbacks.onReading(device.id, device.kind, reading);
       } catch (error) {
-        // Ne jamais avaler une erreur silencieusement (docs/STROYPLANT_SPEC.md section 7.1).
+        // Never swallow an error silently (docs/STROYPLANT_SPEC.md section 7.1).
         log({
           direction: 'READ',
           label: 'Poll readSensors failed',
@@ -80,7 +80,7 @@ export function startScanner(
   provider.scan(onDiscovered, controller.signal).catch((error) => {
     log({
       direction: 'SCAN',
-      label: `Scanner (${provider.name}) arrêté sur erreur`,
+      label: `Scanner (${provider.name}) stopped on error`,
       result: 'ERROR',
       detail: error instanceof Error ? error.message : String(error),
     });

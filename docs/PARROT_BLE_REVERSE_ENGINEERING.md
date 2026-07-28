@@ -1,153 +1,153 @@
-# Rapport de rétro-ingénierie BLE — Parrot Flower Power / Parrot Pot (APK 4.6.2)
+# BLE reverse-engineering report — Parrot Flower Power / Parrot Pot (APK 4.6.2)
 
-> Document autonome regroupant l'intégralité d'une analyse statique (décompilation apktool + jadx, lecture
-> de code, pas de capture BLE réelle) menée sur l'APK Android officiel Parrot Flower Power v4.6.2, dans le
-> but d'identifier le protocole BLE du Parrot Pot pour un bridge Node.js/TypeScript.
+> Standalone document gathering the entirety of a static analysis (apktool + jadx decompilation, code
+> reading, no real BLE capture) performed on the official Parrot Flower Power Android APK v4.6.2, with
+> the goal of identifying the Parrot Pot BLE protocol for a Node.js/TypeScript bridge.
 >
-> **Statut : source de vérité prioritaire sur ce sujet**, au-dessus des déductions faites depuis WatchFlower —
-> cette analyse provient directement du code source officiel Parrot (non obfusqué), pas d'une
-> réimplémentation tierce.
+> **Status: priority source of truth on this topic**, above deductions made from WatchFlower —
+> this analysis comes directly from the official Parrot source code (not obfuscated), not from a
+> third-party reimplementation.
 
 ---
 
-## 1. Vérification d'intégrité de l'APK
+## 1. APK integrity verification
 
-Deux APK téléchargés depuis deux sources différentes pour la même version (4.6.2) :
+Two APKs downloaded from two different sources for the same version (4.6.2):
 
 - `Parrot+Flower+Power_4.6.2_apkcombo.com.apk`
 - `Parrot+Flower+Power_4.6.2_APKPure.apk`
 
-**Hash SHA-256** (identique pour les deux fichiers) :
+**SHA-256 hash** (identical for both files):
 `8304940564c4f9876b43911dac7e44765e836943cf979952a26e3d47fb52ccef`
-→ Les deux fichiers sont bit-à-bit identiques.
+→ The two files are bit-for-bit identical.
 
-**Certificat de signature** (`META-INF/CERT.RSA`, identique dans les deux APK) :
+**Signing certificate** (`META-INF/CERT.RSA`, identical in both APKs):
 
-| Champ                 | Valeur                                                                          |
-| --------------------- | ------------------------------------------------------------------------------- |
-| SHA-256 de `CERT.RSA` | `dc65f8a2bf377881e6ec611e072cce86a3d6ae1a015fbd04299cde849e8c0518`              |
-| Subject / Issuer      | `C=FR, ST=France, L=Paris, O=Parrot, OU=Parrot, CN=Parrot Mykonos` (auto-signé) |
-| Serial                | `1314357138 (0x4e577f92)`                                                       |
-| Validité              | 26 août 2011 → 29 mai 2066                                                      |
-| Algorithme            | SHA1withRSA (v1/JAR signing)                                                    |
-| Clé                   | RSA 2048 bits                                                                   |
+| Field                 | Value                                                                           |
+| --------------------- | -------------------------------------------------------------------------------- |
+| SHA-256 of `CERT.RSA` | `dc65f8a2bf377881e6ec611e072cce86a3d6ae1a015fbd04299cde849e8c0518`              |
+| Subject / Issuer      | `C=FR, ST=France, L=Paris, O=Parrot, OU=Parrot, CN=Parrot Mykonos` (self-signed) |
+| Serial                | `1314357138 (0x4e577f92)`                                                        |
+| Validity              | August 26, 2011 → May 29, 2066                                                    |
+| Algorithm             | SHA1withRSA (v1/JAR signing)                                                     |
+| Key                   | RSA 2048 bits                                                                    |
 
-**Verdict** : hash identiques, certificat cohérent avec l'éditeur légitime (Parrot SA). Rien de suspect.
-Analyse poursuivie sur `Parrot+Flower+Power_4.6.2_apkcombo.com.apk`.
-
----
-
-## 2. TL;DR — characteristic d'irrigation
-
-**Characteristic d'irrigation manuelle : `39e1F906-84a8-11e2-afba-0002a5d5c51b` (`UUID_WATERING_CMD`)**,
-sur le service `39e1F900-84a8-11e2-afba-0002a5d5c51b` (`WATERING_SERVICE_UUID`, aussi annoncé en
-advertisement BLE pour identifier un Parrot Pot). **Niveau de confiance : certain** (lecture directe de
-code non obfusqué, pas de déduction indirecte).
-
-L'app y écrit `[0x08, 0x00]` (uint16 little-endian, valeur `BleConfig.WATER_PLANT_TIME = 8`) via
-`writeCharacteristic` en mode _write with response_ (`WRITE_TYPE_DEFAULT`), ce qui déclenche un arrosage
-manuel immédiat.
-
-**Pour piloter l'arrosage depuis un bridge Node.js/TypeScript** : se connecter au service
-`39e1F900-84a8-11e2-afba-0002a5d5c51b`, écrire `[0x08, 0x00]` (ou une autre valeur uint16 LE si la durée est
-paramétrable côté firmware — non confirmé, à vérifier empiriquement) sur la characteristic
-`39e1F906-84a8-11e2-afba-0002a5d5c51b`, avec write-with-response.
-
-Limite importante : la confiance "certain" porte sur _ce que fait l'app_, pas sur _ce qu'accepte le
-firmware_ (le firmware pourrait rejeter une valeur uint16 différente de 8, ou au contraire accepter
-n'importe quelle durée). Seul un test réel sur un Parrot Pot physique (ou une capture HCI snoop / nRF
-Connect) peut le confirmer.
-
-**Pourquoi cette confiance est justifiée** : le code Java de l'app **n'est pas obfusqué** (pas de
-ProGuard/R8 sur les noms dans le package `ble`) — les classes s'appellent littéralement `WaterThePlant`,
-`WriteWateringConfig`, `HawaiiUUID.UUID_WATERING_CMD`, etc. Aucune remontée d'appel depuis un nom obfusqué
-type `a.java`/`b()` n'a été nécessaire.
+**Verdict**: identical hashes, certificate consistent with the legitimate publisher (Parrot SA).
+Nothing suspicious. Analysis continued on `Parrot+Flower+Power_4.6.2_apkcombo.com.apk`.
 
 ---
 
-## 3. Tableau complet des UUID BLE
+## 2. TL;DR — irrigation characteristic
 
-Toutes les constantes viennent de `com.parrot.flowerpower.android.ble.service.HawaiiUUID`.
-Base UUID custom Parrot : `39e1xxxx-84a8-11e2-afba-0002a5d5c51b`.
+**Manual irrigation characteristic: `39e1F906-84a8-11e2-afba-0002a5d5c51b` (`UUID_WATERING_CMD`)**,
+on the service `39e1F900-84a8-11e2-afba-0002a5d5c51b` (`WATERING_SERVICE_UUID`, also advertised in
+BLE advertisement to identify a Parrot Pot). **Confidence level: certain** (direct reading of
+non-obfuscated code, no indirect deduction).
 
-Confiance : **certain** = usage confirmé par du code qui appelle
-`writeCharacteristic`/`readCharacteristic`/`setCharacteristicNotification` sur cet UUID précis.
-**probable** = UUID présent dans une table de service cohérente mais pas vu directement utilisé dans le
-code lu.
+The app writes `[0x08, 0x00]` to it (uint16 little-endian, value `BleConfig.WATER_PLANT_TIME = 8`)
+via `writeCharacteristic` in _write with response_ mode (`WRITE_TYPE_DEFAULT`), which triggers an
+immediate manual watering.
 
-### Service Watering (`HAWAII_WATER_DEVICE` = `39e1F900-...`) — le service Parrot Pot
+**To trigger watering from a Node.js/TypeScript bridge**: connect to the service
+`39e1F900-84a8-11e2-afba-0002a5d5c51b`, write `[0x08, 0x00]` (or another uint16 LE value if the
+duration is configurable on the firmware side — unconfirmed, to be verified empirically) to the
+characteristic `39e1F906-84a8-11e2-afba-0002a5d5c51b`, with write-with-response.
 
-C'est l'UUID annoncé en advertisement BLE et utilisé comme filtre de scan pour reconnaître un Parrot Pot
-(par opposition à un simple capteur Flower Power, filtré via `HAWAII_SENSOR` = `39e1FA00-...`) :
+Important limitation: the "certain" confidence applies to _what the app does_, not to _what the
+firmware accepts_ (the firmware might reject a uint16 value other than 8, or conversely accept any
+duration). Only a real test on a physical Parrot Pot (or an HCI snoop / nRF Connect capture) can
+confirm this.
+
+**Why this confidence is justified**: the app's Java code **is not obfuscated** (no ProGuard/R8 on
+the names in the `ble` package) — the classes are literally named `WaterThePlant`,
+`WriteWateringConfig`, `HawaiiUUID.UUID_WATERING_CMD`, etc. No call chain tracing from an obfuscated
+name like `a.java`/`b()` was ever needed.
+
+---
+
+## 3. Full table of BLE UUIDs
+
+All constants come from `com.parrot.flowerpower.android.ble.service.HawaiiUUID`.
+Custom Parrot base UUID: `39e1xxxx-84a8-11e2-afba-0002a5d5c51b`.
+
+Confidence: **certain** = usage confirmed by code that calls
+`writeCharacteristic`/`readCharacteristic`/`setCharacteristicNotification` on this exact UUID.
+**probable** = UUID present in a consistent service table but not directly seen used in the read
+code.
+
+### Watering service (`HAWAII_WATER_DEVICE` = `39e1F900-...`) — the Parrot Pot service
+
+This is the UUID advertised in the BLE advertisement and used as a scan filter to recognize a
+Parrot Pot (as opposed to a plain Flower Power sensor, filtered via `HAWAII_SENSOR` = `39e1FA00-...`):
 
 ```java
 // BleScanTask.java:534
 if (HawaiiUUID.HAWAII_WATER_DEVICE_UUID.equals(discoveredUuid) || HawaiiUUID.HAWAII_SENSOR_UUID.equals(discoveredUuid)) {
 ```
 
-| Characteristic UUID                    | Constante                        | Usage déduit                                                           | Confiance   |
-| -------------------------------------- | -------------------------------- | ---------------------------------------------------------------------- | ----------- |
-| `39e1F906-84a8-11e2-afba-0002a5d5c51b` | `UUID_WATERING_CMD`              | **Écriture = déclenche l'arrosage manuel**                             | **Certain** |
-| `39e1F901-...`                         | `UUID_WATERING_CONFIG_ID`        | Write — ID de config, écrit en dernier pour valider la config watering | Certain     |
-| `39e1F902-...`                         | `UUID_WATERING_PLANT_ID`         | Write — ID de plante associé                                           | Certain     |
-| `39e1F903-...`                         | `UUID_WATERING_VWC_IRR`          | Write — seuil d'humidité (VWC) déclenchant l'irrigation                | Certain     |
-| `39e1F904-...`                         | `UUID_WATERING_VWC_CMD`          | Write — VWC cible visée après irrigation                               | Certain     |
-| `39e1F905-...`                         | `UUID_WATERING_N_IRR`            | Write — nombre max d'irrigations                                       | Certain     |
-| `39e1F907-...`                         | `UUID_WATERING_TANK_LEVEL`       | Notify — niveau du réservoir d'eau                                     | Certain     |
-| `39e1F908-...`                         | `UUID_WATERING_PUMP_DUTY_CYCLE`  | Lecture — duty cycle de la pompe                                       | Probable    |
-| `39e1F90A/0B/0C-...`                   | `*_ECO`                          | Write — variantes "éco" des seuils VWC/N_IRR                           | Certain     |
-| `39e1F90D-...`                         | `UUID_WATERING_MODE`             | Write (uint8) — mode d'arrosage (0=off, 1=auto)                        | Certain     |
-| `39e1F90E-...` / `...0F`               | `TIME_SLOT_START` / `DURATION`   | Write — plage horaire autorisée pour arroser                           | Certain     |
-| `39e1F910-...` / `...11`               | `VACATION_START` / `END`         | Write (uint32, timestamp) — mode vacances                              | Certain     |
-| `39e1F912-...`                         | `UUID_WATERING_ALGORITHM_STATUS` | Write (uint8) — active/désactive l'algorithme d'auto-arrosage          | Certain     |
+| Characteristic UUID                    | Constant                          | Inferred usage                                                          | Confidence  |
+| --------------------------------------- | --------------------------------- | ------------------------------------------------------------------------ | ----------- |
+| `39e1F906-84a8-11e2-afba-0002a5d5c51b` | `UUID_WATERING_CMD`               | **Write = triggers manual watering**                                    | **Certain** |
+| `39e1F901-...`                         | `UUID_WATERING_CONFIG_ID`         | Write — config ID, written last to validate the watering config          | Certain     |
+| `39e1F902-...`                         | `UUID_WATERING_PLANT_ID`          | Write — associated plant ID                                              | Certain     |
+| `39e1F903-...`                         | `UUID_WATERING_VWC_IRR`           | Write — moisture (VWC) threshold triggering irrigation                   | Certain     |
+| `39e1F904-...`                         | `UUID_WATERING_VWC_CMD`           | Write — target VWC aimed for after irrigation                            | Certain     |
+| `39e1F905-...`                         | `UUID_WATERING_N_IRR`             | Write — max number of irrigations                                        | Certain     |
+| `39e1F907-...`                         | `UUID_WATERING_TANK_LEVEL`        | Notify — water reservoir level                                           | Certain     |
+| `39e1F908-...`                         | `UUID_WATERING_PUMP_DUTY_CYCLE`   | Read — pump duty cycle                                                   | Probable    |
+| `39e1F90A/0B/0C-...`                   | `*_ECO`                           | Write — "eco" variants of the VWC/N_IRR thresholds                       | Certain     |
+| `39e1F90D-...`                         | `UUID_WATERING_MODE`              | Write (uint8) — watering mode (0=off, 1=auto)                            | Certain     |
+| `39e1F90E-...` / `...0F`               | `TIME_SLOT_START` / `DURATION`    | Write — allowed time window for watering                                 | Certain     |
+| `39e1F910-...` / `...11`               | `VACATION_START` / `END`          | Write (uint32, timestamp) — vacation mode                                | Certain     |
+| `39e1F912-...`                         | `UUID_WATERING_ALGORITHM_STATUS`  | Write (uint8) — enables/disables the auto-watering algorithm             | Certain     |
 
-Code de la characteristic d'arrosage manuel :
+Manual watering characteristic code:
 
 ```java
-// WaterThePlant.java — déclenchée par la commande interne COMMAND_WATER_PLANT (106)
+// WaterThePlant.java — triggered by the internal COMMAND_WATER_PLANT command (106)
 public class WaterThePlant extends BaseTask {
     public void run(@NonNull BleTaskHandler taskHandler) {
         taskHandler.setCharacteristic(
             HawaiiUUID.WATERING_SERVICE_UUID,      // 39e1F900-84a8-11e2-afba-0002a5d5c51b
             HawaiiUUID.UUID_WATERING_CMD,          // 39e1F906-84a8-11e2-afba-0002a5d5c51b
-            ByteData.uInt16ToByteArray(8));        // valeur écrite : 0x08 0x00 (little-endian)
+            ByteData.uInt16ToByteArray(8));        // value written: 0x08 0x00 (little-endian)
     }
 }
 ```
 
-- `8` = constante `BleConfig.WATER_PLANT_TIME = 8` (probablement une durée en secondes, câblée en dur).
-- `ByteData.uInt16ToByteArray` encode en **little-endian** : `array[0] = value & 0xFF`, `array[1] = (value >> 8) & 0xFF`.
-- Écriture via `BluetoothGatt.writeCharacteristic()` avec `characteristic.setWriteType(2)`
-  (`WRITE_TYPE_DEFAULT` = write with response) — voir `BleTaskHandler.setCharacteristic()`.
+- `8` = constant `BleConfig.WATER_PLANT_TIME = 8` (probably a duration in seconds, hardcoded).
+- `ByteData.uInt16ToByteArray` encodes as **little-endian**: `array[0] = value & 0xFF`, `array[1] = (value >> 8) & 0xFF`.
+- Written via `BluetoothGatt.writeCharacteristic()` with `characteristic.setWriteType(2)`
+  (`WRITE_TYPE_DEFAULT` = write with response) — see `BleTaskHandler.setCharacteristic()`.
 
-### Service Plant Dr (`PLANT_DR_SERVICE_UUID` = `39e1FD80-...`) — algorithme d'irrigation automatique avancé
+### Plant Dr service (`PLANT_DR_SERVICE_UUID` = `39e1FD80-...`) — advanced automatic irrigation algorithm
 
-| Characteristic           | Constante                                     | Usage                                    | Confiance |
-| ------------------------ | --------------------------------------------- | ---------------------------------------- | --------- |
-| `39e1FD81-...`           | `UUID_PLANT_DR_CONFIG_ID`                     | Write — validation config                | Certain   |
-| `39e1FD82-...` / `...83` | `DRY_N` / `DRY_VWC`                           | Write — point de calibration "sec"       | Certain   |
-| `39e1FD84-...` / `...85` | `WET_N` / `WET_VWC`                           | Write — point de calibration "humide"    | Certain   |
-| `39e1FD86-...`           | `STATUS_FLAGS`                                | Notify — flags de statut de l'algorithme | Certain   |
-| `39e1FD87-...` / `...88` | `NEXT_WATERING_DATE` / `NEXT_EMPTY_TANK_DATE` | Notify                                   | Certain   |
-| `39e1FD89-...`           | `FULL_TANK_AUTONOMY`                          | Notify                                   | Certain   |
+| Characteristic            | Constant                                       | Usage                                     | Confidence |
+| -------------------------- | ----------------------------------------------- | ------------------------------------------- | ---------- |
+| `39e1FD81-...`            | `UUID_PLANT_DR_CONFIG_ID`                       | Write — config validation                  | Certain    |
+| `39e1FD82-...` / `...83`  | `DRY_N` / `DRY_VWC`                             | Write — "dry" calibration point             | Certain    |
+| `39e1FD84-...` / `...85`  | `WET_N` / `WET_VWC`                             | Write — "wet" calibration point             | Certain    |
+| `39e1FD86-...`            | `STATUS_FLAGS`                                  | Notify — algorithm status flags             | Certain    |
+| `39e1FD87-...` / `...88`  | `NEXT_WATERING_DATE` / `NEXT_EMPTY_TANK_DATE`   | Notify                                      | Certain    |
+| `39e1FD89-...`            | `FULL_TANK_AUTONOMY`                            | Notify                                      | Certain    |
 
-### Service Live (`LIVE_SERVICE_UUID` = `39e1fa00-...`) — mesures temps réel des capteurs
+### Live service (`LIVE_SERVICE_UUID` = `39e1fa00-...`) — real-time sensor measurements
 
-| Characteristic       | Constante                           | Usage                                                  | Confiance |
-| -------------------- | ----------------------------------- | ------------------------------------------------------ | --------- |
-| `39e1fa01-...`       | `UUID_LIVE_LIGHT_SENSOR`            | Notify — capteur de lumière brut                       | Certain   |
-| `39e1fa02-...`       | `UUID_LIVE_SOIL_EC`                 | Notify — conductivité électrique du sol                | Certain   |
-| `39e1fa03-...`       | `UUID_LIVE_SOIL_TEMPERATURE`        | Notify                                                 | Certain   |
-| `39e1fa04-...`       | `UUID_LIVE_AIR_TEMPERATURE`         | Notify                                                 | Certain   |
-| `39e1fa05-...`       | `UUID_LIVE_SOIL_PERCENT_VWC`        | Notify — % humidité du sol                             | Certain   |
-| `39e1fa06-...`       | `UUID_LIVE_MEASURE_PERIOD`          | Write (uint8) — période d'échantillonnage en mode live | Certain   |
-| `39e1fa07-...`       | `UUID_LIVE_LED_STATE`               | Notify/Write                                           | Probable  |
-| `39e1fa09-...`       | `UUID_LIVE_VMC_VALUE`               | Notify                                                 | Certain   |
-| `39e1fa0a-...`       | `UUID_LIVE_TEMPERATURE_VALUE`       | Notify                                                 | Certain   |
-| `39e1fa0b-...`       | `UUID_LIVE_LIGHT_VALUE`             | Notify                                                 | Certain   |
-| `39e1fa0f/10/11-...` | `LIGHT_RED/GREEN/BLUE_SENSOR_VALUE` | Notify                                                 | Probable  |
+| Characteristic        | Constant                             | Usage                                                    | Confidence |
+| ---------------------- | -------------------------------------- | ----------------------------------------------------------- | ---------- |
+| `39e1fa01-...`        | `UUID_LIVE_LIGHT_SENSOR`              | Notify — raw light sensor                                    | Certain    |
+| `39e1fa02-...`        | `UUID_LIVE_SOIL_EC`                   | Notify — soil electrical conductivity                        | Certain    |
+| `39e1fa03-...`        | `UUID_LIVE_SOIL_TEMPERATURE`          | Notify                                                       | Certain    |
+| `39e1fa04-...`        | `UUID_LIVE_AIR_TEMPERATURE`           | Notify                                                       | Certain    |
+| `39e1fa05-...`        | `UUID_LIVE_SOIL_PERCENT_VWC`          | Notify — soil moisture %                                     | Certain    |
+| `39e1fa06-...`        | `UUID_LIVE_MEASURE_PERIOD`            | Write (uint8) — sampling period in live mode                 | Certain    |
+| `39e1fa07-...`        | `UUID_LIVE_LED_STATE`                 | Notify/Write                                                 | Probable   |
+| `39e1fa09-...`        | `UUID_LIVE_VMC_VALUE`                 | Notify                                                       | Certain    |
+| `39e1fa0a-...`        | `UUID_LIVE_TEMPERATURE_VALUE`         | Notify                                                       | Certain    |
+| `39e1fa0b-...`        | `UUID_LIVE_LIGHT_VALUE`               | Notify                                                       | Certain    |
+| `39e1fa0f/10/11-...`  | `LIGHT_RED/GREEN/BLUE_SENSOR_VALUE`   | Notify                                                       | Probable   |
 
-Activation des notifications (mode live) :
+Notification activation (live mode):
 
 ```java
 // BleTaskHandler.java:1073-1084
@@ -157,38 +157,38 @@ setCharacteristicNotification(HawaiiUUID.LIVE_SERVICE_UUID, HawaiiUUID.UUID_LIVE
 setCharacteristicNotification(HawaiiUUID.WATERING_SERVICE_UUID, HawaiiUUID.UUID_WATERING_TANK_LEVEL, true);
 ```
 
-### Service History (`39e1FC00-...`) et Upload (`39e1FB00-...`)
+### History service (`39e1FC00-...`) and Upload service (`39e1FB00-...`)
 
-| Characteristic       | Constante                               | Usage                                  | Confiance |
-| -------------------- | --------------------------------------- | -------------------------------------- | --------- |
-| `39e1FC01-...`       | `UUID_NB_ENTRIES_VALUE`                 | Read                                   | Certain   |
-| `39e1FC02-...`       | `UUID_LAST_ENTRY_INDEX_VALUE`           | Read/Write                             | Certain   |
-| `39e1FC03-...`       | `UUID_TRANSFER_START_INDEX_VALUE`       | Write                                  | Certain   |
-| `39e1FC04/05/06-...` | `CURRENT_SESSION_ID/START_INDEX/PERIOD` | Read                                   | Certain   |
-| `39e1FB01-...`       | `UUID_TX_BUFFER`                        | Notify — buffer de données historisées | Certain   |
-| `39e1FB02-...`       | `UUID_TX_STATUS_VALUE`                  | Notify                                 | Certain   |
-| `39e1FB03-...`       | `UUID_RX_STATUS_VALUE`                  | Write                                  | Certain   |
+| Characteristic        | Constant                                  | Usage                                    | Confidence |
+| ---------------------- | -------------------------------------------- | ------------------------------------------ | ---------- |
+| `39e1FC01-...`        | `UUID_NB_ENTRIES_VALUE`                    | Read                                       | Certain    |
+| `39e1FC02-...`        | `UUID_LAST_ENTRY_INDEX_VALUE`              | Read/Write                                 | Certain    |
+| `39e1FC03-...`        | `UUID_TRANSFER_START_INDEX_VALUE`          | Write                                      | Certain    |
+| `39e1FC04/05/06-...`  | `CURRENT_SESSION_ID/START_INDEX/PERIOD`    | Read                                       | Certain    |
+| `39e1FB01-...`        | `UUID_TX_BUFFER`                           | Notify — history data buffer               | Certain    |
+| `39e1FB02-...`        | `UUID_TX_STATUS_VALUE`                     | Notify                                     | Certain    |
+| `39e1FB03-...`        | `UUID_RX_STATUS_VALUE`                     | Write                                      | Certain    |
 
-### Service Device Config (`39e1FE00-...`)
+### Device Config service (`39e1FE00-...`)
 
-| Characteristic | Constante               | Usage                                 | Confiance |
-| -------------- | ----------------------- | ------------------------------------- | --------- |
-| `39e1FE01-...` | `UUID_CALIBRATION_DATA` | Read                                  | Certain   |
-| `39e1FE03-...` | `UUID_DEVICE_NAME`      | Write (string) — renommer l'appareil  | Certain   |
-| `39e1FE04-...` | `UUID_COLOR`            | Read                                  | Certain   |
-| `39e1FE05-...` | `UUID_TANK_CAPACITY`    | Write (uint8) — capacité du réservoir | Certain   |
-| `39e1FE06-...` | `UUID_IS_AVAILABLE`     | Write (uint8) — flag "disponible"     | Certain   |
+| Characteristic | Constant                | Usage                                  | Confidence |
+| --------------- | ------------------------ | ----------------------------------------- | ---------- |
+| `39e1FE01-...` | `UUID_CALIBRATION_DATA` | Read                                     | Certain    |
+| `39e1FE03-...` | `UUID_DEVICE_NAME`      | Write (string) — rename the device       | Certain    |
+| `39e1FE04-...` | `UUID_COLOR`            | Read                                     | Certain    |
+| `39e1FE05-...` | `UUID_TANK_CAPACITY`    | Write (uint8) — reservoir capacity       | Certain    |
+| `39e1FE06-...` | `UUID_IS_AVAILABLE`     | Write (uint8) — "available" flag         | Certain    |
 
-### Service Clock (`39e1FD00-...`)
+### Clock service (`39e1FD00-...`)
 
-| Characteristic | Constante         | Usage          | Confiance |
-| -------------- | ----------------- | -------------- | --------- |
-| `39e1FD01-...` | `UUID_START_TIME` | Write (uint32) | Certain   |
-| `39e1FD02-...` | `UUID_UTC_TIME`   | Write (uint32) | Certain   |
+| Characteristic | Constant          | Usage           | Confidence |
+| --------------- | ------------------ | ----------------- | ---------- |
+| `39e1FD01-...` | `UUID_START_TIME` | Write (uint32)   | Certain    |
+| `39e1FD02-...` | `UUID_UTC_TIME`    | Write (uint32)   | Certain    |
 
-### Service OAD / mise à jour firmware (`AIR_DOWNLOAD_SERVICE_UUID` = `F000FFC0-0451-4000-B000-000000000000`)
+### OAD service / firmware update (`AIR_DOWNLOAD_SERVICE_UUID` = `F000FFC0-0451-4000-B000-000000000000`)
 
-Base UUID **différente** du reste (format TI OAD standard, pas le préfixe custom `39e1`).
+**Different** base UUID from the rest (standard TI OAD format, not the custom `39e1` prefix).
 
 ```java
 // FirmwareUpdate.java:57,97
@@ -196,102 +196,103 @@ this.taskHandler.setCharacteristic(HawaiiUUID.AIR_DOWNLOAD_SERVICE_UUID, HawaiiU
 this.taskHandler.setCharacteristic(HawaiiUUID.AIR_DOWNLOAD_SERVICE_UUID, HawaiiUUID.UUID_OAD_IMAGE_BLOCK, dataBuffer, ...);
 ```
 
-| Characteristic | Constante               | Usage                                | Confiance |
-| -------------- | ----------------------- | ------------------------------------ | --------- |
-| `F000FFC1-...` | `UUID_OAD_IMAGE_NOTIFY` | Write — header du firmware à flasher | Certain   |
-| `F000FFC2-...` | `UUID_OAD_IMAGE_BLOCK`  | Write — blocs du firmware            | Certain   |
+| Characteristic | Constant                | Usage                                  | Confidence |
+| --------------- | ------------------------ | ----------------------------------------- | ---------- |
+| `F000FFC1-...` | `UUID_OAD_IMAGE_NOTIFY` | Write — header of the firmware to flash  | Certain    |
+| `F000FFC2-...` | `UUID_OAD_IMAGE_BLOCK`  | Write — firmware blocks                  | Certain    |
 
-### Services BLE SIG standards
+### Standard BLE SIG services
 
-| Service            | UUID                                   | Characteristics                                                                                                         |
-| ------------------ | -------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| Device Information | `0000180a-0000-1000-8000-00805f9b34fb` | Serial Number (`00002a25`), Firmware Revision (`00002a26`), Bootloader Version (`00002a27`, réutilisation non standard) |
-| Battery Service    | `0000180f-0000-1000-8000-00805f9b34fb` | Battery Level (`00002a19`)                                                                                              |
-| Descriptor CCCD    | `00002902-0000-1000-8000-00805f9b34fb` | Utilisé par `setCharacteristicNotification()`                                                                           |
+| Service            | UUID                                   | Characteristics                                                                                                          |
+| ------------------- | ----------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| Device Information  | `0000180a-0000-1000-8000-00805f9b34fb`   | Serial Number (`00002a25`), Firmware Revision (`00002a26`), Bootloader Version (`00002a27`, non-standard reuse)         |
+| Battery Service     | `0000180f-0000-1000-8000-00805f9b34fb`   | Battery Level (`00002a19`)                                                                                               |
+| CCCD Descriptor     | `00002902-0000-1000-8000-00805f9b34fb`   | Used by `setCharacteristicNotification()`                                                                                |
 
-### Types d'appareils
+### Device types
 
-Le code distingue deux types d'appareils (`HawaiiDevice.getDeviceType()`), via l'UUID de service annoncé :
+The code distinguishes two device types (`HawaiiDevice.getDeviceType()`), via the advertised service
+UUID:
 
-- **Type "sensor"** (Flower Power classique) → service annoncé `HAWAII_SENSOR` (`39e1FA00-...`), pas de
-  service Watering exposé.
-- **Type "Parrot Pot"** → service annoncé `HAWAII_WATER_DEVICE` (`39e1F900-...`), expose le service
-  Watering complet + Plant Dr.
+- **"sensor" type** (classic Flower Power) → advertised service `HAWAII_SENSOR` (`39e1FA00-...`), no
+  Watering service exposed.
+- **"Parrot Pot" type** → advertised service `HAWAII_WATER_DEVICE` (`39e1F900-...`), exposes the
+  full Watering service + Plant Dr.
 
 ---
 
-## 4. Arborescence des classes BLE (package `com.parrot.flowerpower.android.ble`)
+## 4. BLE class tree (package `com.parrot.flowerpower.android.ble`)
 
-Code **non obfusqué** : tous les noms de classes/méthodes sont explicites.
+Code **not obfuscated**: all class/method names are explicit.
 
-### `ble/` (racine)
+### `ble/` (root)
 
-- `BleConfig.java` — constantes de timing (timeouts) et `WATER_PLANT_TIME = 8`.
+- `BleConfig.java` — timing constants (timeouts) and `WATER_PLANT_TIME = 8`.
 
 ### `ble/Receivers/`
 
-- `BluetoothStateReceiver.java` — relance `BleService` si le Bluetooth système change d'état.
-- `BootUpReceiver.java` — relance `BleService` au démarrage du téléphone.
-- `WakeUpReceiver.java` — réveil périodique du service en tâche de fond (via alarme).
-- `CallBackBroadcastReceiver.java` / `OnCallBackReceiver.java` — callback interne générique par broadcast.
+- `BluetoothStateReceiver.java` — restarts `BleService` when the system Bluetooth state changes.
+- `BootUpReceiver.java` — restarts `BleService` on phone boot.
+- `WakeUpReceiver.java` — periodic background wake-up of the service (via alarm).
+- `CallBackBroadcastReceiver.java` / `OnCallBackReceiver.java` — generic internal callback via broadcast.
 
 ### `ble/SensorsDB/`
 
-- `DatabaseManager.java` (822 lignes) — façade CRUD : devices, comptes, tâches en attente, historique.
-- `SensorsDBHelper.java` — `SQLiteOpenHelper`, schéma de la base locale.
+- `DatabaseManager.java` (822 lines) — CRUD facade: devices, accounts, pending tasks, history.
+- `SensorsDBHelper.java` — `SQLiteOpenHelper`, local DB schema.
 
-### `ble/service/` (cœur du protocole)
+### `ble/service/` (core of the protocol)
 
-- `BleService.java` (2009 lignes) — `Service` Android central : reçoit les commandes UI (`COMMAND_*`),
-  gère le cycle de vie GATT, route chaque commande vers la `Task` correspondante (ex.
-  `COMMAND_WATER_PLANT` → `new WaterThePlant(...)`, ligne 427 ; `COMMAND_SET_WATERING_CONFIG` →
-  `new WriteWateringConfig(...)`, ligne 480).
-- `BleCommandsHandler.java` — singleton quasi vide, semble être du code mort.
-- `HawaiiUUID.java` — table de référence de tous les UUID (voir section 3).
-- `HawaiiBleConstants.java` (495 lignes) — commandes internes (`COMMAND_WATER_PLANT = 106`, etc.), codes
-  d'erreur, codes de statut GATT, masques de flags.
+- `BleService.java` (2009 lines) — central Android `Service`: receives UI commands (`COMMAND_*`),
+  manages the GATT lifecycle, routes each command to the corresponding `Task` (e.g.
+  `COMMAND_WATER_PLANT` → `new WaterThePlant(...)`, line 427; `COMMAND_SET_WATERING_CONFIG` →
+  `new WriteWateringConfig(...)`, line 480).
+- `BleCommandsHandler.java` — near-empty singleton, appears to be dead code.
+- `HawaiiUUID.java` — reference table of all UUIDs (see section 3).
+- `HawaiiBleConstants.java` (495 lines) — internal commands (`COMMAND_WATER_PLANT = 106`, etc.), error
+  codes, GATT status codes, flag masks.
 
-### `ble/service/Tasks/` (une classe = une action GATT)
+### `ble/service/Tasks/` (one class = one GATT action)
 
-- `BaseTask.java` / `BaseTaskInterface.java` / `BaseTaskHandlerThread.java` — classes abstraites communes.
-- `BleTaskHandler.java` (2089 lignes) — **implémentation concrète du client GATT** : détient le
-  `BluetoothGatt`, expose `setCharacteristic()` (write), `getDeviceData()` (read),
-  `setCharacteristicNotification()` (notify), gère les callbacks `BluetoothGattCallback` et la file
-  d'attente synchronisée des écritures.
-- `BleScanTask.java` (600 lignes) — scan BLE, filtre par `HAWAII_WATER_DEVICE_UUID` ou `HAWAII_SENSOR_UUID`.
-- **`WaterThePlant.java`** — déclenche l'arrosage manuel (write `UUID_WATERING_CMD`).
-- **`WriteWateringConfig.java`** (157 lignes) — écrit toute la config d'irrigation automatique.
-- `WritePlantDrConfig.java` — écrit la config de calibration "Plant Dr".
-- `SetWateringAlgorithmStatus.java` — active/désactive l'algorithme d'auto-arrosage.
-- `SetH2OCapacity.java` — configure la capacité du réservoir.
-- `WriteAvailableFlag.java` — marque le device disponible/indisponible.
-- `ChangeDeviceName.java` — renomme l'appareil.
-- `ReadSensorInfo.java` — lit les infos statiques du device.
-- `LiveMode.java` — active le mode live (notifications temps réel).
-- `DownloadHistory.java` (327 lignes) — téléchargement de l'historique de mesures.
-- `FirmwareUpdate.java` (274 lignes) — mise à jour firmware via protocole OAD.
+- `BaseTask.java` / `BaseTaskInterface.java` / `BaseTaskHandlerThread.java` — common abstract classes.
+- `BleTaskHandler.java` (2089 lines) — **concrete implementation of the GATT client**: holds the
+  `BluetoothGatt`, exposes `setCharacteristic()` (write), `getDeviceData()` (read),
+  `setCharacteristicNotification()` (notify), handles the `BluetoothGattCallback` callbacks and the
+  synchronized write queue.
+- `BleScanTask.java` (600 lines) — BLE scan, filtered by `HAWAII_WATER_DEVICE_UUID` or `HAWAII_SENSOR_UUID`.
+- **`WaterThePlant.java`** — triggers manual watering (write to `UUID_WATERING_CMD`).
+- **`WriteWateringConfig.java`** (157 lines) — writes the entire automatic irrigation config.
+- `WritePlantDrConfig.java` — writes the "Plant Dr" calibration config.
+- `SetWateringAlgorithmStatus.java` — enables/disables the auto-watering algorithm.
+- `SetH2OCapacity.java` — configures the reservoir capacity.
+- `WriteAvailableFlag.java` — marks the device available/unavailable.
+- `ChangeDeviceName.java` — renames the device.
+- `ReadSensorInfo.java` — reads the device's static info.
+- `LiveMode.java` — enables live mode (real-time notifications).
+- `DownloadHistory.java` (327 lines) — downloads the measurement history.
+- `FirmwareUpdate.java` (274 lines) — firmware update via the OAD protocol.
 
 ### `ble/service/Utils/`
 
-- `ByteData.java` (155 lignes) — (dé)sérialisation uint8/16/32 **little-endian** vers/depuis `byte[]`.
-- `HawaiiScanRecord.java` (225 lignes) — parsing du scan record BLE brut.
-- `HistoryBuffer.java` — réassemblage des fragments d'historique.
-- `RxStatus.java` / `TxStatus.java` — enums de statut du protocole d'upload.
-- `Utility.java` — programmation de l'alarme périodique de réveil.
+- `ByteData.java` (155 lines) — uint8/16/32 (de)serialization **little-endian** to/from `byte[]`.
+- `HawaiiScanRecord.java` (225 lines) — parsing of the raw BLE scan record.
+- `HistoryBuffer.java` — reassembly of history fragments.
+- `RxStatus.java` / `TxStatus.java` — upload protocol status enums.
+- `Utility.java` — scheduling of the periodic wake-up alarm.
 
 ### `ble/service/entities/`
 
-- `HawaiiDevice.java` (981 lignes) — modèle métier d'un appareil apparié.
-- `PlantConfig.java` (176 lignes) — config d'irrigation d'une plante, sérialisable.
-- `ExpertConfig.java` — variante "expert" de la config de plante.
-- `PendingTask.java` — commande GATT différée à rejouer après reconnexion.
-- `SampleHistory.java` — une mesure historisée (`Parcelable`).
-- `Account.java` — email + flags utilisateur.
-- `BleNotificationData.java` — enveloppe (UUID + payload) pour une notification GATT reçue.
+- `HawaiiDevice.java` (981 lines) — business model of a paired device.
+- `PlantConfig.java` (176 lines) — a plant's irrigation config, serializable.
+- `ExpertConfig.java` — "expert" variant of the plant config.
+- `PendingTask.java` — deferred GATT command to replay after reconnection.
+- `SampleHistory.java` — a historized measurement (`Parcelable`).
+- `Account.java` — email + user flags.
+- `BleNotificationData.java` — envelope (UUID + payload) for a received GATT notification.
 
 ---
 
-## 5. Librairies natives
+## 5. Native libraries
 
 ```
 lib/
@@ -299,22 +300,23 @@ lib/
     └── libhunspell.so
 ```
 
-Une seule lib native, une seule architecture (`armeabi`, legacy 32 bits). **`libhunspell.so`** est
-Hunspell, un correcteur orthographique open-source — sans rapport avec le BLE, probablement utilisé sur un
-champ de saisie (nom de plante/appareil). Aucune analyse binaire n'a été effectuée dessus (hors sujet).
+A single native lib, a single architecture (`armeabi`, legacy 32-bit). **`libhunspell.so`** is
+Hunspell, an open-source spell checker — unrelated to BLE, probably used on a text input field
+(plant/device name). No binary analysis was performed on it (out of scope).
 
-**Conclusion : aucune logique BLE n'est déléguée à du code natif.** Toute la pile GATT (scan, connexion,
-découverte de services, lecture/écriture/notification, encodage des payloads) est en Java pur au-dessus de
-l'API Android standard (`android.bluetooth.BluetoothGatt` / `BluetoothGattCallback`). Pas besoin de
-désassemblage Ghidra/IDA : tout est déjà lisible dans le bytecode décompilé.
+**Conclusion: no BLE logic is delegated to native code.** The entire GATT stack (scan, connection,
+service discovery, read/write/notification, payload encoding) is pure Java on top of the standard
+Android API (`android.bluetooth.BluetoothGatt` / `BluetoothGattCallback`). No need for
+Ghidra/IDA disassembly: everything is already readable in the decompiled bytecode.
 
 ---
 
-## 6. Limites de l'analyse
+## 6. Analysis limitations
 
-- Analyse **statique uniquement** (décompilation apktool/jadx) : aucune capture BLE réelle (HCI snoop / nRF
-  Connect) n'a été effectuée. La confiance "certain" porte sur _ce que fait l'application_, pas sur _ce que
-  valide/accepte le firmware du device_ — un test réel sur un Parrot Pot physique reste recommandé avant
-  intégration en prod, en particulier pour la valeur exacte acceptée par `UUID_WATERING_CMD`.
-- `libhunspell.so` n'a pas été désassemblée (confirmé hors sujet BLE).
-- Aucun serveur cloud Parrot n'a été contacté durant cette analyse.
+- **Static analysis only** (apktool/jadx decompilation): no real BLE capture (HCI snoop / nRF
+  Connect) was performed. The "certain" confidence applies to _what the application does_, not to
+  _what the device's firmware validates/accepts_ — a real test on a physical Parrot Pot remains
+  recommended before production integration, especially for the exact value accepted by
+  `UUID_WATERING_CMD`.
+- `libhunspell.so` was not disassembled (confirmed out of scope for BLE).
+- No Parrot cloud server was contacted during this analysis.

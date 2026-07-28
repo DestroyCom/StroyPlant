@@ -5,6 +5,7 @@ const TONE_VARS = {
   accent: 'var(--color-spring-500)',
   info: 'var(--color-blue-500)',
   danger: 'var(--destructive)',
+  warning: 'var(--warning-foreground)',
 } as const;
 
 export function SensorGauge({
@@ -14,6 +15,7 @@ export function SensorGauge({
   unit = '%',
   tone = 'primary',
   icon,
+  hint,
 }: {
   label: string;
   value: number;
@@ -21,6 +23,7 @@ export function SensorGauge({
   unit?: string;
   tone?: keyof typeof TONE_VARS;
   icon?: ReactNode;
+  hint?: string;
 }) {
   const pct = Math.max(0, Math.min(100, (value / max) * 100));
   const color = TONE_VARS[tone] ?? TONE_VARS.primary;
@@ -40,6 +43,7 @@ export function SensorGauge({
         </div>
       </div>
       <span className="text-center text-xs text-muted-foreground">{label}</span>
+      {hint && <span className="text-center text-[11px] text-muted-foreground/70">{hint}</span>}
     </div>
   );
 }

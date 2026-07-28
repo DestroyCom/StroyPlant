@@ -7,11 +7,13 @@ export interface ParrotSensorReading {
   temperatureC: number;
   luminosity: number;
   waterTankLevelPercent?: number;
+  soilConductivityEcb?: number;
+  soilConductivityEcPorous?: number;
 }
 
-// Prérequis d'activation obligatoire (docs/STROYPLANT_SPEC.md section 8) : sans ce write, le firmware
-// ne rafraîchit pas fa09/0a/0b en continu — un read() renvoie la dernière valeur en mémoire,
-// potentiellement figée depuis très longtemps, sans aucune erreur associée.
+// Mandatory activation prerequisite (docs/STROYPLANT_SPEC.md section 8): without this write, the
+// firmware doesn't continuously refresh fa09/0a/0b — a read() returns the last value in memory,
+// potentially stale for a very long time, with no associated error.
 export async function readParrotSensors(logicalId: string): Promise<ParrotSensorReading> {
   return withDevice(logicalId, async (pot) => {
     await writeCharacteristic(pot, UUIDS.live.measurePeriod, 'Activate live measure period', Buffer.from([1]), false, logicalId);
@@ -34,8 +36,28 @@ export async function readParrotSensors(logicalId: string): Promise<ParrotSensor
       });
     }
 
-    // Écrire 0 en fin de session pour économiser la batterie côté firmware quand aucun client
-    // n'écoute (docs/STROYPLANT_SPEC.md section 8). Ne doit pas faire échouer la lecture si ça échoue.
+    // "Soil conductivity" candidates (docs/STROYPLANT_SPEC.md section 8) — never used by the
+    // official Parrot Pot app, firmware behavior not guaranteed. Best-effort: a failure here must
+    // never fail the reading of the main sensors.
+    let soilConductivityEcb: number | undefined;
+    let soilConductivityEcPorous: number | undefined;
+    try {
+      const ecb = await readCharacteristic(pot, UUIDS.live.soilConductivityEcb, 'Soil conductivity (Ecb)', logicalId);
+      const ecPorous = await readCharacteristic(pot, UUIDS.live.soilConductivityEcPorous, 'Soil conductivity (Ec porous)', logicalId);
+      soilConductivityEcb = ecb.readFloatLE(0);
+      soilConductivityEcPorous = ecPorous.readFloatLE(0);
+    } catch (error) {
+      log({
+        direction: 'INFO',
+        label: 'Soil conductivity (Ecb/Ec porous) indisponible',
+        deviceId: logicalId,
+        result: 'ERROR',
+        detail: error instanceof Error ? error.message : String(error),
+      });
+    }
+
+    // Write 0 at the end of the session to save battery on the firmware side when no client is
+    // listening (docs/STROYPLANT_SPEC.md section 8). Must not fail the reading if this fails.
     await writeCharacteristic(pot, UUIDS.live.measurePeriod, 'Deactivate live measure period', Buffer.from([0]), false, logicalId).catch(
       () => {},
     );
@@ -45,13 +67,15 @@ export async function readParrotSensors(logicalId: string): Promise<ParrotSensor
       temperatureC: temperature.readFloatLE(0),
       luminosity: luminosity.readFloatLE(0),
       waterTankLevelPercent,
+      soilConductivityEcb,
+      soilConductivityEcPorous,
     };
   });
 }
 
 export async function triggerParrotWatering(logicalId: string): Promise<void> {
   await withDevice(logicalId, async (pot) => {
-    // WRITE_TYPE_DEFAULT côté app officielle = write WITH response (withoutResponse=false).
+    // WRITE_TYPE_DEFAULT on the official app side = write WITH response (withoutResponse=false).
     await writeCharacteristic(pot, UUIDS.watering.trigger, 'Watering trigger', WATER_TRIGGER_PAYLOAD, false, logicalId);
   });
 }

@@ -1,4 +1,3 @@
-
 generator client {
   provider = "prisma-client-js"
 }
@@ -19,8 +18,39 @@ model Device {
   name       String?
   lastSeenAt DateTime?
 
+  // Optional assignment (Batch 4, Health Engine) — never blocking, same logic as the Plant Dr
+  // calibration (section 7.11): a device works perfectly fine with no profile assigned.
+  plantProfileId Int?
+  plantProfile   PlantProfile? @relation(fields: [plantProfileId], references: [id])
+
   readings       Reading[]
   wateringEvents WateringEvent[]
+}
+
+// Imported from assets/plants/watchflower_plantdb.csv (emericg/WatchFlower repo, GPLv3) — see
+// backend/src/health/importSpeciesProfiles.ts. A MIN/MAX pair set to `null;null` means the
+// parameter doesn't apply to this species in the source CSV (encoded `0;0`), not a real zero.
+model PlantProfile {
+  id         Int     @id @default(autoincrement())
+  name       String  @unique
+  commonName String?
+
+  soilMoistureMinPercent  Float?
+  soilMoistureMaxPercent  Float?
+  soilConductivityMinUsCm Float?
+  soilConductivityMaxUsCm Float?
+  soilPhMin               Float?
+  soilPhMax               Float?
+  temperatureMinC         Float?
+  temperatureMaxC         Float?
+  humidityMinPercent      Float?
+  humidityMaxPercent      Float?
+  lightMinLux             Float?
+  lightMaxLux             Float?
+  lightMinMmol            Float?
+  lightMaxMmol            Float?
+
+  devices Device[]
 }
 
 model Reading {
@@ -30,10 +60,16 @@ model Reading {
   timestamp DateTime @default(now())
 
   // Parrot Pot
-  soilMoisturePercent   Float?
-  temperatureC          Float?
-  luminosity            Float?
-  waterTankLevelPercent Float?
+  soilMoisturePercent      Float?
+  temperatureC             Float?
+  luminosity               Float?
+  waterTankLevelPercent    Float?
+  // Two raw candidates for soil conductivity (39e1fa0d/0e) — collected since 2026-07-28 to
+  // empirically determine which one maps to the WatchFlower CSV's "Soil conductivity", see
+  // docs/STROYPLANT_SPEC.md section 8. `soilConductivityEcPorous` is wired into the Health Engine
+  // scoring (see docs/HEALTH_ENGINE.md); `soilConductivityEcb` stays diagnostic-only for now.
+  soilConductivityEcb      Float?
+  soilConductivityEcPorous Float?
 
   // Xiaomi LYWSD03MMC
   humidityPercent Float?

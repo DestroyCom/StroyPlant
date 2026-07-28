@@ -1,4 +1,4 @@
-import type { Device } from './types';
+import type { Device, DeviceHealth, ParameterKey } from './types';
 
 export function formatRelativeTime(iso: string | null): string {
   if (!iso) return 'jamais';
@@ -16,8 +16,8 @@ export function formatDeviceKind(kind: 'PARROT_POT' | 'XIAOMI_LYWSD03MMC'): stri
   return kind === 'PARROT_POT' ? 'Parrot Pot' : 'Capteur Xiaomi';
 }
 
-// Le scanner republie chaque device toutes les ~5 min par défaut (backend/src/ble/scanner.ts,
-// DEFAULT_POLL_INTERVAL_MS) — 2x cet intervalle absorbe un cycle manqué sans clignoter "hors ligne".
+// The scanner republishes each device every ~5 min by default (backend/src/ble/scanner.ts,
+// DEFAULT_POLL_INTERVAL_MS) — 2x this interval absorbs a missed cycle without flickering "offline".
 const OFFLINE_THRESHOLD_MS = 10 * 60_000;
 const LOW_TANK_THRESHOLD = 20;
 
@@ -34,22 +34,45 @@ export function isTankLow(device: Device): boolean {
   );
 }
 
-// Titre court affiché en tête de la carte / page détail. Volontairement limité à des faits
-// vérifiables (connectivité, niveau du réservoir) — pas de jugement du type "le sol est sec" ou
-// "la plante va bien", qui relève du Health Engine (Lot 4, pas encore implémenté).
-export function statusHeadline(device: Device): string {
+const PARAMETER_LABEL: Record<ParameterKey, string> = {
+  soilMoisturePercent: 'Humidité du sol',
+  temperatureC: 'Température',
+  humidityPercent: 'Humidité',
+  luminosity: 'Luminosité',
+  // CSV mapping not confirmed empirically on a real device, see docs/HEALTH_ENGINE.md.
+  soilConductivityEcPorous: 'Conductivité du sol',
+};
+
+// Judgment derived from the Health Engine (Batch 4) — null if nothing to report (no species assigned, or
+// everything is fine), in which case statusHeadline falls back to its existing generic fallback.
+function healthHeadline(health: DeviceHealth | undefined): string | null {
+  if (!health) return null;
+  if (health.status === 'warming_up') return "Période d'observation en cours";
+  if (health.status === 'warning') {
+    const [key, param] = Object.entries(health.parameters).find(([, p]) => p.status === 'too_low' || p.status === 'too_high') ?? [];
+    if (!key || !param) return null;
+    const label = PARAMETER_LABEL[key as ParameterKey];
+    return param.status === 'too_low' ? `${label} trop basse pour cette espèce` : `${label} trop élevée pour cette espèce`;
+  }
+  return null;
+}
+
+// Short title displayed at the top of the card / detail page. Priority: verifiable facts (connectivity,
+// reservoir level) > health judgment (Batch 4b, if a species is assigned) > neutral fallback.
+export function statusHeadline(device: Device, health?: DeviceHealth): string {
   if (!isDeviceOnline(device.lastSeenAt)) {
     return `Hors ligne depuis ${formatRelativeTime(device.lastSeenAt)}`;
   }
   if (isTankLow(device)) {
     return 'Le réservoir commence à se vider';
   }
-  return 'Tout fonctionne normalement';
+  return healthHeadline(health) ?? 'Tout fonctionne normalement';
 }
 
-export function statusBandClasses(device: Device): { band: string; icon: string } {
+export function statusBandClasses(device: Device, health?: DeviceHealth): { band: string; icon: string } {
   if (!isDeviceOnline(device.lastSeenAt)) return { band: 'bg-muted', icon: 'text-muted-foreground' };
   if (isTankLow(device)) return { band: 'bg-warning-surface', icon: 'text-warning-foreground' };
+  if (healthHeadline(health)) return { band: 'bg-warning-surface', icon: 'text-warning-foreground' };
   return { band: 'bg-teal-100', icon: 'text-teal-700' };
 }
 

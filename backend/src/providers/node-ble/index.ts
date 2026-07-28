@@ -1,7 +1,8 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import type { GattCharacteristic } from 'node-ble';
+import type { GattCharacteristic, Device as NodeBleDevice } from 'node-ble';
 import { createBluetooth } from 'node-ble';
+import { extractParrotManufacturerPayload } from '../../ble/parrot/advertisement.js';
 import { CONNECT_TIMEOUT_MS, withGattRetry, withTimeout } from '../../ble/parrot/retry.js';
 import {
   PARROT_POT_NAME_PREFIX,
@@ -25,11 +26,25 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+// Raw payload only — NO bit-level interpretation as long as the correlation protocol
+// (docs/STROYPLANT_SPEC.md section 7.1) hasn't produced a reproducible result (requires physical
+// access to the devices, not done yet). Must never fail device discovery if
+// unavailable/absent.
+async function readParrotAdvertisementPayload(device: NodeBleDevice): Promise<string | undefined> {
+  try {
+    const manufacturerData = await device.getManufacturerData();
+    const payload = extractParrotManufacturerPayload(manufacturerData);
+    return payload?.toString('hex');
+  } catch {
+    return undefined;
+  }
+}
+
 const XIAOMI_NOTIFY_TIMEOUT_MS = 15000;
 
-// Le LYWSD03MMC (contrairement au Parrot Pot) ne se lit pas par un simple readValue() — il faut
-// souscrire aux notifications sur ebe0ccc1 et attendre la première valeur (validé empiriquement sur
-// device réel, voir backend/src/ble/xiaomi/uuids.ts).
+// The LYWSD03MMC (unlike the Parrot Pot) can't be read with a simple readValue() — you have to
+// subscribe to notifications on ebe0ccc1 and wait for the first value (validated empirically on
+// a real device, see backend/src/ble/xiaomi/uuids.ts).
 async function waitForFirstNotification(characteristic: GattCharacteristic, timeoutMs: number): Promise<Buffer> {
   await characteristic.startNotifications();
   try {
@@ -50,19 +65,19 @@ async function waitForFirstNotification(characteristic: GattCharacteristic, time
   }
 }
 
-// Cycle de scan (docs/STROYPLANT_SPEC.md section 7.1) : ~10s de scan puis pause (1 min en usage normal),
-// filtré par RSSI minimum -90. La notion de "vu depuis 3 cycles avant d'être déclaré perdu" est gérée
-// au niveau du scanner orchestrateur (backend/src/ble/scanner.ts), pas ici — ce provider ne fait
-// que remonter des événements de découverte bruts.
+// Scan cycle (docs/STROYPLANT_SPEC.md section 7.1): ~10s of scanning then a pause (1 min in normal
+// use), filtered by a minimum RSSI of -90. The "seen for 3 cycles before being declared lost"
+// notion is handled at the orchestrating scanner level (backend/src/ble/scanner.ts), not here —
+// this provider only surfaces raw discovery events.
 const SCAN_WINDOW_MS = 10_000;
 const SCAN_PAUSE_MS = 60_000;
 const RSSI_MIN = -90;
 
-// BlueZ n'a pas d'équivalent 1:1 du code Android/Bluedroid GATT_ERROR=133 (voir
-// docs/PARROT_BLE_DEEP_DIVE.md section 5 : ce sont des codes Android, pas un standard bas niveau). Cette
-// heuristique reste donc du best-effort sur les messages d'erreur D-Bus les plus proches
-// fonctionnellement (échec de connexion générique post-déconnexion) — À AFFINER EMPIRIQUEMENT sur
-// l'the production server en conditions réelles, comme demandé explicitement par la spec pour ce pattern de retry.
+// BlueZ has no 1:1 equivalent of the Android/Bluedroid GATT_ERROR=133 code (see
+// docs/PARROT_BLE_DEEP_DIVE.md section 5: these are Android codes, not a low-level standard). This
+// heuristic therefore remains best-effort on the D-Bus error messages closest
+// functionally (generic connection failure post-disconnection) — TO BE REFINED EMPIRICALLY on
+// the the production server under real conditions, as explicitly requested by the spec for this retry pattern.
 function isGattError133(error: unknown): boolean {
   const msg = (error instanceof Error ? error.message : String(error)).toLowerCase();
   return (
@@ -82,9 +97,9 @@ export function createNodeBleProvider(): DeviceProvider {
     return bluetooth.defaultAdapter();
   }
 
-  // disable()/enable() ne sont pas exposés par node-ble — on passe par bluetoothctl (nécessite le
-  // paquet bluez dans l'image Docker, en plus de l'accès D-Bus déjà requis). Équivalent fonctionnel
-  // de "Powered: false" puis "Powered: true" sur l'adaptateur, avec attente jusqu'à 60s (spec 7.1).
+  // disable()/enable() aren't exposed by node-ble — we go through bluetoothctl (requires the
+  // bluez package in the Docker image, in addition to the D-Bus access already required). Functional
+  // equivalent of "Powered: false" then "Powered: true" on the adapter, with up to 60s wait (spec 7.1).
   async function restartAdapter(): Promise<void> {
     await execFileAsync('bluetoothctl', ['power', 'off']);
     await sleep(2000);
@@ -95,7 +110,7 @@ export function createNodeBleProvider(): DeviceProvider {
       if (await adapter.isPowered()) return;
       await sleep(1000);
     }
-    throw new Error("Adaptateur toujours 'not powered' après 60s de redémarrage");
+    throw new Error("Adapter still 'not powered' after 60s restart");
   }
 
   async function connectDevice(macAddress: string) {
@@ -131,9 +146,23 @@ export function createNodeBleProvider(): DeviceProvider {
               const rssiRaw = await device.getRSSI().catch(() => undefined);
               const rssi = rssiRaw !== undefined ? Number(rssiRaw) : undefined;
               if (rssi !== undefined && rssi < RSSI_MIN) continue;
-              onDiscovered({ id: mac, kind, name, rssi });
+
+              // Diagnostics only — raw payload, not interpreted (docs/STROYPLANT_SPEC.md
+              // section 7.1, correlation protocol not executed yet).
+              const advertisementPayloadHex = kind === 'PARROT_POT' ? await readParrotAdvertisementPayload(device) : undefined;
+              if (advertisementPayloadHex) {
+                log({
+                  direction: 'SCAN',
+                  label: 'Parrot advertisement manufacturer data (diagnostic, not interpreted)',
+                  deviceId: mac,
+                  result: 'OK',
+                  detail: advertisementPayloadHex,
+                });
+              }
+
+              onDiscovered({ id: mac, kind, name, rssi, advertisementPayloadHex });
             } catch {
-              // le device peut disparaître entre devices() et getDevice() — pas une erreur à remonter
+              // the device can disappear between devices() and getDevice() — not an error to report
             }
           }
           await sleep(1000);
@@ -228,6 +257,33 @@ export function createNodeBleProvider(): DeviceProvider {
               });
             }
 
+            // Conductivity candidates (39e1fa0d/0e) — never used by the official Parrot Pot app,
+            // firmware behavior not guaranteed. Read best-effort: a failure here must never
+            // fail the main sensor reading (docs/STROYPLANT_SPEC.md section 8).
+            let soilConductivityEcb: number | undefined;
+            let soilConductivityEcPorous: number | undefined;
+            try {
+              const ecbChar = await sensorService.getCharacteristic(UUIDS.live.soilConductivityEcb);
+              soilConductivityEcb = (await ecbChar.readValue()).readFloatLE(0);
+              const ecPorousChar = await sensorService.getCharacteristic(UUIDS.live.soilConductivityEcPorous);
+              soilConductivityEcPorous = (await ecPorousChar.readValue()).readFloatLE(0);
+              log({
+                direction: 'READ',
+                label: 'Soil conductivity (Ecb/Ec porous) read',
+                deviceId,
+                result: 'OK',
+                detail: `ecb=${soilConductivityEcb} ecPorous=${soilConductivityEcPorous}`,
+              });
+            } catch (error) {
+              log({
+                direction: 'INFO',
+                label: 'Soil conductivity (Ecb/Ec porous) indisponible',
+                deviceId,
+                result: 'ERROR',
+                detail: error instanceof Error ? error.message : String(error),
+              });
+            }
+
             await measurePeriod.writeValueWithResponse(Buffer.from([0])).catch(() => {});
 
             const reading: SensorReading = {
@@ -237,6 +293,8 @@ export function createNodeBleProvider(): DeviceProvider {
                 temperatureC: temperature.readFloatLE(0),
                 luminosity: luminosity.readFloatLE(0),
                 waterTankLevelPercent,
+                soilConductivityEcb,
+                soilConductivityEcPorous,
               },
             };
             return reading;
@@ -248,7 +306,7 @@ export function createNodeBleProvider(): DeviceProvider {
     },
 
     async triggerAction(deviceId: string, action): Promise<void> {
-      if (action !== 'water') throw new Error(`Action non supportée: ${action}`);
+      if (action !== 'water') throw new Error(`Unsupported action: ${action}`);
       await withGattRetry({
         label: 'triggerAction:water',
         deviceId,

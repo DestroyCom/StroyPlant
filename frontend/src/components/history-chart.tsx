@@ -1,4 +1,4 @@
-import { Area, AreaChart, CartesianGrid, XAxis, YAxis } from 'recharts';
+import { Area, AreaChart, CartesianGrid, ReferenceLine, XAxis, YAxis } from 'recharts';
 import { type ChartConfig, ChartContainer, ChartTooltip, ChartTooltipContent } from '@/components/ui/chart';
 
 export interface HistoryPoint {
@@ -6,7 +6,24 @@ export interface HistoryPoint {
   value: number;
 }
 
-export function HistoryChart({ data, label, unit }: { data: HistoryPoint[]; label: string; unit?: string }) {
+export interface HistoryReferenceLine {
+  value: number;
+  label: string;
+}
+
+export function HistoryChart({
+  data,
+  label,
+  unit,
+  referenceLines,
+}: {
+  data: HistoryPoint[];
+  label: string;
+  unit?: string;
+  // Expected range for the assigned species (min/max) — see docs/HEALTH_ENGINE.md. Undefined/empty if
+  // no species assigned or parameter not applicable (n/a).
+  referenceLines?: HistoryReferenceLine[];
+}) {
   const config = {
     value: { label: `${label}${unit ? ` (${unit})` : ''}`, color: 'var(--color-teal-500)' },
   } satisfies ChartConfig;
@@ -35,6 +52,16 @@ export function HistoryChart({ data, label, unit }: { data: HistoryPoint[]; labe
           content={<ChartTooltipContent labelFormatter={(value) => new Date(value as string).toLocaleString()} indicator="line" />}
         />
         <Area dataKey="value" type="monotone" fill="url(#history-fill)" stroke="var(--color-value)" strokeWidth={2} />
+        {referenceLines?.map((ref) => (
+          <ReferenceLine
+            key={ref.label}
+            y={ref.value}
+            stroke="var(--color-teal-500)"
+            strokeDasharray="4 4"
+            strokeWidth={1.5}
+            label={{ value: ref.label, position: 'insideTopRight', fill: 'var(--color-teal-500)', fontSize: 10 }}
+          />
+        ))}
       </AreaChart>
     </ChartContainer>
   );

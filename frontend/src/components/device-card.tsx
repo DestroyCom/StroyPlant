@@ -1,12 +1,15 @@
+import { useQuery } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
 import { Droplets, Thermometer } from 'lucide-react';
 import { formatDeviceKind, formatRelativeTime, statusBandClasses, statusHeadline } from '@/lib/format';
+import { trpc } from '@/lib/trpc';
 import type { Device } from '@/lib/types';
 import { DeviceKindIcon } from './device-kind-icon';
 
 export function DeviceCard({ device }: { device: Device }) {
   const reading = device.lastReading;
-  const { band, icon } = statusBandClasses(device);
+  const { data: health } = useQuery(trpc.health.deviceHealth.queryOptions({ deviceId: device.id }, { refetchInterval: 60_000 }));
+  const { band, icon } = statusBandClasses(device, health);
   const primaryValue = device.kind === 'PARROT_POT' ? reading?.soilMoisturePercent : reading?.humidityPercent;
 
   return (
@@ -24,7 +27,7 @@ export function DeviceCard({ device }: { device: Device }) {
               {formatDeviceKind(device.kind)} · {formatRelativeTime(device.lastSeenAt)}
             </div>
           </div>
-          <div className="min-h-9.5 text-sm font-medium text-foreground">{statusHeadline(device)}</div>
+          <div className="min-h-9.5 text-sm font-medium text-foreground">{statusHeadline(device, health)}</div>
           <div className="mt-0.5 flex gap-3 border-t border-border-subtle pt-1 text-[11px] text-muted-foreground">
             {primaryValue != null && (
               <span className="inline-flex items-center gap-1">

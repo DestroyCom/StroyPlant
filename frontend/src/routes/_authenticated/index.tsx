@@ -2,11 +2,11 @@ import { useSuspenseQuery } from '@tanstack/react-query';
 import { createFileRoute } from '@tanstack/react-router';
 import { DeviceCard } from '@/components/device-card';
 import { isDeviceOnline, isTankLow } from '@/lib/format';
-import { devicesQuery } from '@/lib/queries';
+import { trpc } from '@/lib/trpc';
 import type { Device } from '@/lib/types';
 
 export const Route = createFileRoute('/_authenticated/')({
-  loader: ({ context }) => context.queryClient.ensureQueryData(devicesQuery),
+  loader: ({ context }) => context.queryClient.ensureQueryData(trpc.devices.list.queryOptions()),
   component: DashboardPage,
 });
 
@@ -22,7 +22,7 @@ function summarySentence(devices: Device[]): string {
 }
 
 function DashboardPage() {
-  const { data: devices } = useSuspenseQuery(devicesQuery);
+  const { data: devices } = useSuspenseQuery(trpc.devices.list.queryOptions());
 
   return (
     <div>

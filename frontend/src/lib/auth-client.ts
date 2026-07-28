@@ -1,6 +1,6 @@
 import { createAuthClient } from 'better-auth/react';
 
-// baseURL omis volontairement : le client et le serveur BetterAuth sont sur la même origine
-// (proxy Vite en dev vers le backend, même conteneur en prod — docs/STROYPLANT_SPEC.md section 14),
-// ce qui résout par défaut sur "/api/auth".
+// baseURL deliberately omitted: the BetterAuth client and server are on the same origin
+// (Vite proxy to the backend in dev, same container in prod — docs/STROYPLANT_SPEC.md section 14),
+// which resolves by default to "/api/auth".
 export const authClient = createAuthClient();

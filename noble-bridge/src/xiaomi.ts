@@ -10,9 +10,9 @@ export interface XiaomiSensorReading {
 
 const NOTIFY_TIMEOUT_MS = 15000;
 
-// Formule confirmée par WatchFlower (device_hygrotemp_square.cpp) ET revalidée empiriquement sur le
-// vrai device (voir backend/src/ble/xiaomi/parser.ts pour le détail) : 5 octets =
-// [int16 LE temp/100][uint8 humidity][int16 LE tension mV/1000].
+// Formula confirmed by WatchFlower (device_hygrotemp_square.cpp) AND revalidated empirically on
+// the real device (see backend/src/ble/xiaomi/parser.ts for detail): 5 bytes =
+// [int16 LE temp/100][uint8 humidity][int16 LE voltage mV/1000].
 function parseTempHumidityPayload(buf: Buffer): XiaomiSensorReading {
   if (buf.length !== 5) {
     throw new Error(`Payload temp/humidity Xiaomi de taille inattendue: ${buf.length} octet(s) (5 attendus)`);

@@ -1,222 +1,296 @@
 # CLAUDE.md — StroyPlant
 
-Instructions et contexte spécifiques à ce projet. Le fichier `~/.claude/CLAUDE.md` (global)
-s'applique aussi (pas de Co-Authored-By, toujours demander en cas de doute, agir en mentor, aller
-au point rapidement).
+Project-specific instructions and context. The `~/.claude/CLAUDE.md` (global) file also applies (no
+Co-Authored-By, always ask when in doubt, act as a mentor, get to the point quickly).
 
-## Quoi, pour qui
+## What, for whom
 
-Service self-hosted (remplaçant WatchFlower) qui tourne en continu sur un serveur Linux (the production server,
-Debian) : scan BLE de capteurs de plantes, historique, scoring de santé par profil d'espèce,
-arrosage automatique (Parrot Pot), intégration Home Assistant (MQTT), serveur MCP pour agents IA.
-Usage perso, un seul utilisateur admin. DestCom (freelance fullstack, ~3.5 ans d'XP, pas expert
-BLE/hardware — expliquer les choix non triviaux).
+Self-hosted service (replacing WatchFlower) that runs continuously on a Linux server (the production server,
+Debian): BLE scanning of plant sensors, history, health scoring per species profile, automatic
+watering (Parrot Pot), Home Assistant integration (MQTT), MCP server for AI agents. Personal use,
+single admin user. DestCom (fullstack freelancer, ~3.5 years of experience, not a BLE/hardware
+expert — explain non-trivial choices).
 
-**Toujours lire `docs/STROYPLANT_SPEC.md` avant toute décision d'architecture** — c'est la source de
-vérité complète (stack imposée, roadmap par lots, contraintes Docker/Bluetooth, règles de
-collaboration section 10). Pour le protocole BLE du Parrot Pot spécifiquement,
-`docs/PARROT_BLE_REVERSE_ENGINEERING.md` et `docs/PARROT_BLE_DEEP_DIVE.md` (décompilation de l'APK
-officiel Parrot) priment sur toute déduction depuis des sources tierces (WatchFlower, etc.).
+**Always read `docs/STROYPLANT_SPEC.md` before any architecture decision** — it's the complete
+source of truth (mandated stack, batch-based roadmap, Docker/Bluetooth constraints, collaboration
+rules in section 10). For the Parrot Pot's BLE protocol, `docs/PARROT_OFFICIAL_BLE_SPEC.md`
+(official Parrot engineering PDF) is the absolute #1 source for everything it covers; for
+everything else (Parrot-Pot-specific behavior, real app behavior),
+`docs/PARROT_BLE_REVERSE_ENGINEERING.md` and `docs/PARROT_BLE_DEEP_DIVE.md` (decompilation of the
+official APK) take precedence over any inference from third-party sources (WatchFlower, etc.) —
+see `docs/STROYPLANT_SPEC.md` section 9 for the full hierarchy. For the detailed workings of the
+health scoring engine (Batch 4), see `docs/HEALTH_ENGINE.md`.
 
-## Règles non négociables
+## Non-negotiable rules
 
-- `pnpm` exclusivement (jamais `npm`/`yarn`), y compris dans les Dockerfile.
-- TypeScript/JavaScript partout, pas de Python.
-- Ne jamais tester la vraie couche BLE dans le container Docker sur Mac (impossible de toute façon,
-  Docker Desktop macOS n'a pas de passthrough Bluetooth) — utiliser `mock` ou `noble-bridge` en dev,
-  `node-ble` seulement sur l'the production server (spec section 6).
-- Ne jamais avaler une erreur BLE silencieusement (bug WatchFlower identifié et documenté, spec
-  section 7.1) — toute opération d'écriture (surtout `trigger_watering`) doit se voir confirmer ou
-  échouer explicitement, jamais fire-and-forget.
-- En cas de doute technique ou de divergence entre la spec et ce qu'on observe en réel : poser la
-  question à DestCom plutôt que de deviner. Précédents concrets où deviner aurait été faux :
-  - Le Xiaomi LYWSD03MMC était supposé pvvx (annonce passive en clair) — en réalité firmware stock,
-    annonce chiffrée en MiBeacon. Résolu par capture BLE réelle (`btmon`) sur l'the production server, pas supposition.
-  - WatchFlower (et donc nous) lit le LYWSD03MMC en connexion GATT, pas en passif comme la spec le
-    supposait initialement — trouvé en lisant le vrai code source de WatchFlower, pas deviné.
-- Toujours valider empiriquement sur le vrai matériel quand c'est possible plutôt que de supposer un
-  format/comportement — l'accès SSH à l'the production server (`ssh the production server`) + Docker permet de scanner/connecter les
-  vrais devices sans risque (containers jetables).
+- `pnpm` exclusively (never `npm`/`yarn`), including in Dockerfiles.
+- TypeScript/JavaScript everywhere, no Python.
+- Never test the real BLE layer inside the Docker container on Mac (impossible anyway — Docker
+  Desktop macOS has no Bluetooth passthrough) — use `mock` or `noble-bridge` in dev, `node-ble`
+  only on the the production server (spec section 6).
+- Never silently swallow a BLE error (identified and documented WatchFlower bug, spec section
+  7.1) — every write operation (especially `trigger_watering`) must be explicitly confirmed or
+  fail explicitly, never fire-and-forget.
+- When in technical doubt or when the spec diverges from what's observed in reality: ask DestCom
+  rather than guessing. Concrete precedents where guessing would have been wrong:
+  - The Xiaomi LYWSD03MMC was assumed to be pvvx (cleartext passive advertisement) — in reality
+    it's stock firmware, MiBeacon-encrypted advertisement. Resolved via real BLE capture
+    (`btmon`) on the the production server, not assumption.
+  - WatchFlower (and therefore us) reads the LYWSD03MMC via a GATT connection, not passively as
+    the spec initially assumed — found by reading WatchFlower's actual source code, not guessed.
+- Always validate empirically on real hardware when possible rather than assuming a
+  format/behavior — SSH access to the the production server (`ssh the production server`) + Docker allows scanning/connecting to real
+  devices with no risk (disposable containers).
 
-## Matériel réel disponible (pour tests empiriques)
+## Real hardware available (for empirical testing)
 
-Sur l'the production server, adaptateur Bluetooth intégré fonctionnel (Intel Wireless-AC 3168, BT 4.2,
-`10:F0:05:0F:40:4B`) — dongle TP-Link UB500 Plus recommandé par la spec pas encore reçu, à
-revalider à son arrivée (chipset Realtek différent). Devices détectés à portée de l'the production server :
+On the the production server, a working built-in Bluetooth adapter (Intel Wireless-AC 3168, BT 4.2,
+`10:F0:05:0F:40:4B`) — the TP-Link UB500 Plus dongle recommended by the spec hasn't arrived yet,
+to be revalidated on arrival (different Realtek chipset). Devices detected within range of the
+the production server:
 
-- 2× Parrot Pot : `A0:14:3D:CD:A3:D3` et `A0:14:3D:CD:A0:73`
-- Xiaomi LYWSD03MMC : `A4:C1:38:51:3B:54` (+ au moins 2 autres à proximité, probablement des
-  voisins : `A4:C1:38:E1:D1:49`, `A4:C1:38:AA:29:49`)
+- 2x Parrot Pot: `A0:14:3D:CD:A3:D3` and `A0:14:3D:CD:A0:73`
+- Xiaomi LYWSD03MMC: `A4:C1:38:51:3B:54` (+ at least 2 more nearby, probably neighbors':
+  `A4:C1:38:E1:D1:49`, `A4:C1:38:AA:29:49`)
 
-## État du projet (par lot)
+## Project status (by batch)
 
-- **Lot 0** ✅ — Docker + Bluetooth validés sur l'the production server réel. Config qui marche : `cap_add: NET_ADMIN,
-  NET_RAW` + `network_mode: host` + montage `/var/run/dbus/system_bus_socket` (pas besoin de
-  `privileged: true`). BlueZ a dû être installé manuellement (`apt install bluez`, absent par défaut
-  sur the production server). Détail complet dans `infra/lot0/CHECKLIST.md`.
-- **Lot 1** ✅ — Backend Fastify + Prisma/SQLite, 3 providers BLE interchangeables, scanner +
-  connectionQueue séquentielle, API REST + WebSocket. Voir détail stack ci-dessous.
-- **Lot 2** ✅ — Auth BetterAuth (credentials, mono-admin, `disableSignUp: true`), toutes les routes
-  `/api/*` et le WS protégées par session.
-- **Lot 3** ✅ (partiel, voir portée ci-dessous) — Frontend Vite + React + TanStack Query/Router +
-  Tailwind v4 + shadcn/ui. Voir détail stack ci-dessous.
-- **Prochain lot** : Lot 4 (Health Engine — import CSV plant DB, scoring de santé par profil
-  d'espèce). Éventuellement compléter d'abord le Lot 3 avec les écrans "Ajouter un appareil" et
-  "Paramètres" du prototype claude.ai/design (voir ci-dessous) une fois qu'une confirmation explicite
-  aura été donnée — pas fait pour l'instant car ces écrans dépendent de fonctionnalités pas encore
-  implémentées (pairing manuel, notifications, arrosage auto = Lots 5/7/8).
-- **`noble-bridge` validé avec du vrai matériel** ✅ (2026-07-27) — un vrai Parrot Pot (`PARROT-A073`)
-  connecté et lu de bout en bout (scan → connexion → activation → lecture humidité/temp/luminosité/
-  réservoir → désactivation → déconnexion) via le Bluetooth du Mac, données remontées jusqu'au
-  dashboard frontend. Les autres devices à portée (2e Parrot Pot, plusieurs Xiaomi) ont été détectés
-  mais pas toujours lus au premier essai ("non trouvé au scan" — la fenêtre de scan de noble-bridge
-  ferme avant la prochaine annonce BLE du device ; le retry au poll suivant (~5 min) résout ça en
-  pratique). Validation ponctuelle, pas un test de régression automatisé.
-- **Non fait / reporté** : validation de `node-ble` en conditions réelles sur l'the production server (build Docker +
-  déploiement complet) — repoussé volontairement à plus tard par DestCom.
+- **Batch 0** ✅ — Docker + Bluetooth validated on the real the production server. Working config: `cap_add:
+  NET_ADMIN, NET_RAW` + `network_mode: host` + mounting `/var/run/dbus/system_bus_socket` (no
+  need for `privileged: true`). BlueZ had to be installed manually (`apt install bluez`, not
+  present by default on the production server). Full detail in `infra/lot0/CHECKLIST.md`.
+- **Batch 1** ✅ — Fastify + Prisma/SQLite backend, 3 interchangeable BLE providers, scanner +
+  sequential connectionQueue, tRPC router + WS subscription (migrated from hand-written REST/raw
+  WebSocket, see the tRPC migration entry below). See technical detail below.
+- **Batch 2** ✅ — BetterAuth (credentials, single-admin, `disableSignUp: true`), all `/api/*`
+  routes and the WS protected by session.
+- **Batch 3** ✅ (partial, see scope below) — Vite + React + TanStack Query/Router + Tailwind v4 +
+  shadcn/ui frontend. See technical detail below.
+- **Batch 4 (backend + frontend)** ✅ — WatchFlower CSV import (`plant_profiles`), health scoring
+  engine (rolling baseline + comparison against species ranges, luminosity included since the
+  mol/m²/day unit confirmation), API endpoints, and on the frontend side: species picker on the
+  detail page (`SpeciesPickerDialog`), health banner on the dashboard and detail page, gauges with
+  tone/expected range, consumer-friendly explanation of the scoring. Tested locally with the mock
+  provider (real import, warming_up → warning transition, species assignment/removal), not yet
+  validated by DestCom against real data accumulated on the the production server. See technical detail below.
+- **Next batch**: Batch 5 (auto-watering scheduler wired to the Health Engine). Possibly complete
+  Batch 3 first with the "Add device" and "Settings" screens from the claude.ai/design prototype
+  (see below) once explicit confirmation has been given — not done for now since these screens
+  depend on features not yet implemented (manual pairing, notifications, auto-watering = Batches
+  5/7/8).
+- **`noble-bridge` validated with real hardware** ✅ (2026-07-27) — a real Parrot Pot
+  (`PARROT-A073`) connected and read end-to-end (scan → connect → activate → read
+  humidity/temp/luminosity/reservoir → deactivate → disconnect) via the Mac's Bluetooth, data
+  flowing through to the frontend dashboard. The other devices in range (2nd Parrot Pot, several
+  Xiaomi) were detected but not always read on the first try ("not found on scan" — noble-bridge's
+  scan window closes before the device's next BLE advertisement; the retry on the next poll (~5
+  min) resolves this in practice). One-off validation, not an automated regression test.
+- **Not done / deferred**: validating `node-ble` under real conditions on the the production server (Docker build +
+  full deployment) — deliberately postponed by DestCom.
+- **Migrated to tRPC** ✅ (2026-07-28) — the hand-written REST routes (`api/routes/devices.ts`,
+  `.../health.ts`) and the raw WebSocket pub/sub (`api/ws.ts`) were replaced by a typed tRPC router
+  (`src/api/trpc/`), shared end-to-end with the frontend via a type-only cross-package import (no
+  runtime code shared, no codegen). The live-reading push also moved to a tRPC subscription
+  (`readings.onReading`, backed by a Node `EventEmitter`) rather than staying a separate raw
+  WebSocket. Verified end-to-end against the mock provider: session-gated queries/mutations (401/
+  `UNAUTHORIZED` without a session, over both HTTP and the WS subscription), the watering
+  mutation's explicit non-silent failure path (empty-reservoir `MOCK-POT-DECLINE` → `WateringEvent`
+  row written + `BAD_GATEWAY` surfaced to the caller), plant-profile assign/unassign, and live
+  reading events actually pushed over the subscription while connected. See technical detail below
+  for the router shape and the Date-serialization detail (`api/trpc/serialize.ts`).
 
-## Structure du repo
+## Repo structure
 
 ```text
-backend/         API + logique métier (Fastify, Prisma/SQLite, auth, BLE) — tourne en Docker en prod
-  src/api/         routes REST + WebSocket
-  src/auth/        BetterAuth (instance, session/middleware, seed admin)
-  src/ble/         scanner, connectionQueue, logique protocole Parrot (ble/parrot/) et Xiaomi (ble/xiaomi/)
-  src/providers/   implémentations DeviceProvider (mock, noble-bridge, node-ble) + factory
-  src/db/          client Prisma
+backend/         API + business logic (Fastify, Prisma/SQLite, auth, BLE) — runs in Docker in prod
+  src/api/         tRPC router (api/trpc/: context, procedures, readings subscription) mounted on Fastify
+  src/auth/        BetterAuth (instance, session/middleware, admin seed)
+  src/ble/         scanner, connectionQueue, Parrot protocol logic (ble/parrot/) and Xiaomi (ble/xiaomi/)
+  src/providers/   DeviceProvider implementations (mock, noble-bridge, node-ble) + factory
+  src/health/      Health Engine (Batch 4): plant_profiles CSV import + scoring engine
+  src/db/          Prisma client
   prisma/          schema.prisma + migrations
-frontend/        SPA Vite + React + TanStack Router/Query + Tailwind v4 + shadcn/ui (Lot 3)
-  src/routes/      pages TanStack Router (file-based) : login, _authenticated (layout+guard) et ses enfants
-  src/components/  Shell (sidebar), DeviceCard, SensorGauge, HistoryChart, composants shadcn dans ui/
-  src/lib/         auth-client (BetterAuth), api.ts (fetch typé), queries.ts (TanStack Query), use-live-readings (WS)
-noble-bridge/    Process natif macOS (hors Docker), expose le Bluetooth du Mac en HTTP/WS —
-                 utilisé par le provider `noble-bridge` du backend pour dev sans dongle Linux
-infra/lot0/      Scripts/checklist setup Docker+Bluetooth sur l'the production server
-docs/            Spec complète, docs rétro-ingénierie BLE Parrot Pot, import design frontend
+frontend/        Vite + React SPA + TanStack Router/Query + Tailwind v4 + shadcn/ui (Batch 3)
+  src/routes/      TanStack Router pages (file-based): login, _authenticated (layout+guard) and its children
+  src/components/  Shell (sidebar), DeviceCard, SensorGauge, HistoryChart, shadcn components in ui/
+  src/lib/         auth-client (BetterAuth), trpc.ts (tRPC client + TanStack Query options proxy),
+                   use-live-readings (readings.onReading subscription)
+noble-bridge/    Native macOS process (outside Docker), exposes the Mac's Bluetooth over HTTP/WS —
+                 used by the backend's `noble-bridge` provider for dev without a Linux dongle
+infra/lot0/      Docker+Bluetooth setup scripts/checklist on the the production server
+docs/            Full spec, Parrot Pot BLE reverse-engineering docs, frontend design import
 ```
 
-## Backend — détail technique
+## Backend — technical detail
 
-- **Fastify** (choisi plutôt qu'Express — meilleur support TS natif, plugin WS officiel).
-- **Prisma + SQLite**. `DATABASE_URL="file:./dev.db"` dans `.env` — **résolu relatif au dossier de
-  `schema.prisma`, pas au cwd** (piège déjà rencontré : `file:./prisma/dev.db` créerait
-  `prisma/prisma/dev.db`).
-- Modèles métier : `Device` (id = MAC uppercase colon-separated, kind, name, lastSeenAt), `Reading`
-  (tous les champs capteurs des deux types de device en optionnel sur une seule table), `WateringEvent`
-  (deviceId, triggerSource MANUAL/CRON, success, errorDetail). `plant_profiles`/`schedules` pas encore
-  créés (Lot 4/5).
-- **`DeviceProvider`** (`src/providers/types.ts`) : interface commune `scan()` / `readSensors(id,
-  kind)` / `triggerAction(id, action)`. `kind` est passé par l'appelant car un provider ne peut pas
-  toujours déduire le type de device depuis son id seul.
-  - `mock` : 2 Parrot Pot simulés (`MOCK-POT-NORMAL` sain, `MOCK-POT-DECLINE` humidité qui baisse +
-    réservoir vide dès le départ pour tester l'échec d'arrosage) + 1 Xiaomi (`MOCK-XIAOMI-01`).
-  - `noble-bridge` : client HTTP/WS vers le process `noble-bridge/` (natif macOS, `@abandonware/noble`,
-    dérivé du PoC `parrot-pot-debug`). **N'expose jamais la vraie MAC** (CoreBluetooth la masque) —
-    ids logiques `PARROT-XXXX` (suffixe du nom annoncé) / `XIAOMI-<uuid noble>`. Ne correspondent
-    PAS aux ids MAC de `node-ble` — attendu, ce provider valide le protocole, pas la continuité des
-    données entre environnements.
-  - `node-ble` : BlueZ/D-Bus réel (paquet `node-ble` v1.13+, API vérifiée sur le vrai package, pas
-    devinée — `writeValueWithResponse`/`writeValueWithoutResponse`, pas d'`enable()`/`disable()`
-    natif sur l'Adapter donc `restartAdapter()` shell-out vers `bluetoothctl power off/on`).
-- **Pattern de retry GATT** (`src/ble/parrot/retry.ts`) : 3 tentatives, timeout 18s, backoff 500ms sur
-  GATT_ERROR≈133, redémarrage adaptateur à la 2e occurrence consécutive. Détection du "133" par
-  heuristique sur les messages d'erreur — **best-effort, BlueZ n'a pas d'équivalent 1:1 du code
-  Android/Bluedroid**, à affiner empiriquement sur l'the production server. Sur `noble-bridge`/macOS, CoreBluetooth
-  avale le vrai code : tout échec de connexion est traité comme un 133 (pas de redémarrage auto du
-  Bluetooth du Mac, ça couperait tout le système — juste un log recommandant une action manuelle).
-- **`connectionQueue`** : une seule connexion GATT à la fois, partagée entre Parrot Pot ET Xiaomi
-  (les deux nécessitent une connexion — correction de l'hypothèse initiale de la spec qui pensait le
-  Xiaomi purement passif).
-- **Parrot Pot** : activation obligatoire (write `1` sur `39e1fa06`) avant de lire
-  `39e1fa09/0a/0b` (float32 LE, VWC/temp/luminosité déjà calibrés), sinon lectures figées
-  silencieusement. Write `0` en fin de session. Trigger arrosage : write `[0x08,0x00]` sur `39e1f906`,
-  write-with-response.
-- **Xiaomi LYWSD03MMC** : GATT, service `ebe0ccb0-...`, notify sur `ebe0ccc1-...`, payload 5 octets
-  `[int16 LE temp/100][uint8 humidity][int16 LE tension mV/1000]`, batterie% = `(tension-2.1)*100`
-  clampé 0-100. Formule confirmée par WatchFlower ET revalidée empiriquement sur device réel.
-- **API** : `GET /api/devices`, `GET /api/devices/:id/history?hours=N`, `GET
-  /api/devices/:id/watering-events` (10 derniers, ajouté au Lot 3 pour la timeline de la page détail
-  frontend), `POST /api/devices/:id/water` (échec = 502 + détail, jamais silencieux). WebSocket `/ws`
-  pousse chaque nouvelle lecture (`{type:'reading', deviceId, kind, reading}`).
-- **Auth (BetterAuth)** : `src/auth/auth.ts`. `emailAndPassword` activé mais `disableSignUp: true` —
-  pas d'auto-inscription. Plugin `admin` utilisé uniquement pour `auth.api.createUser()` (seul moyen
-  documenté de créer un compte sans passer par l'endpoint public de sign-up qui respecte
-  `disableSignUp`) — pas de gestion de rôles multi-utilisateurs réelle. `pnpm seed:admin`
-  (`ADMIN_EMAIL`/`ADMIN_PASSWORD`) crée l'unique compte. Toutes les routes `/api/devices/*` et `/ws`
-  passent par `requireAuth` (401 sans session). `trustedOrigins` inclut `http://localhost:5173` en dur
-  — nécessaire pour le dev (le proxy Vite ne réécrit pas l'en-tête `Origin`, seulement `Host`) ; sans
-  ça BetterAuth rejette le login avec "Invalid origin". Sans impact en prod (front+back sur la même
-  origine, section 14). Prêt pour l'ajout futur du plugin OIDC (Authentik) sans réécriture — pas
-  ajouté maintenant.
-- Logging structuré maison (`src/logger.ts`) : timestamp, direction (SCAN/CONNECT/READ/WRITE/...),
-  uuid, payload hex, résultat — jamais de log muet sur une opération BLE.
+- **Fastify** (chosen over Express — better native TS support, official WS plugin).
+- **Prisma + SQLite**. `DATABASE_URL="file:./dev.db"` in `.env` — **resolved relative to the
+  `schema.prisma` folder, not the cwd** (already-encountered trap: `file:./prisma/dev.db` would
+  create `prisma/prisma/dev.db`).
+- Business models: `Device` (id = uppercase colon-separated MAC, kind, name, lastSeenAt, optional
+  `plantProfileId`), `Reading` (all sensor fields for both device types, optional, on a single
+  table), `WateringEvent` (deviceId, triggerSource MANUAL/CRON, success, errorDetail),
+  `PlantProfile` (Batch 4, see below). `schedules` not yet created (Batch 5).
+- **`DeviceProvider`** (`src/providers/types.ts`): common interface `scan()` /
+  `readSensors(id, kind)` / `triggerAction(id, action)`. `kind` is passed by the caller because a
+  provider can't always infer the device type from its id alone.
+  - `mock`: 2 simulated Parrot Pots (`MOCK-POT-NORMAL` healthy, `MOCK-POT-DECLINE` declining
+    humidity + empty reservoir from the start to test watering failure) + 1 Xiaomi
+    (`MOCK-XIAOMI-01`).
+  - `noble-bridge`: HTTP/WS client to the `noble-bridge/` process (native macOS,
+    `@abandonware/noble`, derived from the `parrot-pot-debug` PoC). **Never exposes the real MAC**
+    (CoreBluetooth masks it) — logical ids `PARROT-XXXX` (suffix of the advertised name) /
+    `XIAOMI-<noble uuid>`. Do NOT match `node-ble`'s MAC ids — expected, this provider validates
+    the protocol, not data continuity across environments.
+  - `node-ble`: real BlueZ/D-Bus (`node-ble` package v1.13+, API verified against the real
+    package, not guessed — `writeValueWithResponse`/`writeValueWithoutResponse`, no native
+    `enable()`/`disable()` on the Adapter so `restartAdapter()` shells out to `bluetoothctl power
+    off/on`).
+- **GATT retry pattern** (`src/ble/parrot/retry.ts`): 3 attempts, 18s timeout, 500ms backoff on
+  GATT_ERROR≈133, adapter restart on the 2nd consecutive occurrence. "133" detection is a
+  heuristic on error messages — **best-effort, BlueZ has no 1:1 equivalent of the
+  Android/Bluedroid code**, to be refined empirically on the the production server. On `noble-bridge`/macOS,
+  CoreBluetooth swallows the real code: any connection failure is treated as a 133 (no automatic
+  restart of the Mac's Bluetooth, that would take down the whole system — just a log recommending
+  manual action).
+- **`connectionQueue`**: a single GATT connection at a time, shared between Parrot Pot AND Xiaomi
+  (both require a connection — correction of the spec's initial assumption that Xiaomi was purely
+  passive).
+- **Parrot Pot**: mandatory activation (write `1` to `39e1fa06`) before reading `39e1fa09/0a/0b`
+  (float32 LE, already-calibrated VWC/temp/luminosity), otherwise readings silently freeze. Write
+  `0` at the end of the session. Watering trigger: write `[0x08,0x00]` to `39e1f906`,
+  write-with-response. Also best-effort reads `39e1fa0d`/`0e` (soil conductivity candidates,
+  `Reading.soilConductivityEcb`/`soilConductivityEcPorous`) — never used by the official app.
+  `soilConductivityEcPorous` is wired into the Health Engine (see `docs/HEALTH_ENGINE.md` for the
+  reasoning and the limitation: mapping unconfirmed on real data). **Event-driven advertisement
+  flags: Parrot company ID (`0x0043`) confirmed via real capture on both the production server Parrot Pots
+  (2026-07-28), but the payload is 3 bytes (not 1 as assumed) and their exact meaning isn't
+  determined** — an active correlation protocol is defined but not executed (requires physical
+  access to the pots), see `docs/STROYPLANT_SPEC.md` section 7.1 for the full detail and the
+  baseline values already captured. Do not interpret the 3rd byte until this protocol has settled
+  the matter.
+- **Xiaomi LYWSD03MMC**: GATT, service `ebe0ccb0-...`, notify on `ebe0ccc1-...`, 5-byte payload
+  `[int16 LE temp/100][uint8 humidity][int16 LE voltage mV/1000]`, battery% =
+  `(voltage-2.1)*100` clamped 0-100. Formula confirmed by WatchFlower AND re-validated empirically
+  on a real device.
+- **tRPC (`src/api/trpc/`)**: `router.ts` combines `devices` (`list`, `history`, `wateringEvents`,
+  `water`), `health` (`plantProfiles`, `assignPlantProfile`, `deviceHealth`) and `readings`
+  (`onReading`, a subscription) into `appRouter`; its type (`AppRouter`) is the single source of
+  truth shared with the frontend. `trpc.ts` defines `publicProcedure`/`protectedProcedure`
+  (`protectedProcedure` throws `TRPCError({code:'UNAUTHORIZED'})` when there's no session — same
+  check `requireAuth` used to do). `context.ts`'s `createContext` resolves the BetterAuth session
+  from the request headers (works identically for HTTP calls and the WS upgrade). Mounted in
+  `api/server.ts` via `fastifyTRPCPlugin` at prefix `/api/trpc` with `useWSS: true`, so regular
+  procedure calls (HTTP) and the `readings.onReading` subscription (WS) share the same prefix —
+  reuses the `@fastify/websocket` plugin, no separate `/ws` route anymore. The watering mutation
+  keeps the exact same never-silent-failure sequence as the old REST handler: on failure it still
+  writes a `WateringEvent{success:false, errorDetail}` row AND throws a `TRPCError({code:
+  'BAD_GATEWAY'})`, never just logs and returns quietly. **Date serialization**: tRPC's default
+  (no-transformer) wire format has no way to revive a `Date` back from JSON on the client, so
+  Prisma's `Date` fields are converted to ISO strings explicitly in the router (`serialize.ts`) —
+  deliberately not using a transformer like superjson for this, to keep the wire format identical
+  to what the old REST endpoints already returned and avoid touching how dates are rendered
+  elsewhere in the frontend (charts, relative-time formatting).
+- **Health Engine (Batch 4, `src/health/`)** — WatchFlower CSV import + scoring engine
+  (`computeDeviceHealth`), exposed as the `health` tRPC router above. `devices.list` and
+  `health.assignPlantProfile` return `plantProfile` as an included relation (not just the id), so
+  the frontend can show the species name without an extra request. **Full explanation of how it
+  works (data sources, algorithm, known limitations) in `docs/HEALTH_ENGINE.md` — do not duplicate
+  that detail here.** Wired into the frontend (species picker, health banner) since Batch 4b.
+- **Auth (BetterAuth)**: `src/auth/auth.ts`. `emailAndPassword` enabled but `disableSignUp: true`
+  — no self-registration. `admin` plugin used only for `auth.api.createUser()` (the only
+  documented way to create an account without going through the public sign-up endpoint, which
+  respects `disableSignUp`) — no real multi-user role management. `pnpm seed:admin`
+  (`ADMIN_EMAIL`/`ADMIN_PASSWORD`) creates the single account. Every tRPC procedure except the raw
+  `/api/auth/*` passthrough goes through `protectedProcedure` (401/`UNAUTHORIZED` without a
+  session, verified for both HTTP calls and the WS subscription). `trustedOrigins` hardcodes
+  `http://localhost:5173` — needed for dev (the Vite proxy doesn't rewrite the `Origin` header,
+  only `Host`); without it BetterAuth rejects the login with "Invalid origin". No impact in prod
+  (front+back on the same origin, section 14). Ready for a future OIDC plugin addition (Authentik)
+  with no rewrite needed — not added now.
+- Homegrown structured logging (`src/logger.ts`): timestamp, direction (SCAN/CONNECT/READ/WRITE/
+  ...), uuid, hex payload, result — never a silent log for a BLE operation.
 
-## Frontend — détail technique (Lot 3)
+## Frontend — technical detail (Batch 3)
 
-- **Vite + React 19 + TypeScript**, **Tailwind v4** (`@tailwindcss/vite`, config CSS-first via
-  `@theme inline` dans `src/index.css`, pas de `tailwind.config.js`) + **shadcn/ui** (CLI `shadcn`
-  v4, style `radix-nova`, composants dans `src/components/ui/` — traités comme du code vendored, pas
-  reformatés à la main ; `biome.json` a une section `overrides` qui désactive
-  `noDangerouslySetInnerHtml`/`noArrayIndexKey` sur ce dossier pour cette raison).
-- **TanStack Router** (file-based, plugin `@tanstack/router-plugin/vite`, génère
-  `src/routeTree.gen.ts` — gitignored, régénéré par `pnpm dev`/`pnpm build`) + **TanStack Query**
-  (cache mis à jour en direct par le WebSocket via `queryClient.setQueryData`, voir
-  `src/lib/use-live-readings.ts`, monté uniquement dans `AppShell` donc actif seulement après login).
-- **BetterAuth React client** (`src/lib/auth-client.ts`, `createAuthClient()` sans `baseURL` —
-  résout sur `/api/auth` relatif, correct tant que front et back sont sur la même origine). Guard
-  d'authentification dans `src/routes/_authenticated.tsx` (`beforeLoad` + `authClient.getSession()`).
-- **Design** : deux projets claude.ai/design distincts référencés par `docs/webdesign_claudecode.md`
-  — le design system (tokens couleurs/typo/spacing + composants shadcn-like) et **le vrai prototype à
-  7 écrans `StoryPlant.dc.html`** (login, dashboard, détail, historique, paramètres, ajout, calibration)
-  qui fait foi pour le contenu/la mise en page réels. **Le prototype est entièrement en français** —
-  l'UI de l'app suit donc cette langue, pas l'anglais du README du design system. Polices Satoshi
-  auto-hébergées dans `public/fonts/` (4 graisses seulement : Regular/Medium/Bold/Black — pas les
-  italiques ni la variable, pour rester léger).
-- **Portée actuellement couverte** : login, tableau de bord (grille d'appareils avec bandeau coloré
-  selon statut réel — hors ligne / réservoir bas / normal), détail appareil (gauges, historique/graph
-  24h-7j-30j via `recharts`, timeline "Derniers arrosages", déclenchement d'arrosage avec confirmation
-  pour les Parrot Pot). **Pas encore fait** (dépendent de fonctionnalités non implémentées) : écran
-  "Ajouter un appareil" (pairing manuel), "Paramètres" (notifications, arrosage auto, MCP),
-  "Historique" global, "Calibration" — voir section État du projet.
-- Les titres/statuts affichés (`src/lib/format.ts`, `statusHeadline`/`statusDetail`) se limitent
-  volontairement à des faits vérifiables (connectivité, niveau réservoir) — pas de jugement genre "le
-  sol est sec" qui relèverait du Health Engine (Lot 4, pas encore implémenté).
-- Icônes : `lucide-react` partout, `simple-icons` pour le logo Xiaomi. Pas de logo Parrot dans
-  simple-icons (seul "Parrot Security", sans rapport) — fallback lucide pour le Parrot Pot.
+- **Vite + React 19 + TypeScript**, **Tailwind v4** (`@tailwindcss/vite`, CSS-first config via
+  `@theme inline` in `src/index.css`, no `tailwind.config.js`) + **shadcn/ui** (`shadcn` CLI v4,
+  `radix-nova` style, components in `src/components/ui/` — treated as vendored code, not
+  hand-reformatted; `biome.json` has an `overrides` section that disables
+  `noDangerouslySetInnerHtml`/`noArrayIndexKey` on that folder for this reason).
+- **TanStack Router** (file-based, `@tanstack/router-plugin/vite` plugin, generates
+  `src/routeTree.gen.ts` — gitignored, regenerated by `pnpm dev`/`pnpm build`) + **TanStack Query**
+  (cache updated live by the `readings.onReading` tRPC subscription via `queryClient.setQueryData`,
+  see `src/lib/use-live-readings.ts`, mounted only in `AppShell` so only active after login).
+- **tRPC client** (`src/lib/trpc.ts`): `createTRPCClient` with a `splitLink` — `httpBatchLink` for
+  queries/mutations at `/api/trpc` (with `credentials:'include'` so the BetterAuth session cookie
+  rides along, replacing the old `apiFetch()` wrapper), `wsLink`/`createWSClient` for the
+  `readings.onReading` subscription. `createTRPCOptionsProxy` binds it to the shared `queryClient`
+  (moved into `src/lib/query-client.ts` to avoid a circular import between `trpc.ts` and
+  `main.tsx`). Call sites use `trpc.devices.list.queryOptions()` /
+  `trpc.devices.water.mutationOptions()` etc. directly — this replaced the old
+  `lib/api.ts`/`lib/queries.ts` hand-written fetch wrappers and `queryOptions()` factories, now
+  deleted. The `AppRouter` type is imported from the backend package via a type-only path alias
+  (`@stroyplant/backend/*` → `../backend/src/*` in `tsconfig.app.json`) — no runtime backend code
+  is bundled (erased entirely as `import type`), no shared package needed.
+- **BetterAuth React client** (`src/lib/auth-client.ts`, `createAuthClient()` with no `baseURL` —
+  resolves to `/api/auth` relatively, correct as long as front and back share the same origin).
+  Auth guard in `src/routes/_authenticated.tsx` (`beforeLoad` + `authClient.getSession()`).
+- **Design**: two separate claude.ai/design projects referenced by
+  `docs/webdesign_claudecode.md` — the design system (color/typography/spacing tokens +
+  shadcn-like components) and **the real 7-screen prototype `StoryPlant.dc.html`** (login,
+  dashboard, detail, history, settings, add, calibration) which is authoritative for the real
+  content/layout. **The prototype is entirely in French** — the app's UI follows that language,
+  not the design system README's English. Satoshi fonts self-hosted in `public/fonts/` (only 4
+  weights: Regular/Medium/Bold/Black — no italics or variable font, to stay lightweight).
+- **Currently covered scope**: login, dashboard (device grid with a colored banner based on real
+  status — offline / low reservoir / Health Engine health / normal), device detail (gauges with
+  tone and expected species range as a legend, 24h-7d-30d history/graph via `recharts`, "Recent
+  waterings" timeline, watering trigger with confirmation for Parrot Pots, "Species" section with
+  picker/removal via `SpeciesPickerDialog` and a consumer-friendly explanation of the scoring).
+  **Not done yet** (depend on unimplemented features): "Add device" screen (manual pairing),
+  "Settings" (notifications, auto-watering, MCP), global "History", "Calibration" — see the
+  Project status section.
+- Displayed titles/statuses (`src/lib/format.ts`, `statusHeadline`/`statusBandClasses`) prioritize
+  verifiable facts (connectivity, reservoir level) then, since Batch 4b, the Health Engine's
+  judgment (`healthHeadline`, if a species is assigned to the device) — with no species assigned,
+  behavior is unchanged (no judgment made).
+- Icons: `lucide-react` everywhere, `simple-icons` for the Xiaomi logo. No Parrot logo in
+  simple-icons (only "Parrot Security", unrelated) — lucide fallback for the Parrot Pot.
 
-## Outillage
+## Tooling
 
-- **Biome** pour lint/format (`pnpm lint` / `pnpm lint:fix` depuis la racine) — 2 espaces, quotes
-  simples, pas de tabs (config custom dans `biome.json`, différente du défaut Biome).
-- **Git** initialisé à la racine, commits sans Co-Authored-By (règle globale).
-- Workspace `pnpm` (`pnpm-workspace.yaml`) : `backend`, `frontend`, `noble-bridge`.
+- **Biome** for lint/format (`pnpm lint` / `pnpm lint:fix` from the root) — 2 spaces, single
+  quotes, no tabs (custom config in `biome.json`, different from Biome's defaults).
+- **Git** initialized at the root, commits with no Co-Authored-By (global rule).
+- `pnpm` workspace (`pnpm-workspace.yaml`): `backend`, `frontend`, `noble-bridge`.
 
-## Gotchas déjà rencontrés (pour ne pas les re-découvrir)
+## Gotchas already encountered (so as not to rediscover them)
 
-- `DATABASE_URL` Prisma relatif à `prisma/schema.prisma`, pas au cwd (voir plus haut).
-- Xiaomi LYWSD03MMC : GATT obligatoire, pas de lecture passive possible sur firmware stock (voir plus
-  haut).
-- `noble-bridge` (macOS) n'expose jamais la vraie MAC (voir plus haut).
-- Heuristique GATT_ERROR=133 sur `node-ble`/BlueZ est du best-effort, à affiner sur l'the production server.
-- `BETTER_AUTH_SECRET` tourne sur un fallback dev non sécurisé si absent de `.env` (juste un warning
-  au démarrage) — générer une vraie valeur (`openssl rand -base64 32`) avant tout déploiement réel.
-- BetterAuth rejette le login en dev avec "Invalid origin" si `trustedOrigins` n'inclut pas l'origine
-  du frontend Vite (voir section Auth ci-dessus) — le proxy Vite ne réécrit que `Host`, pas `Origin`.
-- Deux projets claude.ai/design distincts pour ce projet (design system vs prototype à 7 écrans, voir
-  section Frontend) — bien vérifier lequel fait foi avant de coder un écran : le prototype prime pour
-  le contenu/layout réel, le design system pour les tokens/composants réutilisables.
-- `@abandonware/noble` (utilisé par `noble-bridge`) : le binaire natif prébuilt livré dans le paquet
-  ne couvre pas toujours `darwin-arm64` + les ABI Node récentes (erreur "No native build was found").
-  Le module utilise N-API (ABI-stable), donc un simple rebuild depuis les sources suffit — pas besoin
-  de downgrade Node : `cd node_modules/.pnpm/@abandonware+noble@*/node_modules/@abandonware/noble &&
-  pnpm dlx node-gyp rebuild` (nécessite Xcode Command Line Tools, déjà présents sur la machine
-  de DestCom). À refaire si `pnpm install` réinstalle le paquet (ex. après suppression de
-  `node_modules`).
+- Prisma `DATABASE_URL` is relative to `prisma/schema.prisma`, not the cwd (see above).
+- Xiaomi LYWSD03MMC: GATT is mandatory, no passive reading possible on stock firmware (see above).
+- `noble-bridge` (macOS) never exposes the real MAC (see above).
+- The GATT_ERROR=133 heuristic on `node-ble`/BlueZ is best-effort, to be refined on the the production server.
+- `BETTER_AUTH_SECRET` runs on an insecure dev fallback if absent from `.env` (just a startup
+  warning) — generate a real value (`openssl rand -base64 32`) before any real deployment.
+- BetterAuth rejects the login in dev with "Invalid origin" if `trustedOrigins` doesn't include
+  the Vite frontend's origin (see Auth section above) — the Vite proxy only rewrites `Host`, not
+  `Origin`.
+- Two separate claude.ai/design projects for this project (design system vs. 7-screen prototype,
+  see Frontend section) — always check which one is authoritative before coding a screen: the
+  prototype takes precedence for real content/layout, the design system for reusable
+  tokens/components.
+- `@abandonware/noble` (used by `noble-bridge`): the prebuilt native binary shipped in the package
+  doesn't always cover `darwin-arm64` + recent Node ABIs ("No native build was found" error). The
+  module uses N-API (ABI-stable), so a simple rebuild from source is enough — no need to downgrade
+  Node: `cd node_modules/.pnpm/@abandonware+noble@*/node_modules/@abandonware/noble && pnpm dlx
+  node-gyp rebuild` (requires Xcode Command Line Tools, already present on DestCom's machine). Must
+  be redone if `pnpm install` reinstalls the package (e.g. after deleting `node_modules`).
 
-## Accès infra
+## Infra access
 
-- the production server accessible via `ssh the production server` (clé déjà configurée, user `[user]`). `sudo` y demande un mot de passe
-  interactif (pas de NOPASSWD) — pour toute commande nécessitant root sur l'the production server, la demander à
-  DestCom plutôt que d'essayer de contourner.
-- Docker sur l'the production server ne nécessite pas `sudo` pour l'utilisateur `[user]` — `docker run`/`docker compose`
-  fonctionnent directement en SSH pour des tests empiriques (containers jetables recommandés).
+- the production server reachable via `ssh the production server` (key already configured, user `[user]`). `sudo` there prompts for an
+  interactive password (no NOPASSWD) — for any command requiring root on the the production server, ask DestCom
+  rather than trying to work around it.
+- Docker on the the production server doesn't require `sudo` for the `[user]` user — `docker run`/`docker compose`
+  work directly over SSH for empirical testing (disposable containers recommended).

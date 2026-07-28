@@ -8,7 +8,7 @@ export function DeviceKindIcon({ kind, size = 16, className }: { kind: DeviceKin
     return <BrandIcon icon={siXiaomi} size={size} className={className} />;
   }
 
-  // simple-icons n'a pas de logo pour Parrot (le fabricant du Parrot Pot) — seul "Parrot Security"
-  // y figure, sans rapport. Fallback lucide plutôt qu'une icône de marque erronée.
+  // simple-icons has no logo for Parrot (the Parrot Pot manufacturer) — only "Parrot Security"
+  // is listed there, unrelated. Fallback to lucide rather than an incorrect brand icon.
   return <Sprout size={size} className={className} />;
 }

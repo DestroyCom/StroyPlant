@@ -1,14 +1,15 @@
 import type { Characteristic, Peripheral } from '@abandonware/noble';
 import noble from '@abandonware/noble';
+import { extractParrotManufacturerPayload } from './advertisement.js';
 import { log } from './logger.js';
 import { LYWSD03MMC_NAME, PARROT_POT_NAME_PREFIX } from './uuids.js';
 
 export type DeviceKind = 'PARROT_POT' | 'XIAOMI_LYWSD03MMC';
 
-// Adapté de parrot-pot-debug/src/ble-client.ts (PoC déjà validé sur device réel) — voir
-// docs/STROYPLANT_SPEC.md section 6 & 9. Repris quasiment à l'identique : mêmes constantes de retry,
-// même limite documentée (CoreBluetooth avale le vrai code GATT, impossible de distinguer un 133
-// d'un autre échec — voir commentaire sur withConnectRetry plus bas).
+// Adapted from parrot-pot-debug/src/ble-client.ts (PoC already validated on a real device) — see
+// docs/STROYPLANT_SPEC.md section 6 & 9. Reused almost identically: same retry constants, same
+// documented limitation (CoreBluetooth swallows the real GATT code, impossible to distinguish a 133
+// from another failure — see the comment on withConnectRetry further below).
 
 function normalizeUuid(uuid: string): string {
   return uuid.toLowerCase().replace(/-/g, '');
@@ -32,25 +33,25 @@ export async function waitForPoweredOn(timeoutMs = 10000): Promise<void> {
         resolve();
       } else if (state !== 'resetting' && state !== 'unknown') {
         cleanup();
-        reject(new Error(`Bluetooth adapter state: ${state}. Vérifier que le Bluetooth du Mac est activé.`));
+        reject(new Error(`Bluetooth adapter state: ${state}. Check that the Mac's Bluetooth is turned on.`));
       }
     };
     timeoutHandle = setTimeout(() => {
       cleanup();
-      reject(new Error(`Adapter n'a pas atteint poweredOn après ${timeoutMs}ms (état: ${noble._state}).`));
+      reject(new Error(`Adapter did not reach poweredOn after ${timeoutMs}ms (state: ${noble._state}).`));
     }, timeoutMs);
     noble.on('stateChange', onStateChange);
   });
 }
 
-// L'adresse MAC réelle n'est PAS accessible via @abandonware/noble sur macOS (CoreBluetooth la
-// masque pour des raisons de vie privée — `peripheral.uuid` est un identifiant interne macOS, pas
-// la MAC). Pour le Parrot Pot, le nom annoncé ("Parrot pot XXXX") encode les 4 derniers hex de sa
-// MAC réelle en suffixe — utilisé comme id logique lisible. Le Xiaomi LYWSD03MMC n'a pas ce suffixe
-// (nom fixe "LYWSD03MMC" pour tous les devices du modèle) — on retombe sur `peripheral.uuid`
-// (stable pour un device donné sur ce Mac, pas la MAC). Dans les deux cas : ne correspond PAS à
-// l'id "MAC complète" utilisé par le provider node-ble en prod — attendu et documenté (section 6 de
-// la spec : noble-bridge valide le protocole, pas l'identité cross-provider).
+// The real MAC address is NOT accessible via @abandonware/noble on macOS (CoreBluetooth masks it
+// for privacy reasons — `peripheral.uuid` is a macOS-internal identifier, not the MAC). For the
+// Parrot Pot, the advertised name ("Parrot pot XXXX") encodes the last 4 hex digits of its real
+// MAC as a suffix — used as a readable logical id. The Xiaomi LYWSD03MMC doesn't have this suffix
+// (fixed name "LYWSD03MMC" for all devices of the model) — we fall back to `peripheral.uuid`
+// (stable for a given device on this Mac, not the MAC). In both cases: does NOT match the "full
+// MAC" id used by the node-ble provider in prod — expected and documented (spec section 6:
+// noble-bridge validates the protocol, not cross-provider identity).
 export function identifyDevice(peripheral: Peripheral): { id: string; kind: DeviceKind } | undefined {
   const name = peripheral.advertisement.localName ?? '';
   if (name.startsWith(PARROT_POT_NAME_PREFIX)) {
@@ -86,7 +87,7 @@ export async function scanForDevice(logicalId: string, timeoutMs = 10000): Promi
 
   log({
     direction: 'SCAN',
-    label: target ? `Device trouvé: ${logicalId}` : `Device ${logicalId} non trouvé après ${timeoutMs}ms`,
+    label: target ? `Device found: ${logicalId}` : `Device ${logicalId} not found after ${timeoutMs}ms`,
     deviceId: logicalId,
     result: target ? 'OK' : 'ERROR',
   });
@@ -94,16 +95,31 @@ export async function scanForDevice(logicalId: string, timeoutMs = 10000): Promi
 }
 
 export async function scanContinuous(
-  onDiscovered: (id: string, kind: DeviceKind, name: string, rssi: number) => void,
+  onDiscovered: (id: string, kind: DeviceKind, name: string, rssi: number, advertisementPayloadHex?: string) => void,
   signal: AbortSignal,
 ): Promise<void> {
   await waitForPoweredOn();
   const onDiscover = (peripheral: Peripheral) => {
     const identified = identifyDevice(peripheral);
-    if (identified) onDiscovered(identified.id, identified.kind, peripheral.advertisement.localName ?? '', peripheral.rssi);
+    if (!identified) return;
+    // Diagnostic only (Parrot Pot only), raw payload not interpreted — see
+    // advertisement.ts and docs/STROYPLANT_SPEC.md section 7.1.
+    const payload =
+      identified.kind === 'PARROT_POT' ? extractParrotManufacturerPayload(peripheral.advertisement.manufacturerData) : undefined;
+    const advertisementPayloadHex = payload?.toString('hex');
+    if (advertisementPayloadHex) {
+      log({
+        direction: 'SCAN',
+        label: 'Parrot advertisement manufacturer data (diagnostic, not interpreted)',
+        deviceId: identified.id,
+        result: 'OK',
+        detail: advertisementPayloadHex,
+      });
+    }
+    onDiscovered(identified.id, identified.kind, peripheral.advertisement.localName ?? '', peripheral.rssi, advertisementPayloadHex);
   };
   noble.on('discover', onDiscover);
-  await noble.startScanningAsync([], true); // allowDuplicates=true pour des mises à jour RSSI continues
+  await noble.startScanningAsync([], true); // allowDuplicates=true for continuous RSSI updates
 
   await new Promise<void>((resolve) => {
     signal.addEventListener('abort', () => resolve(), { once: true });
@@ -122,10 +138,10 @@ export interface ConnectedDevice {
 const CONNECT_RETRY_ATTEMPTS = 3;
 const CONNECT_RETRY_PAUSE_MS = 500;
 
-// Détection GATT 133 impossible sur macOS/noble (CoreBluetooth avale le NSError réel, voir
-// docs/STROYPLANT_SPEC.md section 7.1 "Nuance importante"). On applique donc la logique 133 (backoff
-// 500ms, avertissement au 2e échec) à TOUT échec de connexion — pas de redémarrage automatique de
-// l'adaptateur Bluetooth du Mac (couperait tout le Bluetooth du système, décision utilisateur).
+// GATT 133 detection impossible on macOS/noble (CoreBluetooth swallows the real NSError, see
+// docs/STROYPLANT_SPEC.md section 7.1 "Important nuance"). We therefore apply the 133 logic
+// (500ms backoff, warning on 2nd failure) to ANY connection failure — no automatic restart of the
+// Mac's Bluetooth adapter (would cut off the whole system's Bluetooth, user decision).
 async function withConnectRetry(logicalId: string, attempt: () => Promise<ConnectedDevice>): Promise<ConnectedDevice> {
   let lastError: unknown;
   for (let i = 1; i <= CONNECT_RETRY_ATTEMPTS; i++) {
@@ -137,15 +153,15 @@ async function withConnectRetry(logicalId: string, attempt: () => Promise<Connec
       if (i >= 2) {
         log({
           direction: 'CONNECT',
-          label: `2e échec GATT consécutif (équivalent probable GATT_ERROR=133) — tentative ${i}/${CONNECT_RETRY_ATTEMPTS}`,
+          label: `2nd consecutive GATT failure (probable GATT_ERROR=133 equivalent) — attempt ${i}/${CONNECT_RETRY_ATTEMPTS}`,
           deviceId: logicalId,
           result: 'ERROR',
-          detail: `${detail} — redémarrage manuel du Bluetooth du Mac recommandé si ça persiste`,
+          detail: `${detail} — manual restart of the Mac's Bluetooth recommended if this persists`,
         });
       } else {
         log({
           direction: 'CONNECT',
-          label: `Échec de connexion, tentative ${i}/${CONNECT_RETRY_ATTEMPTS}`,
+          label: `Connection failure, attempt ${i}/${CONNECT_RETRY_ATTEMPTS}`,
           deviceId: logicalId,
           result: 'ERROR',
           detail,
@@ -182,7 +198,7 @@ export async function connectAndDiscover(peripheral: Peripheral, logicalId: stri
       deviceId: logicalId,
       sinceConnectMs: Date.now() - connectedAt,
       result: 'OK',
-      detail: `${characteristics.length} caractéristique(s)`,
+      detail: `${characteristics.length} characteristic(s)`,
     });
     return { peripheral, connectedAt, characteristics: byUuid };
   });
@@ -257,8 +273,8 @@ export async function writeCharacteristic(
   }
 }
 
-// Le LYWSD03MMC ne se lit pas par un simple readAsync() — il faut souscrire aux notifications et
-// attendre la première valeur (validé empiriquement sur device réel, voir uuids.ts).
+// The LYWSD03MMC can't be read with a simple readAsync() — you must subscribe to notifications and
+// wait for the first value (validated empirically on a real device, see uuids.ts).
 export async function subscribeAndWaitForFirstValue(
   pot: ConnectedDevice,
   uuid: string,
@@ -309,11 +325,11 @@ export async function disconnect(peripheral: Peripheral, logicalId: string): Pro
   }
 }
 
-// Scan-puis-connecte, générique pour tout device identifié par identifyDevice() (Parrot Pot ou
-// Xiaomi) — factorisé ici pour être réutilisé par parrot.ts et xiaomi.ts.
+// Scan-then-connect, generic for any device identified by identifyDevice() (Parrot Pot or
+// Xiaomi) — factored out here to be reused by parrot.ts and xiaomi.ts.
 export async function withDevice<T>(logicalId: string, work: (device: ConnectedDevice) => Promise<T>): Promise<T> {
   const peripheral = await scanForDevice(logicalId);
-  if (!peripheral) throw new Error(`Device ${logicalId} non trouvé au scan`);
+  if (!peripheral) throw new Error(`Device ${logicalId} not found in scan`);
   const connected = await connectAndDiscover(peripheral, logicalId);
   try {
     return await work(connected);

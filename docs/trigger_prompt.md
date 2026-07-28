@@ -1,21 +1,19 @@
-Lis intégralement le fichier STROYPLANT_SPEC.md à la racine du projet avant de commencer
-quoi que ce soit — c'est la spec complète et la source de vérité pour toutes les décisions
-d'architecture, de stack, et de séquencement.
+Read the STROYPLANT_SPEC.md file at the root of the project in full before starting
+anything — it's the complete spec and the source of truth for all architecture, stack, and
+sequencing decisions.
 
-Pour tout ce qui touche au protocole BLE du Parrot Pot, consulte en priorité
-PARROT_BLE_REVERSE_ENGINEERING.md et PARROT_BLE_DEEP_DIVE.md (également à la racine) — ce
-sont des décompilations directes du code officiel Parrot, plus fiables que toute
-supposition. Consulte aussi les repos tiers listés en section 9 de la spec pour tout le
-reste (autres devices, patterns d'implémentation).
+For anything related to the Parrot Pot's BLE protocol, consult
+PARROT_BLE_REVERSE_ENGINEERING.md and PARROT_BLE_DEEP_DIVE.md first (also at the root) — these
+are direct decompilations of the official Parrot code, more reliable than any assumption.
+Also consult the third-party repos listed in section 9 of the spec for everything else (other
+devices, implementation patterns).
 
-Respecte strictement la règle de collaboration de la section 10 : en cas de doute ou
-d'ambiguïté technique, pose-moi la question directement plutôt que de choisir à ma place
-et de continuer.
+Strictly follow the collaboration rule in section 10: in case of doubt or technical
+ambiguity, ask me directly rather than choosing on my behalf and continuing.
 
-Commence par le Lot 0. Avant d'écrire la moindre ligne de code pour ce lot, pose-moi la
-question indiquée en section 6 : est-ce que je veux que tu travailles en connexion SSH
-directe sur mon serveur the production server pour ce lot, ou en local sur mon Mac avec des allers-retours
-manuels de test.
+Start with Batch 0. Before writing a single line of code for this batch, ask me the
+question indicated in section 6: whether I want you to work over a direct SSH connection to
+my the production server server for this batch, or locally on my Mac with manual back-and-forth testing.
 
-Ne passe pas au lot suivant sans validation explicite de ma part que le lot en cours
-fonctionne comme attendu.
+Do not move on to the next batch without explicit confirmation from me that the current
+batch works as expected.

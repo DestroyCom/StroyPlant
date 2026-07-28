@@ -2,12 +2,12 @@ import { env } from '../../env.js';
 import { log } from '../../logger.js';
 import type { DeviceKind, DeviceProvider, DiscoveredDevice, SensorReading } from '../types.js';
 
-// Provider qui délègue tout le travail BLE réel au process noble-bridge (natif macOS, hors Docker,
-// voir noble-bridge/). Ce provider n'est qu'un client HTTP/WebSocket — voir docs/STROYPLANT_SPEC.md
-// section 6. Les identifiants de device ici sont des ids "logiques" (PARROT-XXXX / XIAOMI-<uuid noble>,
-// pas la MAC réelle — CoreBluetooth ne l'expose pas) : ne correspondent PAS aux ids MAC utilisés par
-// le provider node-ble en prod. Attendu — ce provider sert à valider le protocole, pas la continuité
-// des données entre environnements.
+// Provider that delegates all the real BLE work to the noble-bridge process (native macOS, outside
+// Docker, see noble-bridge/). This provider is just an HTTP/WebSocket client — see
+// docs/STROYPLANT_SPEC.md section 6. Device ids here are "logical" ids (PARROT-XXXX / XIAOMI-<noble
+// uuid>, not the real MAC — CoreBluetooth doesn't expose it): they do NOT match the MAC ids used by
+// the node-ble provider in prod. Expected — this provider is meant to validate the protocol, not
+// data continuity across environments.
 
 export function createNobleBridgeProvider(): DeviceProvider {
   return {
@@ -19,18 +19,19 @@ export function createNobleBridgeProvider(): DeviceProvider {
         const socket = new WebSocket(wsUrl);
 
         socket.addEventListener('open', () => {
-          log({ direction: 'SCAN', label: `Connecté au noble-bridge (${wsUrl})`, result: 'OK' });
+          log({ direction: 'SCAN', label: `Connected to noble-bridge (${wsUrl})`, result: 'OK' });
         });
 
         socket.addEventListener('message', (event) => {
           try {
-            const { id, kind, name, rssi } = JSON.parse(event.data as string) as {
+            const { id, kind, name, rssi, advertisementPayloadHex } = JSON.parse(event.data as string) as {
               id: string;
               kind: DeviceKind;
               name: string;
               rssi: number;
+              advertisementPayloadHex?: string;
             };
-            const device: DiscoveredDevice = { id, kind, name, rssi };
+            const device: DiscoveredDevice = { id, kind, name, rssi, advertisementPayloadHex };
             onDiscovered(device);
           } catch (error) {
             log({
@@ -45,7 +46,7 @@ export function createNobleBridgeProvider(): DeviceProvider {
         socket.addEventListener('error', () => {
           reject(
             new Error(
-              `Connexion au noble-bridge échouée (${wsUrl}) — le process noble-bridge tourne-t-il ? (pnpm --filter noble-bridge dev)`,
+              `Connection to noble-bridge failed (${wsUrl}) — is the noble-bridge process running? (pnpm --filter noble-bridge dev)`,
             ),
           );
         });
@@ -74,12 +75,14 @@ export function createNobleBridgeProvider(): DeviceProvider {
           temperatureC: body.temperatureC,
           luminosity: body.luminosity,
           waterTankLevelPercent: body.waterTankLevelPercent,
+          soilConductivityEcb: body.soilConductivityEcb,
+          soilConductivityEcPorous: body.soilConductivityEcPorous,
         },
       };
     },
 
     async triggerAction(deviceId: string, action): Promise<void> {
-      if (action !== 'water') throw new Error(`Action non supportée: ${action}`);
+      if (action !== 'water') throw new Error(`Unsupported action: ${action}`);
       const res = await fetch(`${env.nobleBridgeUrl}/devices/${encodeURIComponent(deviceId)}/water`, { method: 'POST' });
       const body = await res.json();
       if (!res.ok) throw new Error(`noble-bridge triggerAction ${deviceId}: ${body.error ?? res.statusText}`);

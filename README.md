@@ -1,56 +1,56 @@
 # StroyPlant
 
-Service self-hosted de suivi et d'arrosage automatique de plantes (Parrot Pot, capteurs Xiaomi),
-pensé pour tourner en continu sur un serveur Linux (the production server).
+Self-hosted plant monitoring and automatic watering service (Parrot Pot, Xiaomi sensors), designed
+to run continuously on a Linux server (the production server).
 
-**Documentation complète : voir [`docs/STROYPLANT_SPEC.md`](docs/STROYPLANT_SPEC.md)** — c'est la
-source de vérité du projet (architecture, stack, roadmap par lots, règles de collaboration).
+**Full documentation: see [`docs/STROYPLANT_SPEC.md`](docs/STROYPLANT_SPEC.md)** — this is the
+project's source of truth (architecture, stack, batch roadmap, collaboration rules).
 
-## Limites à ne jamais présenter comme résolues
+## Limitations that must never be presented as resolved
 
-- Fonctionne uniquement sur **Docker Engine natif Linux** (the production server, Debian/Ubuntu, Raspberry Pi) — **pas
-  sur Docker Desktop macOS/Windows** (pas d'accès Bluetooth réel dans la VM cachée).
-- Ne supporte que les types de devices pour lesquels un driver a été écrit — pas un système
-  générique "n'importe quel capteur BLE".
+- Only works on **native Linux Docker Engine** (the production server, Debian/Ubuntu, Raspberry Pi) — **not on Docker
+  Desktop macOS/Windows** (no real Bluetooth access inside the hidden VM).
+- Only supports device types for which a driver has been written — not a generic "any BLE sensor"
+  system.
 
-## Structure du repo
+## Repo structure
 
 ```text
-backend/         API + logique métier (Fastify, Prisma/SQLite, auth, BLE) — tourne en Docker en prod
-frontend/        SPA Vite + React + TanStack Router/Query + Tailwind v4 + shadcn/ui
-noble-bridge/    Process natif macOS (hors Docker) qui expose le Bluetooth du Mac en HTTP/WS,
-                 utilisé par le provider `noble-bridge` du backend pour développer sans dongle Linux
-infra/           Scripts/checklists d'infrastructure (setup Docker+Bluetooth sur l'the production server, etc.)
-docs/            Spec complète + docs de rétro-ingénierie BLE Parrot Pot
+backend/         API + business logic (Fastify, Prisma/SQLite, auth, BLE) — runs in Docker in prod
+frontend/        Vite + React SPA, TanStack Router/Query, Tailwind v4 + shadcn/ui
+noble-bridge/    Native macOS process (outside Docker) exposing the Mac's Bluetooth over HTTP/WS,
+                 used by the backend's `noble-bridge` provider to develop without a Linux dongle
+infra/           Infrastructure scripts/checklists (Docker+Bluetooth setup on the the production server, etc.)
+docs/            Full spec + Parrot Pot BLE reverse-engineering docs
 ```
 
-## Développement
+## Development
 
-Le backend supporte 3 providers BLE interchangeables via `BLE_PROVIDER` (voir spec section 6) :
+The backend supports 3 interchangeable BLE providers via `BLE_PROVIDER` (see spec section 6):
 
-| Provider       | Où | Usage |
+| Provider       | Where | Use |
 | -------------- | -- | ----- |
-| `mock`         | Dans le container, dev Mac | Logique métier pure, aucun matériel requis |
-| `noble-bridge` | Backend dockerisé + process `noble-bridge/` natif macOS | Vrai protocole BLE via le Bluetooth du Mac |
-| `node-ble`     | Directement dans le container, the production server uniquement | Vrai stack de prod (BlueZ/D-Bus) |
+| `mock`         | In-container, Mac dev | Pure business logic, no hardware required |
+| `noble-bridge` | Dockerized backend + native macOS `noble-bridge/` process | Real BLE protocol via the Mac's Bluetooth |
+| `node-ble`     | Directly in-container, the production server only | Real prod stack (BlueZ/D-Bus) |
 
 ```bash
 pnpm install
 
-# Backend (mode mock par défaut)
+# Backend (mock mode by default)
 cd backend
 cp .env.example .env
 pnpm prisma:migrate
 ADMIN_EMAIL=admin@example.com ADMIN_PASSWORD=changeme pnpm seed:admin
 pnpm dev
 
-# noble-bridge (uniquement si BLE_PROVIDER=noble-bridge côté backend)
+# noble-bridge (only if BLE_PROVIDER=noble-bridge on the backend side)
 cd noble-bridge
 pnpm dev
 
-# Frontend (proxy Vite vers le backend sur le port 3000, voir frontend/vite.config.ts)
+# Frontend (Vite proxy to the backend on port 3000, see frontend/vite.config.ts)
 cd frontend
 pnpm dev
 ```
 
-Lint/format : `pnpm lint` (Biome) depuis la racine.
+Lint/format: `pnpm lint` (Biome) from the root.

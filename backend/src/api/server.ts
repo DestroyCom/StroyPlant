@@ -1,19 +1,19 @@
 import websocketPlugin from '@fastify/websocket';
+import { fastifyTRPCPlugin } from '@trpc/server/adapters/fastify';
 import { fromNodeHeaders } from 'better-auth/node';
 import Fastify from 'fastify';
 import { auth } from '../auth/auth.js';
-import { requireAuth } from '../auth/session.js';
 import type { ConnectionQueue } from '../ble/connectionQueue.js';
 import type { DeviceProvider } from '../providers/types.js';
-import { registerDeviceRoutes } from './routes/devices.js';
-import { registerClient } from './ws.js';
+import { createContextFactory } from './trpc/context.js';
+import { appRouter } from './trpc/router.js';
 
 export async function buildServer(provider: DeviceProvider, connectionQueue: ConnectionQueue) {
   const app = Fastify({ logger: false });
   await app.register(websocketPlugin);
 
-  // Handler BetterAuth (login/logout/session/...) — jamais derrière requireAuth, c'est lui qui gère
-  // sa propre logique d'accès (pattern officiel, voir docs/integrations/fastify).
+  // BetterAuth handler (login/logout/session/...) — never behind requireAuth, it manages
+  // its own access logic (official pattern, see docs/integrations/fastify).
   app.route({
     method: ['GET', 'POST'],
     url: '/api/auth/*',
@@ -34,17 +34,14 @@ export async function buildServer(provider: DeviceProvider, connectionQueue: Con
     },
   });
 
-  // WS protégé : session vérifiée en preValidation, avant l'upgrade (échec = réponse HTTP normale,
-  // pas de socket ouvert puis fermé).
-  app.get('/ws', { websocket: true, preValidation: requireAuth }, (socket) => {
-    registerClient(socket);
-  });
-
-  // Tout /api/devices/* requiert une session — jamais exposé sans protection (section 7.6, même
-  // exigence pour le futur serveur MCP du Lot 8).
-  await app.register(async (secured) => {
-    secured.addHook('preHandler', requireAuth);
-    registerDeviceRoutes(secured, { provider, connectionQueue });
+  // All devices/health/readings procedures require a session (protectedProcedure, see
+  // api/trpc/trpc.ts) — never exposed without protection (section 7.6, same requirement for the
+  // future MCP server in Batch 8). useWSS shares this same prefix for the readings.onReading
+  // subscription's WS upgrade, reusing the @fastify/websocket plugin registered above.
+  await app.register(fastifyTRPCPlugin, {
+    prefix: '/api/trpc',
+    useWSS: true,
+    trpcOptions: { router: appRouter, createContext: createContextFactory({ provider, connectionQueue }) },
   });
 
   return app;

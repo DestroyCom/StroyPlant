@@ -1,63 +1,151 @@
 import { useMutation, useQuery, useQueryClient, useSuspenseQuery } from '@tanstack/react-query';
 import { createFileRoute, Link, notFound } from '@tanstack/react-router';
-import { ArrowLeft, BatteryMedium, Check, ChevronDown, Droplets, Sun, Thermometer, X } from 'lucide-react';
+import { ArrowLeft, BatteryMedium, Check, ChevronDown, Droplets, Info, Sun, Thermometer, X } from 'lucide-react';
 import { useState } from 'react';
 import { toast } from 'sonner';
 import { DeviceKindIcon } from '@/components/device-kind-icon';
-import { HistoryChart } from '@/components/history-chart';
+import { HistoryChart, type HistoryReferenceLine } from '@/components/history-chart';
 import { SensorGauge } from '@/components/sensor-gauge';
+import { SpeciesPickerDialog } from '@/components/species-picker-dialog';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { triggerWatering } from '@/lib/api';
 import { formatDeviceKind, formatRelativeTime, statusBandClasses, statusDetail, statusHeadline } from '@/lib/format';
-import { deviceHistoryQuery, devicesQuery, wateringEventsQuery } from '@/lib/queries';
+import { trpc } from '@/lib/trpc';
+import type { ParameterHealth, Reading } from '@/lib/types';
 import { cn } from '@/lib/utils';
 
 type Period = '24h' | '7j' | '30j';
+type GaugeTone = 'primary' | 'accent' | 'info' | 'danger' | 'warning';
 
 const PERIOD_HOURS: Record<Period, number> = { '24h': 24, '7j': 24 * 7, '30j': 24 * 30 };
 
+function toneFor(param: ParameterHealth | undefined, fallback: GaugeTone): GaugeTone {
+  return param?.status === 'too_low' || param?.status === 'too_high' ? 'warning' : fallback;
+}
+
+// Species range displayed in the gauge legend — undefined if no species assigned or parameter
+// not applicable (n/a) for this species.
+function rangeHint(param: ParameterHealth | undefined, unit: string, scale = 1): string | undefined {
+  if (!param?.speciesRange) return undefined;
+  const [min, max] = param.speciesRange;
+  return `${Math.round(min / scale)}–${Math.round(max / scale)}${unit} attendu`;
+}
+
+// Reference lines (min/max expected for the assigned species) displayed on the history
+// chart — same source as rangeHint, undefined if no species assigned or parameter n/a.
+function referenceLinesFor(param: ParameterHealth | undefined, scale = 1): HistoryReferenceLine[] | undefined {
+  if (!param?.speciesRange) return undefined;
+  const [min, max] = param.speciesRange;
+  return [
+    { value: min / scale, label: 'Min attendu' },
+    { value: max / scale, label: 'Max attendu' },
+  ];
+}
+
+interface ChartSpec {
+  key: string;
+  label: string;
+  unit: string;
+  getValue: (reading: Reading) => number | null;
+  referenceLines?: HistoryReferenceLine[];
+}
+
 export const Route = createFileRoute('/_authenticated/devices/$deviceId')({
   loader: async ({ context, params }) => {
-    const devices = await context.queryClient.ensureQueryData(devicesQuery);
+    const devices = await context.queryClient.ensureQueryData(trpc.devices.list.queryOptions());
     if (!devices.some((device) => device.id === params.deviceId)) {
       throw notFound();
     }
-    await context.queryClient.ensureQueryData(deviceHistoryQuery(params.deviceId, PERIOD_HOURS['24h']));
+    await context.queryClient.ensureQueryData(trpc.devices.history.queryOptions({ deviceId: params.deviceId, hours: PERIOD_HOURS['24h'] }));
   },
   component: DeviceDetailPage,
 });
 
 function DeviceDetailPage() {
   const { deviceId } = Route.useParams();
-  const { data: devices } = useSuspenseQuery(devicesQuery);
+  const { data: devices } = useSuspenseQuery(trpc.devices.list.queryOptions());
   const device = devices.find((item) => item.id === deviceId);
   if (!device) throw notFound();
 
   const [period, setPeriod] = useState<Period>('24h');
-  const [techOpen, setTechOpen] = useState(false);
-  const { data: history } = useQuery(deviceHistoryQuery(deviceId, PERIOD_HOURS[period]));
-  const { data: wateringEvents } = useQuery(wateringEventsQuery(deviceId));
+  const [techOpen, setTechOpen] = useState(true);
+  const [speciesOpen, setSpeciesOpen] = useState(false);
+  const [explainOpen, setExplainOpen] = useState(false);
+  const { data: history } = useQuery(trpc.devices.history.queryOptions({ deviceId, hours: PERIOD_HOURS[period] }));
+  const { data: wateringEvents } = useQuery(trpc.devices.wateringEvents.queryOptions({ deviceId }));
+  const { data: health } = useQuery(trpc.health.deviceHealth.queryOptions({ deviceId }, { refetchInterval: 60_000 }));
   const [confirmOpen, setConfirmOpen] = useState(false);
   const queryClient = useQueryClient();
 
-  const waterMutation = useMutation({
-    mutationFn: () => triggerWatering(deviceId),
-    onSuccess: () => {
-      toast.success('Arrosage déclenché', { description: `${device.name ?? device.id} est en train d'être arrosé.` });
-      setConfirmOpen(false);
-      void queryClient.invalidateQueries({ queryKey: devicesQuery.queryKey });
-      void queryClient.invalidateQueries({ queryKey: wateringEventsQuery(deviceId).queryKey });
-    },
-    onError: (error: Error) => {
-      toast.error("Échec de l'arrosage", { description: error.message });
-    },
-  });
+  const waterMutation = useMutation(
+    trpc.devices.water.mutationOptions({
+      onSuccess: () => {
+        toast.success('Arrosage déclenché', { description: `${device.name ?? device.id} est en train d'être arrosé.` });
+        setConfirmOpen(false);
+        void queryClient.invalidateQueries({ queryKey: trpc.devices.list.queryKey() });
+        void queryClient.invalidateQueries({ queryKey: trpc.devices.wateringEvents.queryKey({ deviceId }) });
+      },
+      onError: (error) => {
+        toast.error("Échec de l'arrosage", { description: error.message });
+      },
+    }),
+  );
 
   const reading = device.lastReading;
   const canWater = device.kind === 'PARROT_POT';
-  const { band, icon } = statusBandClasses(device);
+  // The Xiaomi LYWSD03MMC is a simple ambient temperature/humidity sensor, not planted in a
+  // given plant — assigning a species only makes sense for the Parrot Pot (probe in the soil).
+  const supportsSpeciesProfile = device.kind === 'PARROT_POT';
+  const { band, icon } = statusBandClasses(device, health);
+  const trendParameterKey = device.kind === 'PARROT_POT' ? 'soilMoisturePercent' : 'humidityPercent';
+  const trendHint =
+    health?.trend === 'degrading' ? 'tendance à la baisse' : health?.trend === 'improving' ? 'tendance à la hausse' : undefined;
+
+  const charts: ChartSpec[] =
+    device.kind === 'PARROT_POT'
+      ? [
+          {
+            key: 'soilMoisturePercent',
+            label: 'Humidité du sol',
+            unit: '%',
+            getValue: (r) => r.soilMoisturePercent,
+            referenceLines: referenceLinesFor(health?.parameters.soilMoisturePercent),
+          },
+          {
+            key: 'temperatureC',
+            label: 'Température',
+            unit: '°',
+            getValue: (r) => r.temperatureC,
+            referenceLines: referenceLinesFor(health?.parameters.temperatureC),
+          },
+          {
+            key: 'luminosity',
+            label: 'Luminosité (DLI)',
+            unit: ' mol/m²/j',
+            getValue: (r) => r.luminosity,
+            // Converted mmol -> mol to stay in the same unit as the displayed raw value (see
+            // scoring.ts, the species range is stored in mmol).
+            referenceLines: referenceLinesFor(health?.parameters.luminosity, 1000),
+          },
+        ]
+      : [
+          {
+            key: 'temperatureC',
+            label: 'Température',
+            unit: '°',
+            getValue: (r) => r.temperatureC,
+            referenceLines: referenceLinesFor(health?.parameters.temperatureC),
+          },
+          {
+            key: 'humidityPercent',
+            label: 'Humidité',
+            unit: '%',
+            getValue: (r) => r.humidityPercent,
+            referenceLines: referenceLinesFor(health?.parameters.humidityPercent),
+          },
+        ];
 
   return (
     <div className="mx-auto max-w-3xl">
@@ -75,7 +163,7 @@ function DeviceDetailPage() {
         <div className="mb-1.5 text-xs font-medium tracking-wide text-muted-foreground uppercase">
           {device.name ?? device.id} · {formatDeviceKind(device.kind)}
         </div>
-        <h1 className="max-w-lg text-[32px] leading-tight font-black tracking-tight text-foreground">{statusHeadline(device)}</h1>
+        <h1 className="max-w-lg text-[32px] leading-tight font-black tracking-tight text-foreground">{statusHeadline(device, health)}</h1>
         <p className="mt-3.5 max-w-md text-base text-muted-foreground">{statusDetail(device)}</p>
         {canWater && (
           <Button variant="accent" size="lg" className="mt-5.5 h-11" onClick={() => setConfirmOpen(true)}>
@@ -83,6 +171,51 @@ function DeviceDetailPage() {
           </Button>
         )}
       </div>
+
+      {supportsSpeciesProfile && (
+        <div className="my-7 rounded-lg border border-border-subtle p-4">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <div className="text-sm font-bold text-foreground">Espèce</div>
+              <div className="text-sm text-muted-foreground">
+                {device.plantProfile ? device.plantProfile.name : 'Aucune espèce assignée — les alertes de santé sont désactivées'}
+              </div>
+            </div>
+            <Button variant="outline" size="sm" onClick={() => setSpeciesOpen(true)}>
+              {device.plantProfile ? 'Changer' : 'Assigner une espèce'}
+            </Button>
+          </div>
+
+          {health && health.status !== 'no_profile' && (
+            <Badge
+              className="mt-3"
+              variant={health.status === 'warning' ? 'destructive' : health.status === 'warming_up' ? 'outline' : 'success'}
+            >
+              {health.status === 'warning' ? 'Attention' : health.status === 'warming_up' ? "Période d'observation" : 'Tout va bien'}
+            </Badge>
+          )}
+
+          <button
+            type="button"
+            onClick={() => setExplainOpen((open) => !open)}
+            className="mt-3 inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+          >
+            <Info size={12} />
+            Comment ce statut est calculé ?
+          </button>
+          {explainOpen && (
+            <p className="mt-2 text-xs text-muted-foreground">
+              StroyPlant compare les mesures de ce capteur aux besoins connus de l'espèce assignée. Juste après avoir assigné une espèce, le
+              badge affiche « période d'observation » le temps d'accumuler quelques jours de mesures — ensuite, une alerte n'apparaît que si
+              une valeur sort durablement de la plage attendue pour cette plante. Sans espèce assignée, aucun jugement n'est porté.
+            </p>
+          )}
+        </div>
+      )}
+
+      {supportsSpeciesProfile && (
+        <SpeciesPickerDialog open={speciesOpen} onOpenChange={setSpeciesOpen} deviceId={deviceId} currentProfile={device.plantProfile} />
+      )}
 
       {canWater && (
         <div className="my-7">
@@ -132,7 +265,18 @@ function DeviceDetailPage() {
               {reading && device.kind === 'PARROT_POT' && (
                 <>
                   {reading.soilMoisturePercent != null && (
-                    <SensorGauge label="Humidité du sol" value={reading.soilMoisturePercent} tone="primary" icon={<Droplets size={16} />} />
+                    <SensorGauge
+                      label="Humidité du sol"
+                      value={reading.soilMoisturePercent}
+                      tone={toneFor(health?.parameters.soilMoisturePercent, 'primary')}
+                      icon={<Droplets size={16} />}
+                      hint={[
+                        rangeHint(health?.parameters.soilMoisturePercent, '%'),
+                        trendParameterKey === 'soilMoisturePercent' && trendHint,
+                      ]
+                        .filter(Boolean)
+                        .join(' · ')}
+                    />
                   )}
                   {reading.temperatureC != null && (
                     <SensorGauge
@@ -140,19 +284,24 @@ function DeviceDetailPage() {
                       value={reading.temperatureC}
                       max={40}
                       unit="°"
-                      tone="info"
+                      tone={toneFor(health?.parameters.temperatureC, 'info')}
                       icon={<Thermometer size={16} />}
+                      hint={rangeHint(health?.parameters.temperatureC, '°')}
                     />
                   )}
                   {reading.waterTankLevelPercent != null && (
                     <SensorGauge label="Réservoir" value={reading.waterTankLevelPercent} tone="accent" icon={<Droplets size={16} />} />
                   )}
                   {reading.luminosity != null && (
-                    <div className="flex w-28 flex-col items-center justify-center gap-2 text-center">
-                      <Sun size={20} className="text-muted-foreground" />
-                      <span className="text-sm font-bold text-foreground">{Math.round(reading.luminosity)}</span>
-                      <span className="text-xs text-muted-foreground">Luminosité (unité non confirmée)</span>
-                    </div>
+                    <SensorGauge
+                      label="Luminosité (DLI)"
+                      value={reading.luminosity}
+                      max={30}
+                      unit=" mol/m²/j"
+                      tone={toneFor(health?.parameters.luminosity, 'accent')}
+                      icon={<Sun size={16} />}
+                      hint={rangeHint(health?.parameters.luminosity, ' mol/m²/j', 1000)}
+                    />
                   )}
                 </>
               )}
@@ -164,12 +313,21 @@ function DeviceDetailPage() {
                       value={reading.temperatureC}
                       max={40}
                       unit="°"
-                      tone="info"
+                      tone={toneFor(health?.parameters.temperatureC, 'info')}
                       icon={<Thermometer size={16} />}
+                      hint={rangeHint(health?.parameters.temperatureC, '°')}
                     />
                   )}
                   {reading.humidityPercent != null && (
-                    <SensorGauge label="Humidité" value={reading.humidityPercent} tone="primary" icon={<Droplets size={16} />} />
+                    <SensorGauge
+                      label="Humidité"
+                      value={reading.humidityPercent}
+                      tone={toneFor(health?.parameters.humidityPercent, 'primary')}
+                      icon={<Droplets size={16} />}
+                      hint={[rangeHint(health?.parameters.humidityPercent, '%'), trendParameterKey === 'humidityPercent' && trendHint]
+                        .filter(Boolean)
+                        .join(' · ')}
+                    />
                   )}
                   {reading.batteryPercent != null && (
                     <SensorGauge label="Batterie" value={reading.batteryPercent} tone="accent" icon={<BatteryMedium size={16} />} />
@@ -185,18 +343,21 @@ function DeviceDetailPage() {
                   <TabsTrigger value="7j">7 jours</TabsTrigger>
                   <TabsTrigger value="30j">30 jours</TabsTrigger>
                 </TabsList>
-                <TabsContent value={period}>
+                <TabsContent value={period} className="flex flex-col gap-6">
                   {history && history.length > 0 ? (
-                    <HistoryChart
-                      data={history
-                        .map((point) => ({
-                          timestamp: point.timestamp,
-                          value: (device.kind === 'PARROT_POT' ? point.soilMoisturePercent : point.humidityPercent) ?? Number.NaN,
-                        }))
-                        .filter((point) => !Number.isNaN(point.value))}
-                      label={device.kind === 'PARROT_POT' ? 'Humidité du sol' : 'Humidité'}
-                      unit="%"
-                    />
+                    charts.map((chart) => (
+                      <div key={chart.key}>
+                        <div className="mb-1 text-xs font-medium text-muted-foreground">{chart.label}</div>
+                        <HistoryChart
+                          data={history
+                            .map((point) => ({ timestamp: point.timestamp, value: chart.getValue(point) ?? Number.NaN }))
+                            .filter((point) => !Number.isNaN(point.value))}
+                          label={chart.label}
+                          unit={chart.unit}
+                          referenceLines={chart.referenceLines}
+                        />
+                      </div>
+                    ))
                   ) : (
                     <p className="rounded-md bg-muted py-8 text-center text-sm text-muted-foreground">
                       Aucun historique pour cette période.
@@ -221,7 +382,7 @@ function DeviceDetailPage() {
             <DialogClose asChild>
               <Button variant="outline">Annuler</Button>
             </DialogClose>
-            <Button variant="accent" disabled={waterMutation.isPending} onClick={() => waterMutation.mutate()}>
+            <Button variant="accent" disabled={waterMutation.isPending} onClick={() => waterMutation.mutate({ deviceId })}>
               {waterMutation.isPending ? 'Arrosage…' : 'Arroser maintenant'}
             </Button>
           </DialogFooter>

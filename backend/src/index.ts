@@ -1,5 +1,6 @@
 import { buildServer } from './api/server.js';
-import { broadcast } from './api/ws.js';
+import { emitReading } from './api/trpc/readingsEmitter.js';
+import { serializeReading } from './api/trpc/serialize.js';
 import { ConnectionQueue } from './ble/connectionQueue.js';
 import { startScanner } from './ble/scanner.js';
 import { prisma } from './db/client.js';
@@ -11,7 +12,7 @@ async function main() {
   const provider = createDeviceProvider();
   const connectionQueue = new ConnectionQueue();
 
-  log({ direction: 'INFO', label: `Démarrage StroyPlant backend — provider=${provider.name}`, result: 'OK' });
+  log({ direction: 'INFO', label: `Starting StroyPlant backend — provider=${provider.name}`, result: 'OK' });
 
   startScanner(
     provider,
@@ -31,6 +32,8 @@ async function main() {
                 temperatureC: reading.data.temperatureC,
                 luminosity: reading.data.luminosity,
                 waterTankLevelPercent: reading.data.waterTankLevelPercent,
+                soilConductivityEcb: reading.data.soilConductivityEcb,
+                soilConductivityEcPorous: reading.data.soilConductivityEcPorous,
               }
             : {
                 temperatureC: reading.data.temperatureC,
@@ -39,7 +42,7 @@ async function main() {
               };
 
         const created = await prisma.reading.create({ data: { deviceId, ...data } });
-        broadcast({ type: 'reading', deviceId, kind, reading: created });
+        emitReading({ deviceId, kind, reading: serializeReading(created) });
       },
     },
     connectionQueue,
@@ -48,7 +51,7 @@ async function main() {
 
   const app = await buildServer(provider, connectionQueue);
   await app.listen({ port: env.port, host: '0.0.0.0' });
-  log({ direction: 'INFO', label: `API à l'écoute sur le port ${env.port}`, result: 'OK' });
+  log({ direction: 'INFO', label: `API listening on port ${env.port}`, result: 'OK' });
 }
 
 main().catch((error) => {

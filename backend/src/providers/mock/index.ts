@@ -1,13 +1,13 @@
 import { log } from '../../logger.js';
 import type { DeviceProvider, DiscoveredDevice, SensorReading } from '../types.js';
 
-// Simule des scénarios utiles, pas juste du bruit aléatoire plat (docs/STROYPLANT_SPEC.md section 6) :
-// - MOCK-POT-NORMAL : pot sain, réservoir plein, humidité stable — cas nominal.
-// - MOCK-POT-DECLINE : humidité qui descend progressivement (pour tester une alerte de santé plus
-//   tard) ET réservoir vide dès le départ (pour tester la gestion d'erreur d'un arrosage qui échoue
-//   — le scénario réaliste où le pot qui a le plus besoin d'eau ne peut justement plus en donner).
-// - MOCK-XIAOMI-01 : capteur ambiant stable (température/humidité), même modèle de connexion GATT
-//   que le Parrot Pot (voir correction section 3 de la spec) — pas d'action déclenchable dessus.
+// Simulates useful scenarios, not just flat random noise (docs/STROYPLANT_SPEC.md section 6):
+// - MOCK-POT-NORMAL: healthy pot, full reservoir, stable moisture — nominal case.
+// - MOCK-POT-DECLINE: moisture progressively dropping (to test a health alert later) AND an
+//   empty reservoir from the start (to test error handling for a watering that fails
+//   — the realistic scenario where the pot that most needs water precisely can't be given any).
+// - MOCK-XIAOMI-01: stable ambient sensor (temperature/humidity), same GATT connection model
+//   as the Parrot Pot (see spec section 3 correction) — no triggerable action on it.
 
 interface MockPotState {
   id: string;
@@ -16,6 +16,8 @@ interface MockPotState {
   temperatureC: number;
   luminosity: number;
   waterTankLevelPercent: number;
+  soilConductivityEcb: number;
+  soilConductivityEcPorous: number;
   declinePerMinute: number;
   lastUpdate: number;
 }
@@ -39,6 +41,12 @@ function createInitialPots(): MockPotState[] {
       temperatureC: 21,
       luminosity: 450,
       waterTankLevelPercent: 90,
+      // Synthetic values (no real data collected) — Ec porous > Ecb, consistent with the
+      // derivation that removes the soil/air diluting effect (docs/HEALTH_ENGINE.md), used for
+      // scoring. Magnitude aligned with the typical "Soil conductivity" CSV range (hundreds-thousands
+      // µS/cm), to be corrected if real values observed on a real device turn out different.
+      soilConductivityEcb: 600,
+      soilConductivityEcPorous: 900,
       declinePerMinute: 0.05,
       lastUpdate: now,
     },
@@ -48,8 +56,10 @@ function createInitialPots(): MockPotState[] {
       soilMoisturePercent: 32,
       temperatureC: 22,
       luminosity: 300,
-      waterTankLevelPercent: 0, // réservoir vide dès le départ — tout triggerAction('water') doit échouer
-      declinePerMinute: 1.2, // descend nettement plus vite que MOCK-POT-NORMAL
+      waterTankLevelPercent: 0, // empty reservoir from the start — any triggerAction('water') must fail
+      soilConductivityEcb: 550,
+      soilConductivityEcPorous: 850,
+      declinePerMinute: 1.2, // drops noticeably faster than MOCK-POT-NORMAL
       lastUpdate: now,
     },
   ];
@@ -67,6 +77,8 @@ function applyPotDecay(state: MockPotState): void {
   state.soilMoisturePercent = Math.max(0, state.soilMoisturePercent - state.declinePerMinute * elapsedMinutes);
   state.temperatureC += (Math.random() - 0.5) * 0.3;
   state.luminosity = Math.max(0, state.luminosity + (Math.random() - 0.5) * 20);
+  state.soilConductivityEcb = Math.max(0, state.soilConductivityEcb + (Math.random() - 0.5) * 10);
+  state.soilConductivityEcPorous = Math.max(0, state.soilConductivityEcPorous + (Math.random() - 0.5) * 15);
   state.lastUpdate = Date.now();
 }
 
@@ -143,12 +155,14 @@ export function createMockProvider(): DeviceProvider {
           temperatureC: pot.temperatureC,
           luminosity: pot.luminosity,
           waterTankLevelPercent: pot.waterTankLevelPercent,
+          soilConductivityEcb: pot.soilConductivityEcb,
+          soilConductivityEcPorous: pot.soilConductivityEcPorous,
         },
       };
     },
 
     async triggerAction(deviceId: string, action): Promise<void> {
-      if (action !== 'water') throw new Error(`Action non supportée: ${action}`);
+      if (action !== 'water') throw new Error(`Unsupported action: ${action}`);
       const pot = pots.get(deviceId);
       if (!pot) throw new Error(`Mock device ${deviceId} inconnu ou sans actionneur (Xiaomi ne s'arrose pas)`);
       applyPotDecay(pot);
@@ -159,9 +173,9 @@ export function createMockProvider(): DeviceProvider {
           label: 'Watering trigger (mock)',
           deviceId,
           result: 'ERROR',
-          detail: 'Réservoir vide — arrosage impossible',
+          detail: 'Reservoir empty — watering impossible',
         });
-        throw new Error('Réservoir vide — arrosage impossible');
+        throw new Error('Reservoir empty — watering impossible');
       }
 
       pot.waterTankLevelPercent = Math.max(0, pot.waterTankLevelPercent - 15);

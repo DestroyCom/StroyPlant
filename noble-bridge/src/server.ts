@@ -12,13 +12,13 @@ await app.register(websocketPlugin);
 
 app.get('/health', async () => ({ ok: true }));
 
-// Flux continu de découverte — le backend s'y connecte pour construire/mettre à jour sa liste de
-// devices. Un seul scan noble actif à la fois sur ce process (limite matérielle d'un adaptateur BLE).
+// Continuous discovery stream — the backend connects to it to build/update its device list.
+// Only one noble scan active at a time on this process (hardware limit of a single BLE adapter).
 app.get('/scan-stream', { websocket: true }, (socket) => {
   const controller = new AbortController();
-  scanContinuous((id, kind, name, rssi) => {
+  scanContinuous((id, kind, name, rssi, advertisementPayloadHex) => {
     if (socket.readyState === socket.OPEN) {
-      socket.send(JSON.stringify({ id, kind, name, rssi }));
+      socket.send(JSON.stringify({ id, kind, name, rssi, advertisementPayloadHex }));
     }
   }, controller.signal).catch((error) => {
     log({
@@ -35,8 +35,8 @@ app.get('/scan-stream', { websocket: true }, (socket) => {
 app.post<{ Params: { id: string } }>('/devices/:id/sensors', async (request, reply) => {
   const { id } = request.params;
   try {
-    // L'id logique encode le type de device (voir identifyDevice() dans ble-client.ts) — pas besoin
-    // d'un paramètre séparé, contrairement au provider node-ble qui reçoit un simple MAC.
+    // The logical id encodes the device type (see identifyDevice() in ble-client.ts) — no need for
+    // a separate parameter, unlike the node-ble provider which receives a plain MAC.
     const reading = id.startsWith('XIAOMI-') ? await readXiaomiSensors(id) : await readParrotSensors(id);
     return reading;
   } catch (error) {

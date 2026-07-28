@@ -1,8 +1,8 @@
 import { CircleCheckIcon, InfoIcon, Loader2Icon, OctagonXIcon, TriangleAlertIcon } from 'lucide-react';
 import { Toaster as Sonner, type ToasterProps } from 'sonner';
 
-// Pas de next-themes : StroyPlant n'a qu'un seul thème (fond papier chaud), voir readme du design
-// system — aucune bascule dark mode n'a été demandée ou conçue.
+// No next-themes: StroyPlant only has a single theme (warm paper background), see the design
+// system readme — no dark mode toggle has been requested or designed.
 const Toaster = ({ ...props }: ToasterProps) => {
   return (
     <Sonner
