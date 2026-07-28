@@ -1,7 +1,7 @@
 // Parrot manufacturer data in the advertisement — see docs/STROYPLANT_SPEC.md section 7.1 for the
 // ongoing correlation protocol (not executed yet, requires physical access to the devices).
 //
-// Confirmed by a real capture on the the production server's 2 Parrot Pots (2026-07-28): Bluetooth SIG Company ID
+// Confirmed by a real capture on the production server's 2 Parrot Pots (2026-07-28): Bluetooth SIG Company ID
 // Parrot SA = 0x0043, 3-byte payload (NOT 1 as the official PDF's "flags" table initially
 // suggested — that table is scoped to firmwares < 1.1, the Parrot Pot VE0.29.1 is probably not
 // covered). Example observed: `01 23 03` / `01 23 23` — first 2 bytes identical between devices

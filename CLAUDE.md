@@ -5,8 +5,8 @@ Co-Authored-By, always ask when in doubt, act as a mentor, get to the point quic
 
 ## What, for whom
 
-Self-hosted service (replacing WatchFlower) that runs continuously on a Linux server (the production server,
-Debian): BLE scanning of plant sensors, history, health scoring per species profile, automatic
+Self-hosted service (replacing WatchFlower) that runs continuously on a Linux server (Debian):
+BLE scanning of plant sensors, history, health scoring per species profile, automatic
 watering (Parrot Pot), Home Assistant integration (MQTT), MCP server for AI agents. Personal use,
 single admin user. DestCom (fullstack freelancer, ~3.5 years of experience, not a BLE/hardware
 expert — explain non-trivial choices).
@@ -27,7 +27,7 @@ health scoring engine (Batch 4), see `docs/HEALTH_ENGINE.md`.
 - TypeScript/JavaScript everywhere, no Python.
 - Never test the real BLE layer inside the Docker container on Mac (impossible anyway — Docker
   Desktop macOS has no Bluetooth passthrough) — use `mock` or `noble-bridge` in dev, `node-ble`
-  only on the the production server (spec section 6).
+  only on the production server (spec section 6).
 - Never silently swallow a BLE error (identified and documented WatchFlower bug, spec section
   7.1) — every write operation (especially `trigger_watering`) must be explicitly confirmed or
   fail explicitly, never fire-and-forget.
@@ -35,19 +35,19 @@ health scoring engine (Batch 4), see `docs/HEALTH_ENGINE.md`.
   rather than guessing. Concrete precedents where guessing would have been wrong:
   - The Xiaomi LYWSD03MMC was assumed to be pvvx (cleartext passive advertisement) — in reality
     it's stock firmware, MiBeacon-encrypted advertisement. Resolved via real BLE capture
-    (`btmon`) on the the production server, not assumption.
+    (`btmon`) on the production server, not assumption.
   - WatchFlower (and therefore us) reads the LYWSD03MMC via a GATT connection, not passively as
     the spec initially assumed — found by reading WatchFlower's actual source code, not guessed.
 - Always validate empirically on real hardware when possible rather than assuming a
-  format/behavior — SSH access to the the production server (`ssh the production server`) + Docker allows scanning/connecting to real
+  format/behavior — SSH access to the production server + Docker allows scanning/connecting to real
   devices with no risk (disposable containers).
 
 ## Real hardware available (for empirical testing)
 
-On the the production server, a working built-in Bluetooth adapter (Intel Wireless-AC 3168, BT 4.2,
+On the production server, a working built-in Bluetooth adapter (Intel Wireless-AC 3168, BT 4.2,
 `10:F0:05:0F:40:4B`) — the TP-Link UB500 Plus dongle recommended by the spec hasn't arrived yet,
 to be revalidated on arrival (different Realtek chipset). Devices detected within range of the
-the production server:
+production server:
 
 - 2x Parrot Pot: `A0:14:3D:CD:A3:D3` and `A0:14:3D:CD:A0:73`
 - Xiaomi LYWSD03MMC: `A4:C1:38:51:3B:54` (+ at least 2 more nearby, probably neighbors':
@@ -55,7 +55,7 @@ the production server:
 
 ## Project status (by batch)
 
-- **Batch 0** ✅ — Docker + Bluetooth validated on the real the production server. Working config: `cap_add:
+- **Batch 0** ✅ — Docker + Bluetooth validated on the real production server. Working config: `cap_add:
   NET_ADMIN, NET_RAW` + `network_mode: host` + mounting `/var/run/dbus/system_bus_socket` (no
   need for `privileged: true`). BlueZ had to be installed manually (`apt install bluez`, not
   present by default on the production server). Full detail in `infra/lot0/CHECKLIST.md`.
@@ -72,7 +72,7 @@ the production server:
   detail page (`SpeciesPickerDialog`), health banner on the dashboard and detail page, gauges with
   tone/expected range, consumer-friendly explanation of the scoring. Tested locally with the mock
   provider (real import, warming_up → warning transition, species assignment/removal), not yet
-  validated by DestCom against real data accumulated on the the production server. See technical detail below.
+  validated by DestCom against real data accumulated on the production server. See technical detail below.
 - **Batch 3 completed (2026-07-28)** — "Add device" and "Settings" screens added, closing out the
   scope deferred since Batch 3b. Scope was clarified with DestCom rather than assumed (both screens
   depend on unimplemented features — Batches 5/7/8 — so a literal implementation of the prototype
@@ -137,15 +137,15 @@ the production server:
     only remaining user action is the **"wet" capture**: triggered right after a normal watering,
     it reads the device's live calibrated soil moisture and writes it as `WET_VWC`.
   - **`DRY_N`/`WET_N` resolved empirically, not guessed**: blocked initially because this Mac
-    wasn't in BLE range of the real pots — DestCom chose to unblock via `node-ble` on the the production server
-    instead (the first real-conditions validation of that provider, previously deferred). A
+    wasn't in BLE range of the real pots — DestCom chose to unblock via `node-ble` on the production
+    server instead (the first real-conditions validation of that provider, previously deferred). A
     read-only capture on `PARROT-A073` found `DRY_N=WET_N=0` with factory-default
     `DRY_VWC=17.5%`/`WET_VWC=22.5%`, and the device's own `CONFIG_ID` matched exactly what
     `computePlantDrConfigId()` computes from those values — confirming both the XOR checksum
     formula (`backend/src/ble/parrot/plantDr.ts`) and that VWC is stored as percent×10. Both
     calibration points are written with `n=0`, an evidenced default (what the device already ships
-    with), not an assumption. The the production server-side disposable container (and its root-owned `node_modules`,
-    cleaned up via a second throwaway container rather than `sudo`) left no residue.
+    with), not an assumption. The disposable container on the production server (and its root-owned
+    `node_modules`, cleaned up via a second throwaway container rather than `sudo`) left no residue.
   - **`ALGORITHM_STATUS` (`39e1F912`) is deliberately NOT written by this batch** — only value `0`
     is confirmed in the decompiled code, values 1-6 are unconfirmed. DestCom asked for an empirical
     enable test on real hardware, but that needs sustained observation over time (does the pot
@@ -267,8 +267,8 @@ the production server:
   Xiaomi) were detected but not always read on the first try ("not found on scan" — noble-bridge's
   scan window closes before the device's next BLE advertisement; the retry on the next poll (~5
   min) resolves this in practice). One-off validation, not an automated regression test.
-- **Not done / deferred**: validating `node-ble` under real conditions on the the production server (Docker build +
-  full deployment) — deliberately postponed by DestCom.
+- **Not done / deferred**: validating `node-ble` under real conditions on the production server
+  (Docker build + full deployment) — deliberately postponed by DestCom.
 - **Migrated to tRPC** ✅ (2026-07-28) — the hand-written REST routes (`api/routes/devices.ts`,
   `.../health.ts`) and the raw WebSocket pub/sub (`api/ws.ts`) were replaced by a typed tRPC router
   (`src/api/trpc/`), shared end-to-end with the frontend via a type-only cross-package import (no
@@ -303,7 +303,7 @@ frontend/        Vite + React SPA + TanStack Router/Query + Tailwind v4 + shadcn
                    use-live-readings (readings.onReading subscription)
 noble-bridge/    Native macOS process (outside Docker), exposes the Mac's Bluetooth over HTTP/WS —
                  used by the backend's `noble-bridge` provider for dev without a Linux dongle
-infra/lot0/      Docker+Bluetooth setup scripts/checklist on the the production server
+infra/lot0/      Docker+Bluetooth setup scripts/checklist on the production server
 docs/            Full spec, Parrot Pot BLE reverse-engineering docs, frontend design import
 ```
 
@@ -340,7 +340,7 @@ docs/            Full spec, Parrot Pot BLE reverse-engineering docs, frontend de
 - **GATT retry pattern** (`src/ble/parrot/retry.ts`): 3 attempts, 18s timeout, 500ms backoff on
   GATT_ERROR≈133, adapter restart on the 2nd consecutive occurrence. "133" detection is a
   heuristic on error messages — **best-effort, BlueZ has no 1:1 equivalent of the
-  Android/Bluedroid code**, to be refined empirically on the the production server. On `noble-bridge`/macOS,
+  Android/Bluedroid code**, to be refined empirically on the production server. On `noble-bridge`/macOS,
   CoreBluetooth swallows the real code: any connection failure is treated as a 133 (no automatic
   restart of the Mac's Bluetooth, that would take down the whole system — just a log recommending
   manual action).
@@ -354,7 +354,7 @@ docs/            Full spec, Parrot Pot BLE reverse-engineering docs, frontend de
   `Reading.soilConductivityEcb`/`soilConductivityEcPorous`) — never used by the official app.
   `soilConductivityEcPorous` is wired into the Health Engine (see `docs/HEALTH_ENGINE.md` for the
   reasoning and the limitation: mapping unconfirmed on real data). **Event-driven advertisement
-  flags: Parrot company ID (`0x0043`) confirmed via real capture on both the production server Parrot Pots
+  flags: Parrot company ID (`0x0043`) confirmed via real capture on both production-server Parrot Pots
   (2026-07-28), but the payload is 3 bytes (not 1 as assumed) and their exact meaning isn't
   determined** — an active correlation protocol is defined but not executed (requires physical
   access to the pots), see `docs/STROYPLANT_SPEC.md` section 7.1 for the full detail and the
@@ -476,7 +476,7 @@ docs/            Full spec, Parrot Pot BLE reverse-engineering docs, frontend de
 - Prisma `DATABASE_URL` is relative to `prisma/schema.prisma`, not the cwd (see above).
 - Xiaomi LYWSD03MMC: GATT is mandatory, no passive reading possible on stock firmware (see above).
 - `noble-bridge` (macOS) never exposes the real MAC (see above).
-- The GATT_ERROR=133 heuristic on `node-ble`/BlueZ is best-effort, to be refined on the the production server.
+- The GATT_ERROR=133 heuristic on `node-ble`/BlueZ is best-effort, to be refined on the production server.
 - `BETTER_AUTH_SECRET` runs on an insecure dev fallback if absent from `.env` (just a startup
   warning) — generate a real value (`openssl rand -base64 32`) before any real deployment.
 - BetterAuth rejects the login in dev with "Invalid origin" if `trustedOrigins` doesn't include
@@ -495,8 +495,8 @@ docs/            Full spec, Parrot Pot BLE reverse-engineering docs, frontend de
 
 ## Infra access
 
-- the production server reachable via `ssh the production server` (key already configured, user `[user]`). `sudo` there prompts for an
-  interactive password (no NOPASSWD) — for any command requiring root on the the production server, ask DestCom
-  rather than trying to work around it.
-- Docker on the the production server doesn't require `sudo` for the `[user]` user — `docker run`/`docker compose`
-  work directly over SSH for empirical testing (disposable containers recommended).
+- The production server is reachable via a pre-configured SSH key/alias. `sudo` there prompts for
+  an interactive password (no NOPASSWD) — for any command requiring root on the production server,
+  ask DestCom rather than trying to work around it.
+- Docker on the production server doesn't require `sudo` for the regular user — `docker run`/
+  `docker compose` work directly over SSH for empirical testing (disposable containers recommended).

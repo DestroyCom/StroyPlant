@@ -13,7 +13,7 @@ ambiguity, ask me directly rather than choosing on my behalf and continuing.
 
 Start with Batch 0. Before writing a single line of code for this batch, ask me the
 question indicated in section 6: whether I want you to work over a direct SSH connection to
-my the production server server for this batch, or locally on my Mac with manual back-and-forth testing.
+my production server for this batch, or locally on my Mac with manual back-and-forth testing.
 
 Do not move on to the next batch without explicit confirmation from me that the current
 batch works as expected.

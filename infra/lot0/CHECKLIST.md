@@ -1,7 +1,7 @@
-# Batch 0 — Docker + Bluetooth validation checklist on the the production server
+# Batch 0 — Docker + Bluetooth validation checklist on the production server
 
 > Initial context: the TP-Link UB500 Plus dongle had not arrived yet. While checking
-> the the production server, we discovered an already functional **integrated** Bluetooth adapter (Intel
+> the production server, we discovered an already functional **integrated** Bluetooth adapter (Intel
 > Wireless-AC 3168, Bluetooth 4.2, internal USB) — decision made with DestCom (2026-07-27)
 > to validate Batch 0 with this adapter right away, the TP-Link will come as a
 > replacement/complement once it arrives (revalidation required, different chipset —
@@ -9,12 +9,12 @@
 
 ## Status: Batch 0 validated (2026-07-27)
 
-Executed via direct SSH (`ssh the production server`) on the real the production server, full results below.
+Executed via a direct SSH connection to the real production server, full results below.
 
 ### Step A — host
 
 - Native Docker Engine confirmed: version 29.6.1, Debian 12 (bookworm), `cgroupfs` cgroup driver
-- **BlueZ was not installed by default** (the production server = NAS-oriented distro, no base
+- **BlueZ was not installed by default** (a NAS-oriented distro, no base
   desktop/Bluetooth packages) → installed manually by DestCom (`apt-get install -y bluez`
   + `systemctl enable --now bluetooth`)
 - Once installed: `bluetooth.service` active, `bluetoothctl: 5.66`
@@ -66,7 +66,7 @@ re-verification:
 
 ## 1. Preparation
 
-Copy this `infra/lot0/` folder to the the production server (scp, rsync, or clone of the repo once it exists).
+Copy this `infra/lot0/` folder to the production server (scp, rsync, or clone of the repo once it exists).
 
 ## 2. Step A — host checks (outside Docker)
 
@@ -110,7 +110,7 @@ It tries to:
 
 ## 4. What remains blocked without the dongle (to redo once received)
 
-Once the dongle is plugged into the the production server, Batch 0 will need to be fully revalidated:
+Once the dongle is plugged into the production server, Batch 0 will need to be fully revalidated:
 - `dmesg | grep -i -E "usb|blue"` right after plugging it in — confirm that the kernel recognizes
   the Realtek RTL8761B chipset with no missing firmware error
 - `hciconfig -a` on the host — the adapter must appear with `UP RUNNING` status

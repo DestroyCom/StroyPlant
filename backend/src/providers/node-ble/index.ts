@@ -79,7 +79,7 @@ const RSSI_MIN = -90;
 // docs/PARROT_BLE_DEEP_DIVE.md section 5: these are Android codes, not a low-level standard). This
 // heuristic therefore remains best-effort on the D-Bus error messages closest
 // functionally (generic connection failure post-disconnection) — TO BE REFINED EMPIRICALLY on
-// the the production server under real conditions, as explicitly requested by the spec for this retry pattern.
+// the production server under real conditions, as explicitly requested by the spec for this retry pattern.
 function isGattError133(error: unknown): boolean {
   const msg = (error instanceof Error ? error.message : String(error)).toLowerCase();
   return (

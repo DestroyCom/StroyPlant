@@ -7,7 +7,7 @@
 
 ## 1. Context & goal
 
-Replace WatchFlower (Qt desktop/mobile app, not suited to 24/7 server use) with a **self-hosted** service running continuously on an the production server (Debian) server, capable of:
+Replace WatchFlower (Qt desktop/mobile app, not suited to 24/7 server use) with a **self-hosted** service running continuously on a Debian production server, capable of:
 
 - Continuously scanning BLE plant sensors
 - Saving reading history
@@ -49,7 +49,7 @@ Important architectural point: the two P0 devices operate in fundamentally diffe
 ## 4. System architecture (production target)
 
 ```
-the production server (Debian 12, USB BLE dongle — TP-Link UB500 Plus, Bluetooth 5.3, Realtek chipset)
+Production server (Debian 12, USB BLE dongle — TP-Link UB500 Plus, Bluetooth 5.3, Realtek chipset)
  └── Docker (native Linux Docker Engine)
       ├── backend (Node.js/TypeScript)
       │    - BLE layer (node-ble via BlueZ/D-Bus in prod)
@@ -66,7 +66,7 @@ the production server (Debian 12, USB BLE dongle — TP-Link UB500 Plus, Bluetoo
 ## 5. Docker & Bluetooth constraints — to be strictly followed
 
 - The backend container needs real, non-virtualizable hardware access: either `--privileged`, or `NET_ADMIN` + `NET_RAW` capabilities + `network_mode: host` + mounting `/var/run/dbus/system_bus_socket`.
-- **Only works on native Linux Docker Engine** (the production server, other Debian/Ubuntu, Raspberry Pi under Linux). The recommended dongle (TP-Link UB500 Plus, Realtek RTL8761B chipset) should work with any dongle recognized by the Linux kernel — BlueZ absorbs chipset differences.
+- **Only works on native Linux Docker Engine** (Debian/Ubuntu, Raspberry Pi under Linux). The recommended dongle (TP-Link UB500 Plus, Realtek RTL8761B chipset) should work with any dongle recognized by the Linux kernel — BlueZ absorbs chipset differences.
 - **Does NOT work on Docker Desktop macOS/Windows.** Confirmed and non-negotiable: Docker Desktop runs in a hidden Linux VM with no reliable native Bluetooth passthrough. The only workaround (USB/IP) is slow, heavy, and not suited to real use — do not try to set it up, it is not the approach chosen (see section 6 for the Mac dev strategy).
 - On Coolify (already used by DestCom elsewhere), these settings (`privileged`, `network_mode: host`, mounts) will require manual editing of the generated docker-compose, not a "standard" deployment via the UI.
 
@@ -78,14 +78,14 @@ DestCom develops on a **MacBook Air M3 (macOS)**, but the production target is *
 | -------------- | ------------------------------------------------------------------------------------------------------------------ | ------------------------------------ | ---------------------------------------------------------------------- |
 | `mock`         | In the container, Mac dev                                                                                          | None (simulated data)                | Pure business logic: Health Engine, cron, API, frontend, auth          |
 | `noble-bridge` | A small **native macOS** Node process (outside Docker) exposing a local HTTP API, called by the dockerized backend | `@abandonware/noble` (CoreBluetooth) | Real BLE protocol against real hardware — but not the real Linux stack |
-| `node-ble`     | Directly in the container, the production server only                                                                                | `node-ble` (BlueZ/D-Bus)             | The real production stack — the final, incompressible validation       |
+| `node-ble`     | Directly in the container, production server only                                                                  | `node-ble` (BlueZ/D-Bus)             | The real production stack — the final, incompressible validation       |
 
 Notes:
 
 - `mock` must be able to simulate useful scenarios (e.g. humidity progressively dropping to test that an alert triggers, a watering trigger that fails to test error handling), not just flat random values.
 - `noble-bridge` can reuse as-is the logic from the already-developed `parrotpot-poc/` CLI PoC (see section 9) — same UUIDs, same read/write commands, just exposed via a small HTTP API instead of a CLI.
-- The move from `mock`/`noble-bridge` to the real `node-ble` should **never** be considered a given just because the other two pass — these are different libraries (noble vs node-ble), so behavior (timing, GATT error handling, event format) must be revalidated on the the production server with the checklist in section 9.
-- **Before starting Batch 0 (see section 11)**, ask DestCom whether he wants this batch (and the final validation of the `node-ble` provider) done by working directly on the the production server over SSH (real bash access to the target machine, autonomous iteration possible), rather than locally on his Mac with manual test round-trips. Do not assume the answer.
+- The move from `mock`/`noble-bridge` to the real `node-ble` should **never** be considered a given just because the other two pass — these are different libraries (noble vs node-ble), so behavior (timing, GATT error handling, event format) must be revalidated on the production server with the checklist in section 9.
+- **Before starting Batch 0 (see section 11)**, ask DestCom whether he wants this batch (and the final validation of the `node-ble` provider) done by working directly on the production server over SSH (real bash access to the target machine, autonomous iteration possible), rather than locally on his Mac with manual test round-trips. Do not assume the answer.
 
 ## 7. Detailed functional modules
 
@@ -102,7 +102,7 @@ Notes:
   - Continuous scan cycle (not a single attempt): ~10s scan then pause (1 min in normal use, 10s in "aggressive" mode), filtered by advertised service UUID + minimum RSSI (`-90`); a device "seen" remains considered valid for 3 cycles before being declared lost
   - No silent mid-task reconnection: a disconnection during an operation surfaces directly as an error (consistent with our principle of never swallowing an error silently)
 
-**Important nuance between the PoC (macOS/noble) and production (Linux/node-ble)**: the PoC ran into a limitation specific to `@abandonware/noble` on macOS — the native CoreBluetooth binding doesn't expose the real error code (`NSError` swallowed), making it impossible to distinguish a GATT 133 from another failure, and a clean restart of the macOS Bluetooth adapter isn't simple (it would impact the whole Mac's Bluetooth, not just the targeted device) — hence a pragmatic compromise in the PoC (every failure treated as equivalent, log recommending manual action rather than an automated restart). **This limitation is specific to noble/macOS, not to node-ble/BlueZ**: on the the production server in production, `node-ble` talks to BlueZ over D-Bus, which exposes real GATT status codes — the full pattern from the official app (precise 133 detection, 500ms backoff, automatic adapter restart on the 2nd failure) must be fully implemented for Batch 1; do not carry over the PoC's limitation as a production constraint.
+**Important nuance between the PoC (macOS/noble) and production (Linux/node-ble)**: the PoC ran into a limitation specific to `@abandonware/noble` on macOS — the native CoreBluetooth binding doesn't expose the real error code (`NSError` swallowed), making it impossible to distinguish a GATT 133 from another failure, and a clean restart of the macOS Bluetooth adapter isn't simple (it would impact the whole Mac's Bluetooth, not just the targeted device) — hence a pragmatic compromise in the PoC (every failure treated as equivalent, log recommending manual action rather than an automated restart). **This limitation is specific to noble/macOS, not to node-ble/BlueZ**: on the production server, `node-ble` talks to BlueZ over D-Bus, which exposes real GATT status codes — the full pattern from the official app (precise 133 detection, 500ms backoff, automatic adapter restart on the 2nd failure) must be fully implemented for Batch 1; do not carry over the PoC's limitation as a production constraint.
 
 **Official connection strategy vs StroyPlant's need (decision made, not yet implemented)**:
 `docs/PARROT_OFFICIAL_BLE_SPEC.md` confirms that the official Parrot app only connects to the device
@@ -115,7 +115,7 @@ break this data continuity. Decision: **add advertisement flag parsing on top of
 connection as soon as an "unread entries"/"move detected" flag is seen, without replacing the
 periodic cycle) — better responsiveness without losing anything.
 
-**Byte location confirmed by real capture on the the production server's 2 Parrot Pots (2026-07-28)**:
+**Byte location confirmed by real capture on the production server's 2 Parrot Pots (2026-07-28)**:
 Parrot SA's Bluetooth SIG Company ID = `0x0043`, confirmed — both devices do advertise
 manufacturer data under this key. Observed payload (`node-ble.getManufacturerData()['67']`, already
 stripped of the company ID by BlueZ):
@@ -357,7 +357,7 @@ procedure list and the Date-serialization note. Current procedures:
 `@modelcontextprotocol/sdk`): a `/mcp` Streamable HTTP endpoint mounted directly on the same
 always-running Fastify backend — confirmed with DestCom over a separate stdio process, since it
 lets the MCP server reuse the same BLE provider/connectionQueue/MQTT client with no extra process to
-run on the the production server. Each request builds a fresh `McpServer` and a stateless transport
+run on the production server. Each request builds a fresh `McpServer` and a stateless transport
 (`sessionIdGenerator: undefined`, `enableJsonResponse: true`) bound to that request's authenticated
 caller — the 4 tools are simple request/response calls with no server-initiated push, so there's no
 session state worth keeping between calls (the MCP SDK's own documented stateless-deployment
@@ -414,7 +414,7 @@ connection attempt.
 - **TanStack Query** for data fetching/caching (cache updated live by the `readings.onReading` subscription via `queryClient.setQueryData`, not raw WebSocket message handling)
 - **TanStack Router** (not React Router) — ecosystem consistency with Query, loaders that preload into the Query cache, full typing of routes/params. Important: TanStack Router alone does NOT imply TanStack Start (the fullstack framework) — we stay on a simple static SPA, no SSR server.
 - Tailwind CSS + shadcn/ui
-- The build (`dist/`) is served statically directly by the Node backend — no separate nginx/Caddy container, one less process to run on the the production server
+- The build (`dist/`) is served statically directly by the Node backend — no separate nginx/Caddy container, one less process to run on the production server
 - Multi-stage Dockerfile: a Node stage that builds Vite, copied into the backend's final image
 
 ### 7.10 Parrot Pot history — final decision: fallback to live polling only
@@ -573,7 +573,7 @@ divergence.
 ## 10. Collaboration rules
 
 - **When in doubt about a technical point or an ambiguous implementation choice, ask DestCom directly rather than choosing arbitrarily and moving on.** He'd rather be interrupted to clarify than later discover a wrong assumption silently baked into the code.
-- Before Batch 0, explicitly ask whether he wants to work directly over SSH on the the production server for this batch (see section 6, last point) — do not assume.
+- Before Batch 0, explicitly ask whether he wants to work directly over SSH on the production server for this batch (see section 6, last point) — do not assume.
 - Imposed stack: TypeScript/JavaScript everywhere, no Python, consistency with DestCom's existing ecosystem (Next.js usual for other projects, Prisma, shadcn/ui, BetterAuth, Docker/Coolify/Hetzner/Cloudflare).
 - **Package manager: `pnpm` exclusively, never `npm` or `yarn`** — whether for the backend, the frontend, or any auxiliary script/tool of the project (including Dockerfiles: use `pnpm install`, not `npm install`).
 - DestCom is a fullstack freelancer, ~3.5 years of experience, technically comfortable but not a BLE/low-level hardware expert — explain non-trivial choices rather than applying them without context.
@@ -582,7 +582,7 @@ divergence.
 
 | Batch        | Content                                                                                                                                                                                                                                                                           |
 | ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Batch 0**  | Working Docker + Bluetooth setup on the production server (TP-Link UB500 Plus dongle). **Ask first whether working directly over SSH is wanted (section 6).**                                                                                                                                       |
+| **Batch 0**  | Working Docker + Bluetooth setup on the production server (TP-Link UB500 Plus dongle). **Ask first whether working directly over SSH is wanted (section 6).**                                                                                                                    |
 | **Batch 1**  | Xiaomi scanner (passive) + Parrot Pot driver (GATT), with the 3 interchangeable BLE providers (`mock`, `noble-bridge`, `node-ble`) + SQLite/Prisma + minimal API — includes the `39e1fa06` activation prerequisite (section 8) and the retry/reconnection pattern (section 7.1)   |
 | **Batch 2**  | Auth (BetterAuth, credentials only, OIDC hooks ready)                                                                                                                                                                                                                             |
 | **Batch 3**  | Frontend Vite + React + TanStack Query/Router + Tailwind + shadcn/ui (protected by Batch 2's auth)                                                                                                                                                                                |
@@ -592,7 +592,7 @@ divergence.
 | **Batch 7**  | ✅ MQTT client + Home Assistant auto-discovery, see section 7.7. No production Mosquitto/HA instance to validate against yet (follow-up)                                                                                                                                          |
 | **Batch 8**  | ✅ MCP server (tools listed in 7.8), protected by auth. Not yet validated against a real MCP client (follow-up)                                                                                                                                                                  |
 | **Batch 9**  | Create the Docker evironnement, dockerfile, dockercompose prod, dockercompose test, GitHub action to build image on GHCR, and all the other necessay things                                                                                                                       |
-| **Batch 10** | Extension to other devices (Flower Power, Flower Care). Also includes an optional empirical exploration: testing raw EC reading on the Parrot Pot (`39e1fa02`) on the real device via the the production server, with no guarantee of a usable result — the official app doesn't use it (section 8) |
+| **Batch 10** | Extension to other devices (Flower Power, Flower Care). Also includes an optional empirical exploration: testing raw EC reading on the Parrot Pot (`39e1fa02`) on the real device via the production server, with no guarantee of a usable result — the official app doesn't use it (section 8) |
 
 _(The old historical "Batch 2" removed: final decision in section 7.10 — fallback to live polling only, already covered by Batch 1, no dedicated development needed.)_
 
@@ -611,14 +611,14 @@ Each batch must be validated before moving to the next. Do not chain several bat
 - The project only supports **device types for which a driver has been written** — this is not a generic "any BLE sensor" system.
 - Never present the project as "universal" or "ready to use on any device" in user documentation — be explicit about these limits in the README.
 
-## 14. Hosting & reverse proxy (the reverse proxy)
+## 14. Hosting & reverse proxy
 
-DestCom already uses **the reverse proxy** (nginx reverse proxy) on his the production server for other services. Goal: **a single container, a single domain name, a single deploy** — not two separate front/back containers, not two subdomains.
+DestCom already runs an nginx-based reverse proxy on his production server for other services. Goal: **a single container, a single domain name, a single deploy** — not two separate front/back containers, not two subdomains.
 
 - The Node backend (Express/Fastify) serves **everything** from a single process/port:
   - `/api/*` → the tRPC router (`/api/trpc`, both HTTP procedure calls and the WS upgrade for the
     `readings.onReading` subscription — no separate WS path) + the BetterAuth handler (`/api/auth/*`)
   - everything else → static files from the Vite build (`dist/`), with a **mandatory SPA fallback**: any route that is neither `/api/*` nor an existing static asset must return `index.html`, so that TanStack Router handles client-side routing without a 404 on refresh for a route like `/devices/123`.
-- On the the reverse proxy side: a single subdomain, a single `proxy_pass` to `container:port` — no `/api` routing rule to manage at the nginx level, all dispatch logic stays in the Node code.
-- **Point of caution**: explicitly verify that the the reverse proxy config generated for this site properly forwards the WebSocket upgrade headers (`Connection: upgrade`, `Upgrade: websocket`) — without this, the WS appears to connect and then silently drops. Do not assume this is the case by default, check the actually-used config file.
+- On the reverse-proxy side: a single subdomain, a single `proxy_pass` to `container:port` — no `/api` routing rule to manage at the nginx level, all dispatch logic stays in the Node code.
+- **Point of caution**: explicitly verify that the reverse-proxy config generated for this site properly forwards the WebSocket upgrade headers (`Connection: upgrade`, `Upgrade: websocket`) — without this, the WS appears to connect and then silently drops. Do not assume this is the case by default, check the actually-used config file.
 - A single `docker-compose` service for the whole app (the multi-stage Dockerfile from section 7.9 produces a single front+back image).
