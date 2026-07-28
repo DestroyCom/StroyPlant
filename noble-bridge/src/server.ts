@@ -2,7 +2,13 @@ import websocketPlugin from '@fastify/websocket';
 import Fastify from 'fastify';
 import { scanContinuous } from './ble-client.js';
 import { log } from './logger.js';
-import { readParrotSensors, triggerParrotWatering } from './parrot.js';
+import {
+  type PlantDrWriteValues,
+  readParrotPlantDrCalibration,
+  readParrotSensors,
+  triggerParrotWatering,
+  writeParrotPlantDrCalibration,
+} from './parrot.js';
 import { readXiaomiSensors } from './xiaomi.js';
 
 const PORT = Number(process.env.PORT ?? 4100);
@@ -48,6 +54,25 @@ app.post<{ Params: { id: string } }>('/devices/:id/sensors', async (request, rep
 app.post<{ Params: { id: string } }>('/devices/:id/water', async (request, reply) => {
   try {
     await triggerParrotWatering(request.params.id);
+    return { ok: true };
+  } catch (error) {
+    reply.code(502);
+    return { error: error instanceof Error ? error.message : String(error) };
+  }
+});
+
+app.get<{ Params: { id: string } }>('/devices/:id/plant-dr-calibration', async (request, reply) => {
+  try {
+    return await readParrotPlantDrCalibration(request.params.id);
+  } catch (error) {
+    reply.code(502);
+    return { error: error instanceof Error ? error.message : String(error) };
+  }
+});
+
+app.post<{ Params: { id: string }; Body: PlantDrWriteValues }>('/devices/:id/plant-dr-calibration', async (request, reply) => {
+  try {
+    await writeParrotPlantDrCalibration(request.params.id, request.body);
     return { ok: true };
   } catch (error) {
     reply.code(502);

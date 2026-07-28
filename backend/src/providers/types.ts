@@ -1,3 +1,5 @@
+import type { PlantDrCalibration, PlantDrWriteValues } from '../ble/parrot/plantDr.js';
+
 export type DeviceKind = 'PARROT_POT' | 'XIAOMI_LYWSD03MMC';
 
 export interface ParrotPotReading {
@@ -11,6 +13,15 @@ export interface ParrotPotReading {
   // their actual behavior on the Parrot Pot firmware isn't guaranteed).
   soilConductivityEcb?: number;
   soilConductivityEcPorous?: number;
+  // Plant Dr STATUS_FLAGS (Batch 6, docs/STROYPLANT_SPEC.md section 7.11) — firmware-computed
+  // soil/reservoir/probe state. Best-effort like the conductivity fields above (never used by the
+  // official app's live mode, behavior not guaranteed on every firmware revision).
+  isDrySoil?: boolean;
+  isWetSoil?: boolean;
+  isEmptyTank?: boolean;
+  // A reading taken while the probe isn't in the soil doesn't represent a plant state — the Health
+  // Engine excludes it from rolling-baseline calculations (docs/STROYPLANT_SPEC.md section 7.3).
+  isInAir?: boolean;
 }
 
 export interface XiaomiReading {
@@ -54,4 +65,10 @@ export interface DeviceProvider {
   readSensors(deviceId: string, kind: DeviceKind): Promise<SensorReading>;
 
   triggerAction(deviceId: string, action: DeviceAction): Promise<void>;
+
+  // Plant Dr device-side calibration (Batch 6, docs/STROYPLANT_SPEC.md section 7.11), Parrot Pot
+  // only. Providers are "dumb" here — the checksum/encoding logic lives once in
+  // ble/parrot/plantDr.ts, callers pass already-computed write values.
+  readPlantDrCalibration(deviceId: string): Promise<PlantDrCalibration>;
+  writePlantDrCalibration(deviceId: string, values: PlantDrWriteValues): Promise<void>;
 }

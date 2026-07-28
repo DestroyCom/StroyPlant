@@ -18,8 +18,8 @@ export function AppShell({ children }: { children: ReactNode }) {
   }
 
   return (
-    <div className="flex min-h-svh">
-      <aside className="flex w-54 shrink-0 flex-col gap-7 border-r border-sidebar-border bg-sidebar px-4 py-6 text-sidebar-foreground">
+    <div className="flex h-svh overflow-hidden">
+      <aside className="flex w-54 shrink-0 flex-col gap-7 overflow-y-auto border-r border-sidebar-border bg-sidebar px-4 py-6 text-sidebar-foreground">
         <div className="flex items-center gap-2.5 px-2">
           <img src={logo} alt="" className="h-6.5 w-6.5" />
           <span className="text-[17px] font-black tracking-tight">StroyPlant</span>
@@ -69,7 +69,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           Se déconnecter
         </button>
       </aside>
-      <main className="flex-1 bg-background p-10">{children}</main>
+      <main className="flex-1 overflow-y-auto bg-background p-10">{children}</main>
     </div>
   );
 }

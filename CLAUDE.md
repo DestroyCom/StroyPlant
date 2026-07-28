@@ -126,7 +126,51 @@ the production server:
     were leftover placeholders from before the unit was confirmed to be real mol/m²/day DLI (a real
     Parrot Pot capture reads ~0.1) — a healthy mock pot displayed "459 mol/m²/j" against an expected
     "4-6" range. Rescaled to realistic indoor values (~5/~3) in `backend/src/providers/mock/index.ts`.
-- **Next batch**: Batch 6 (Plant Dr device-side calibration).
+- **Batch 6** ✅ (2026-07-28) — Plant Dr device-side calibration (`39e1FD80`), a complementary
+  safety net alongside the Batch 5 scheduler (keeps watering at a minimum if the backend is
+  offline/out of range). Key decisions and findings, all explicitly discussed with DestCom rather
+  than assumed given this is the project's first real GATT *write* to an unconfirmed field:
+  - **Design simplified during implementation**: the originally planned "air" user gesture was
+    dropped. `DRY_VWC` (the firmware's "soil considered dry" threshold) is derived from the
+    assigned species' `soilMoistureMinPercent` (CSV) instead — an "air" (probe out of the soil ≈
+    0%) reading would set an unrealistically extreme threshold, not a sensible per-species one. The
+    only remaining user action is the **"wet" capture**: triggered right after a normal watering,
+    it reads the device's live calibrated soil moisture and writes it as `WET_VWC`.
+  - **`DRY_N`/`WET_N` resolved empirically, not guessed**: blocked initially because this Mac
+    wasn't in BLE range of the real pots — DestCom chose to unblock via `node-ble` on the the production server
+    instead (the first real-conditions validation of that provider, previously deferred). A
+    read-only capture on `PARROT-A073` found `DRY_N=WET_N=0` with factory-default
+    `DRY_VWC=17.5%`/`WET_VWC=22.5%`, and the device's own `CONFIG_ID` matched exactly what
+    `computePlantDrConfigId()` computes from those values — confirming both the XOR checksum
+    formula (`backend/src/ble/parrot/plantDr.ts`) and that VWC is stored as percent×10. Both
+    calibration points are written with `n=0`, an evidenced default (what the device already ships
+    with), not an assumption. The the production server-side disposable container (and its root-owned `node_modules`,
+    cleaned up via a second throwaway container rather than `sudo`) left no residue.
+  - **`ALGORITHM_STATUS` (`39e1F912`) is deliberately NOT written by this batch** — only value `0`
+    is confirmed in the decompiled code, values 1-6 are unconfirmed. DestCom asked for an empirical
+    enable test on real hardware, but that needs sustained observation over time (does the pot
+    actually water itself?), not just an instant read — tracked as a follow-up, not done this turn.
+  - **Not implemented**: the "DRY_VWC automatically refined from the rolling baseline's observed low
+    point over several watering cycles" idea from earlier drafts — would need a recurring rewrite
+    job, and no per-device baseline history exists yet to refine from meaningfully. `DRY_VWC` is
+    written once, at calibration time, and stays fixed until the user re-triggers it.
+  - **`STATUS_FLAGS` (`39e1FD86`) also wired in**: decoded on every poll across all 3 providers,
+    persisted on `Reading` (`isDrySoil`/`isWetSoil`/`isEmptyTank`/`isInAir`). `isInAir` readings are
+    now excluded from the Health Engine's rolling-baseline/scoring entirely (`computeDeviceHealth`)
+    — a probe out of the soil isn't a plant state. The other 3 flags are stored but not yet surfaced
+    further in the dashboard UI.
+  - Providers stay "dumb": the checksum/encoding logic lives once in `ble/parrot/plantDr.ts`
+    (`computePlantDrConfigId`, `buildPlantDrWriteValues`) — `mock`/`noble-bridge`/`node-ble` just
+    write the exact values they're given, in the required order, `CONFIG_ID` last.
+  - New `plantDr` tRPC router (`getCalibration`, `calibrateWet`) — no new Prisma table, the device
+    itself stays the source of truth for its own calibration, read live on demand.
+    `calibrateWet` refuses to write if the live soil moisture isn't above the species' dry
+    threshold (would write an inverted, nonsensical calibration) — validated at the boundary.
+  - Frontend: new `/devices/$deviceId/calibration` page, linked from the device detail page.
+  - Verified against the mock provider via curl (temp admin user, cleaned up after): checksum
+    matches hand-computed XOR, the "no species assigned" guard rejects correctly, and the full
+    read → calibrate → re-read round trip reflects the newly written values.
+- **Next batch**: Batch 7 (MQTT client + Home Assistant auto-discovery).
 - **`noble-bridge` validated with real hardware** ✅ (2026-07-27) — a real Parrot Pot
   (`PARROT-A073`) connected and read end-to-end (scan → connect → activate → read
   humidity/temp/luminosity/reservoir → deactivate → disconnect) via the Mac's Bluetooth, data
@@ -179,7 +223,8 @@ docs/            Full spec, Parrot Pot BLE reverse-engineering docs, frontend de
 - Business models: `Device` (id = uppercase colon-separated MAC, kind, name, lastSeenAt, optional
   `plantProfileId`) — `name = null` means "seen by the scanner, not yet claimed by the user" (Batch
   3's "Add device" screen, see Project status), the dashboard's `devices.list` only returns named
-  devices), `Reading` (all sensor fields for both device types, optional, on a single table),
+  devices), `Reading` (all sensor fields for both device types, optional, on a single table —
+  including Batch 6's `isDrySoil`/`isWetSoil`/`isEmptyTank`/`isInAir` Plant Dr STATUS_FLAGS),
   `WateringEvent` (deviceId, triggerSource MANUAL/CRON, success, errorDetail), `PlantProfile` (Batch
   4, see below), `Schedule` (Batch 5, one optional row per device — deviceId, active,
   allowedStartHour/EndHour, cooldownHours; a missing row isn't "no schedule", it resolves to
@@ -228,7 +273,8 @@ docs/            Full spec, Parrot Pot BLE reverse-engineering docs, frontend de
   on a real device.
 - **tRPC (`src/api/trpc/`)**: `router.ts` combines `devices` (`list`, `listUnnamed`, `rename`,
   `history`, `wateringEvents`, `water`), `health` (`plantProfiles`, `assignPlantProfile`,
-  `deviceHealth`), `schedule` (`get`, `upsert` — Batch 5 auto-watering config, see Project status)
+  `deviceHealth`), `schedule` (`get`, `upsert` — Batch 5 auto-watering config, see Project status),
+  `plantDr` (`getCalibration`, `calibrateWet` — Batch 6 device-side calibration, see Project status)
   and `readings`
   (`onReading`, a subscription) into `appRouter`; its type (`AppRouter`) is the single source of
   truth shared with the frontend. `trpc.ts` defines `publicProcedure`/`protectedProcedure`
@@ -304,12 +350,18 @@ docs/            Full spec, Parrot Pot BLE reverse-engineering docs, frontend de
   history/graph via `recharts`, "Recent waterings" timeline, watering trigger with confirmation for
   Parrot Pots, "Species" section with picker/removal via `SpeciesPickerDialog` and a
   consumer-friendly explanation of the scoring, "Arrosage automatique" section — Batch 5, active
-  toggle + allowed-hours window + cooldown, via `AutoWateringSection`), "Add device" (claims a
-  scanner-discovered, not-yet-named device by giving it a name — see the Project status section for
-  why this differs from the prototype's literal manual-pairing concept), "Settings" (account section
-  functional, auto-watering now links to the per-device page instead of "coming soon", notifications/
-  MCP still shown as disabled "coming soon" cards pending Batches 7/8). **Not done yet**: global
-  "History", "Calibration" — no backing feature yet (Plant Dr calibration is Batch 6).
+  toggle + allowed-hours window + cooldown, via `AutoWateringSection`, and a "Calibration Plant Dr"
+  link — Batch 6, to its own page), "Add device" (claims a scanner-discovered, not-yet-named device
+  by giving it a name — see the Project status section for why this differs from the prototype's
+  literal manual-pairing concept), "Settings" (account section functional, auto-watering now links
+  to the per-device page instead of "coming soon", notifications/MCP still shown as disabled
+  "coming soon" cards pending Batches 7/8), "Calibration" (`/devices/$deviceId/calibration`, Batch
+  6 — shows the device's current Plant Dr dry/wet thresholds live and a "capture wet point" action,
+  gated on a species being assigned). **Not done yet**: global "History".
+- App shell layout (`components/app-shell.tsx`): the sidebar is pinned to the viewport height
+  (`h-svh` + `overflow-hidden` on the root flex row) and only the content `<main>` scrolls
+  (`overflow-y-auto`) — fixed 2026-07-28 after the sidebar was found stretching to the full page
+  height on long content pages instead of staying fixed on screen.
 - Displayed titles/statuses (`src/lib/format.ts`, `statusHeadline`/`statusBandClasses`) prioritize
   verifiable facts (connectivity, reservoir level) then, since Batch 4b, the Health Engine's
   judgment (`healthHeadline`, if a species is assigned to the device) — with no species assigned,

@@ -185,35 +185,47 @@ At launch in prod, the pots will already be in soil with existing plants — **n
 - **Combining both sources**: species ranges (CSV, absolute, generic) act as a coarse guard rail (detecting a totally aberrant value); the per-device rolling baseline (relative, personalized) refines the actual scoring over time, once enough data has accumulated
 - Drift of the rolling baseline itself (e.g. the average gradually shifts with no watering event or seasonal explanation) is a signal in its own right — may indicate a sensor problem (fouling, calcification) rather than a plant problem, to be distinguished in the dashboard
 
-**2-point calibration (Plant Dr service) — secondary option, not an onboarding prerequisite**:
+**Device-side calibration (Plant Dr service) — Batch 6, implemented, secondary option, not an
+onboarding prerequisite**:
 
-Initially planned as 3 points (air / dry / wet). **Reduced to 2 active points requested from
-the user**: an "air" reference (probe out of the soil, or just before first planting) and a
-"wet" reference (right after a normal watering — a gesture the user does anyway).
-The "very dry soil" point is **no longer ever actively requested**: in practice, someone who
-properly takes care of their plants never has truly parched soil on hand, and
-waiting for it to dry out naturally would take days — incompatible with quick onboarding. This
-point instead emerges **organically from the per-device rolling baseline** (above): the
-system observes the low point naturally reached between two real waterings over several cycles,
-and progressively refines this "dry" reference — more relevant than an artificial extreme, since
-what matters is "from what point does THIS specific plant need water given its owner's actual
-rhythm", not a state of total desiccation that ideally should never occur.
+Initially planned as a 2-user-gesture flow ("air" + "wet"). **Simplified further after discussion
+with DestCom during Batch 6 implementation**: the firmware's `DRY_VWC` field (the point below
+which the device-side algorithm considers soil "dry") is populated from the assigned species'
+`soilMoistureMinPercent` (CSV) — not from a user "air" gesture, which would set an unrealistically
+extreme threshold (probe out of the soil ≈ 0%, not a sensible "this plant needs water" line for
+real soil). The "air" step was dropped entirely as a result — there is no longer a separate user
+gesture for it. The only user action is the **"wet" capture**: right after a normal watering (a
+gesture the user does anyway), triggering the calibration reads the device's current calibrated
+soil moisture live and writes it as `WET_VWC`.
 
-This 2-point calibration remains available and useful for **new devices added after
-launch** (pot not yet planted, so a realistic calibration), or if DestCom voluntarily chooses
-to recalibrate an existing pot by temporarily emptying it. Do not block/require it when adding a
-device — offer it as an optional action in the dashboard, with the rolling baseline taking over
-by default for all devices that never go through this step.
+**`DRY_N`/`WET_N` — resolved empirically, not guessed** (2026-07-28, read-only capture on the real
+`PARROT-A073`, see `backend/src/ble/parrot/plantDr.ts`): a real, never-manually-calibrated pot had
+`DRY_N = WET_N = 0` alongside factory-default `DRY_VWC=17.5%`/`WET_VWC=22.5%`, and the device's own
+`CONFIG_ID` matched exactly what `computePlantDrConfigId()` computes from those values — confirming
+both the XOR checksum formula and that VWC fields are stored as percent×10. Since N contributes
+nothing to the checksum when 0, and it's what the device already ships with, both calibration
+points are written with `n=0` — an evidenced default, not an assumption. Whether the real official
+app ever writes a different value for `N` during a live calibration remains unconfirmed, but doesn't
+block this implementation (the checksum only depends on the exact values written, and matches).
 
-**Unresolved technical point, not to be silently guessed**: the Plant Dr firmware still expects
-4 written values (`DRY_N`, `DRY_VWC`, `WET_N`, `WET_VWC`, see section 7.11) with its XOR
-validation checksum — the 2-point UX calibration changes nothing about what the device requires at
-the protocol level, only what's asked of the user. So it still remains to decide what to actually write for
-`DRY_N`/`DRY_VWC` in the absence of a real user "dry" measurement. Likely approach: an
-initial estimate from the species profile's minimum (CSV), automatically rewritten/refined once the
-rolling baseline has observed a real low point over several real watering cycles. **Do not
-implement this mechanism without discussing it with DestCom first** — ask the question directly
-when reaching this implementation point (Batch 6), do not choose a default value on his behalf.
+**Not implemented in Batch 6** (flagged, not silently added): the "automatically rewritten/refined
+once the rolling baseline has observed a real low point over several watering cycles" refinement
+of `DRY_VWC` mentioned in earlier drafts of this section — this would need a recurring job
+re-deriving and rewriting the config over time, and no per-device baseline history exists yet to
+refine from meaningfully this early in the project. `DRY_VWC` is currently written once, at
+calibration time, from the species minimum, and stays fixed until the user re-triggers calibration.
+
+**`ALGORITHM_STATUS` (`39e1F912`) is not written by this batch** — only `0` (reset) is confirmed in
+the decompiled code; values 1-6 are accepted by the firmware but their real effect (does the
+device actually water itself autonomously?) isn't confirmed. DestCom asked for an empirical test on
+a real pot before Batch 6 is considered fully closed — not yet executed (needs sustained
+observation over time, not just an instant read-back), tracked as a follow-up, see section 11.
+
+This calibration remains available and useful for **new devices added after launch** (pot not yet
+planted, so a realistic calibration), or if DestCom voluntarily chooses to recalibrate an existing
+pot. Not required when adding a device — offered as an optional action (device detail page →
+"Calibration Plant Dr" → `/devices/$deviceId/calibration`), with the rolling baseline (above)
+covering all devices that never go through this step.
 
 ### 7.4 Scheduler / auto-watering (Batch 5, implemented)
 
@@ -309,11 +321,13 @@ procedure list and the Date-serialization note. Current procedures:
 
 **Consequence for the architecture**: Parrot Pot time series are reconstructed solely via live polling (`39e1fa09/0a/0b`, already covered by Batch 1) and stored as they come into `readings`. No `source` column needed (no more `live`/`history_import` distinction since there's only one source). No Clock synchronization needed for this purpose (its overall status is deprioritized, see section 8). **This batch is removed from the roadmap (see section 11) — its need is already covered by Batch 1, no additional dedicated work.**
 
-### 7.11 Plant Dr integration (device-side calibration)
+### 7.11 Plant Dr integration (device-side calibration) — Batch 6, implemented (write path; `ALGORITHM_STATUS` enable pending real-hardware test)
 
 Read the official Parrot BLE doc /docs/FlowerPower-BLE.pdf to see if there's more information about the Plant Dr service.
 
 The **Plant Dr** service (`39e1FD80`) allows configuring a "dry"/"wet" calibration algorithm **directly on the device**. Once its `ALGORITHM_STATUS` is enabled, the Parrot Pot can decide and act autonomously — even if our backend is offline or out of BLE range.
+
+**Implementation** (`backend/src/ble/parrot/plantDr.ts`, `DeviceProvider.readPlantDrCalibration`/`writePlantDrCalibration` in all 3 providers, `plantDr` tRPC router, `/devices/$deviceId/calibration` frontend page): the checksum/encoding logic lives once in `plantDr.ts` (`computePlantDrConfigId`, `buildPlantDrWriteValues`) — providers are "dumb", they just write the exact `{dryN, dryVwcRaw, wetN, wetVwcRaw, configId}` values they're given, in order, over GATT (node-ble/noble-bridge) or in-memory state (mock, seeded with the real factory-default values below for realism). `plantDr.calibrateWet` (tRPC mutation) derives `DRY_VWC` from the assigned species' `soilMoistureMinPercent`, reads the live calibrated soil moisture as `WET_VWC`, refuses to write if the live reading isn't above the dry threshold (would produce an inverted, nonsensical calibration — validated at the system boundary rather than trusting the caller), then writes all 5 characteristics. See section 7.3 for the full design history (why the "air" gesture was dropped, why `N=0`).
 
 **Confirmed decision (both coexist, this is no longer an open question)**:
 
@@ -327,7 +341,9 @@ The **Plant Dr** service (`39e1FD80`) allows configuring a "dry"/"wet" calibrati
 - Same logic for **Plant Dr**: `DRY_N` (39e1FD82) → `DRY_VWC` (39e1FD83) → `WET_N` (39e1FD84) → `WET_VWC` (39e1FD85) → `CONFIG_ID` (39e1FD81, XOR checksum of the 4 previous values, written last).
 - **`ALGORITHM_STATUS` (39e1F912) remains unclear for values other than 0**: only the value `0` (reset after maintenance) is confirmed in the observed code. Values 1 through 6 are accepted by the app's validation but their exact meaning (probably an enable/disable or a mode) is not confirmed — **do not assume that a specific value "enables" the algorithm without empirical validation on the real device before implementing this behavior in prod.**
 
-**Directly usable bonus — `STATUS_FLAGS` (`39e1FD86`) fully decoded**: a single byte in notification, 4 significant bits:
+**`STATUS_FLAGS` (`39e1FD86`) fully decoded and wired in (Batch 6)**: a single byte, read best-effort
+alongside the other sensors on every poll (`decodePlantDrStatusFlags`, all 3 providers), persisted
+on `Reading` (`isDrySoil`/`isWetSoil`/`isEmptyTank`/`isInAir`). 4 significant bits:
 
 | Bit | Mask   | Meaning                                              |
 | --- | ------ | ---------------------------------------------------- |
@@ -336,7 +352,10 @@ The **Plant Dr** service (`39e1FD80`) allows configuring a "dry"/"wet" calibrati
 | 2   | `0x04` | Water reservoir empty ("low reservoir")              |
 | 3   | `0x08` | Sensor out of soil (probe poorly planted or removed) |
 
-These flags aren't mutually exclusive (soil neither dry nor wet = normal state). To be surfaced directly in the dashboard and/or the Health Engine as a complement to threshold-based scoring — this is info already computed by the firmware, no need to recompute it.
+These flags aren't mutually exclusive (soil neither dry nor wet = normal state). `isInAir=true`
+readings are excluded from the Health Engine's rolling-baseline/scoring calculations entirely
+(`computeDeviceHealth`, section 7.3) — a probe out of the soil isn't a plant state. The other 3
+flags are stored but not yet surfaced in the dashboard UI beyond that (future work, not blocking).
 
 ## 8. BLE reference — Parrot Pot
 
@@ -463,7 +482,7 @@ divergence.
 | **Batch 3** | Frontend Vite + React + TanStack Query/Router + Tailwind + shadcn/ui (protected by Batch 2's auth)                                                                                                                                                                                |
 | **Batch 4** | Plant DB CSV import + Health Engine (scoring, profiles, trends)                                                                                                                                                                                                                   |
 | **Batch 5** | ✅ Auto-watering scheduler (wired to the Health Engine) — see section 7.4                                                                                                                                                                                                          |
-| **Batch 6** | Plant Dr integration (device-side dry/wet calibration), as a complement to the Health Engine — both coexist, see section 7.11                                                                                                                                                     |
+| **Batch 6** | ✅ Plant Dr integration (device-side dry/wet calibration + STATUS_FLAGS), complement to the Health Engine, see section 7.11. `ALGORITHM_STATUS` real-hardware test still pending (follow-up)                                                                                     |
 | **Batch 7** | MQTT client + Home Assistant auto-discovery                                                                                                                                                                                                                                       |
 | **Batch 8** | MCP server (tools listed in 7.8), protected by auth                                                                                                                                                                                                                               |
 | **Batch 9** | Extension to other devices (Flower Power, Flower Care). Also includes an optional empirical exploration: testing raw EC reading on the Parrot Pot (`39e1fa02`) on the real device via the the production server, with no guarantee of a usable result — the official app doesn't use it (section 8) |

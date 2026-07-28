@@ -18,8 +18,18 @@ export const UUIDS = {
     trigger: '39e1f906-84a8-11e2-afba-0002a5d5c51b',
     waterTankLevel: '39e1f907-84a8-11e2-afba-0002a5d5c51b',
   },
+  // Plant Dr service (Batch 6, docs/STROYPLANT_SPEC.md section 7.11).
+  plantDr: {
+    configId: '39e1fd81-84a8-11e2-afba-0002a5d5c51b',
+    dryN: '39e1fd82-84a8-11e2-afba-0002a5d5c51b',
+    dryVwc: '39e1fd83-84a8-11e2-afba-0002a5d5c51b',
+    wetN: '39e1fd84-84a8-11e2-afba-0002a5d5c51b',
+    wetVwc: '39e1fd85-84a8-11e2-afba-0002a5d5c51b',
+    statusFlags: '39e1fd86-84a8-11e2-afba-0002a5d5c51b',
+  },
 } as const;
 
+export const PLANT_DR_SERVICE_UUID = '39e1fd80-84a8-11e2-afba-0002a5d5c51b';
 export const WATER_TRIGGER_PAYLOAD = Buffer.from([0x08, 0x00]);
 export const PARROT_POT_NAME_PREFIX = 'Parrot pot';
 

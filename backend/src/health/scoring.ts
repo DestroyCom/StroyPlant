@@ -104,7 +104,10 @@ export function computeDeviceHealth(device: Pick<Device, 'kind'>, readings: Read
     return { status: 'no_profile', parameters: {}, trend: 'unknown' };
   }
 
-  const sorted = [...readings].sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
+  // A reading taken with the probe out of the soil (Plant Dr STATUS_FLAGS, section 7.11) doesn't
+  // represent a plant state — excluded from baseline/scoring entirely, not just displayed
+  // differently, so it can't pollute the rolling average or the trend detection.
+  const sorted = readings.filter((reading) => reading.isInAir !== true).sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
   const oldest = sorted[0];
   const daysCovered = oldest ? (Date.now() - oldest.timestamp.getTime()) / (24 * 3600_000) : 0;
   const warmingUp = daysCovered < env.healthWarmupMinDays;

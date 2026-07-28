@@ -3,9 +3,11 @@ import { promisify } from 'node:util';
 import type { GattCharacteristic, Device as NodeBleDevice } from 'node-ble';
 import { createBluetooth } from 'node-ble';
 import { extractParrotManufacturerPayload } from '../../ble/parrot/advertisement.js';
+import { decodePlantDrStatusFlags, type PlantDrCalibration, type PlantDrWriteValues } from '../../ble/parrot/plantDr.js';
 import { CONNECT_TIMEOUT_MS, withGattRetry, withTimeout } from '../../ble/parrot/retry.js';
 import {
   PARROT_POT_NAME_PREFIX,
+  PLANT_DR_SERVICE_UUID,
   SENSOR_SERVICE_UUID,
   UUIDS,
   WATER_TRIGGER_PAYLOAD,
@@ -286,6 +288,30 @@ export function createNodeBleProvider(): DeviceProvider {
 
             await measurePeriod.writeValueWithResponse(Buffer.from([0])).catch(() => {});
 
+            // Plant Dr STATUS_FLAGS (Batch 6) — best-effort like the conductivity reads above: the
+            // Plant Dr service may not exist on every firmware revision, must never fail the read.
+            let statusFlags: ReturnType<typeof decodePlantDrStatusFlags> | undefined;
+            try {
+              const plantDrService = await gatt.getPrimaryService(PLANT_DR_SERVICE_UUID);
+              const statusFlagsChar = await plantDrService.getCharacteristic(UUIDS.plantDr.statusFlags);
+              statusFlags = decodePlantDrStatusFlags((await statusFlagsChar.readValue()).readUInt8(0));
+              log({
+                direction: 'READ',
+                label: 'Plant Dr STATUS_FLAGS read',
+                deviceId,
+                result: 'OK',
+                detail: JSON.stringify(statusFlags),
+              });
+            } catch (error) {
+              log({
+                direction: 'INFO',
+                label: 'Plant Dr STATUS_FLAGS indisponible',
+                deviceId,
+                result: 'ERROR',
+                detail: error instanceof Error ? error.message : String(error),
+              });
+            }
+
             const reading: SensorReading = {
               kind: 'PARROT_POT',
               data: {
@@ -295,6 +321,10 @@ export function createNodeBleProvider(): DeviceProvider {
                 waterTankLevelPercent,
                 soilConductivityEcb,
                 soilConductivityEcPorous,
+                isDrySoil: statusFlags?.isDrySoil,
+                isWetSoil: statusFlags?.isWetSoil,
+                isEmptyTank: statusFlags?.isEmptyTank,
+                isInAir: statusFlags?.isInAir,
               },
             };
             return reading;
@@ -327,6 +357,75 @@ export function createNodeBleProvider(): DeviceProvider {
               payloadHex: WATER_TRIGGER_PAYLOAD.toString('hex'),
               result: 'OK',
             });
+          } finally {
+            await device.disconnect().catch(() => {});
+          }
+        },
+      });
+    },
+
+    async readPlantDrCalibration(deviceId: string): Promise<PlantDrCalibration> {
+      return withGattRetry({
+        label: 'readPlantDrCalibration',
+        deviceId,
+        isGattError133,
+        restartAdapter,
+        attempt: async () => {
+          const device = await connectDevice(deviceId);
+          try {
+            const gatt = await withTimeout(device.gatt(), CONNECT_TIMEOUT_MS, 'gatt');
+            const plantDrService = await gatt.getPrimaryService(PLANT_DR_SERVICE_UUID);
+            const readU16 = async (uuid: string) => (await (await plantDrService.getCharacteristic(uuid)).readValue()).readUInt16LE(0);
+
+            const dryN = await readU16(UUIDS.plantDr.dryN);
+            const dryVwcRaw = await readU16(UUIDS.plantDr.dryVwc);
+            const wetN = await readU16(UUIDS.plantDr.wetN);
+            const wetVwcRaw = await readU16(UUIDS.plantDr.wetVwc);
+            const configId = await readU16(UUIDS.plantDr.configId);
+
+            const calibration: PlantDrCalibration = {
+              dryN,
+              dryVwcPercent: dryVwcRaw / 10,
+              wetN,
+              wetVwcPercent: wetVwcRaw / 10,
+              configId,
+            };
+            log({ direction: 'READ', label: 'Plant Dr calibration read', deviceId, result: 'OK', detail: JSON.stringify(calibration) });
+            return calibration;
+          } finally {
+            await device.disconnect().catch(() => {});
+          }
+        },
+      });
+    },
+
+    async writePlantDrCalibration(deviceId: string, values: PlantDrWriteValues): Promise<void> {
+      await withGattRetry({
+        label: 'writePlantDrCalibration',
+        deviceId,
+        isGattError133,
+        restartAdapter,
+        attempt: async () => {
+          const device = await connectDevice(deviceId);
+          try {
+            const gatt = await withTimeout(device.gatt(), CONNECT_TIMEOUT_MS, 'gatt');
+            const plantDrService = await gatt.getPrimaryService(PLANT_DR_SERVICE_UUID);
+
+            const writeU16 = async (uuid: string, value: number, label: string) => {
+              const characteristic = await plantDrService.getCharacteristic(uuid);
+              const payload = Buffer.alloc(2);
+              payload.writeUInt16LE(value & 0xffff, 0);
+              await characteristic.writeValueWithResponse(payload);
+              log({ direction: 'WRITE', label, uuid, deviceId, payloadHex: payload.toString('hex'), result: 'OK' });
+            };
+
+            // Order matters (docs/PARROT_BLE_DEEP_DIVE.md section 2): CONFIG_ID is the commit,
+            // written last.
+            await writeU16(UUIDS.plantDr.dryN, values.dryN, 'Plant Dr DRY_N');
+            await writeU16(UUIDS.plantDr.dryVwc, values.dryVwcRaw, 'Plant Dr DRY_VWC');
+            await writeU16(UUIDS.plantDr.wetN, values.wetN, 'Plant Dr WET_N');
+            await writeU16(UUIDS.plantDr.wetVwc, values.wetVwcRaw, 'Plant Dr WET_VWC');
+            await writeU16(UUIDS.plantDr.configId, values.configId, 'Plant Dr CONFIG_ID (commit)');
           } finally {
             await device.disconnect().catch(() => {});
           }

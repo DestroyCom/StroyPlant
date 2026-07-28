@@ -1,3 +1,4 @@
+import type { PlantDrCalibration, PlantDrWriteValues } from '../../ble/parrot/plantDr.js';
 import { env } from '../../env.js';
 import { log } from '../../logger.js';
 import type { DeviceKind, DeviceProvider, DiscoveredDevice, SensorReading } from '../types.js';
@@ -77,6 +78,10 @@ export function createNobleBridgeProvider(): DeviceProvider {
           waterTankLevelPercent: body.waterTankLevelPercent,
           soilConductivityEcb: body.soilConductivityEcb,
           soilConductivityEcPorous: body.soilConductivityEcPorous,
+          isDrySoil: body.isDrySoil,
+          isWetSoil: body.isWetSoil,
+          isEmptyTank: body.isEmptyTank,
+          isInAir: body.isInAir,
         },
       };
     },
@@ -86,6 +91,23 @@ export function createNobleBridgeProvider(): DeviceProvider {
       const res = await fetch(`${env.nobleBridgeUrl}/devices/${encodeURIComponent(deviceId)}/water`, { method: 'POST' });
       const body = await res.json();
       if (!res.ok) throw new Error(`noble-bridge triggerAction ${deviceId}: ${body.error ?? res.statusText}`);
+    },
+
+    async readPlantDrCalibration(deviceId: string): Promise<PlantDrCalibration> {
+      const res = await fetch(`${env.nobleBridgeUrl}/devices/${encodeURIComponent(deviceId)}/plant-dr-calibration`);
+      const body = await res.json();
+      if (!res.ok) throw new Error(`noble-bridge readPlantDrCalibration ${deviceId}: ${body.error ?? res.statusText}`);
+      return body;
+    },
+
+    async writePlantDrCalibration(deviceId: string, values: PlantDrWriteValues): Promise<void> {
+      const res = await fetch(`${env.nobleBridgeUrl}/devices/${encodeURIComponent(deviceId)}/plant-dr-calibration`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(values),
+      });
+      const body = await res.json();
+      if (!res.ok) throw new Error(`noble-bridge writePlantDrCalibration ${deviceId}: ${body.error ?? res.statusText}`);
     },
   };
 }

@@ -1,3 +1,4 @@
+import type { PlantDrCalibration, PlantDrWriteValues } from '../../ble/parrot/plantDr.js';
 import { log } from '../../logger.js';
 import type { DeviceProvider, DiscoveredDevice, SensorReading } from '../types.js';
 
@@ -20,6 +21,14 @@ interface MockPotState {
   soilConductivityEcPorous: number;
   declinePerMinute: number;
   lastUpdate: number;
+  plantDr: PlantDrCalibration;
+}
+
+// Factory-default calibration observed on a real, never-manually-calibrated Parrot Pot
+// (PARROT-A073, 2026-07-28, read-only capture) — DRY_N/WET_N at 0, DRY_VWC=17.5%,
+// WET_VWC=22.5%, CONFIG_ID=78 (verified against computePlantDrConfigId()).
+function defaultPlantDrCalibration(): PlantDrCalibration {
+  return { dryN: 0, dryVwcPercent: 17.5, wetN: 0, wetVwcPercent: 22.5, configId: 78 };
 }
 
 interface MockXiaomiState {
@@ -52,6 +61,7 @@ function createInitialPots(): MockPotState[] {
       soilConductivityEcPorous: 900,
       declinePerMinute: 0.05,
       lastUpdate: now,
+      plantDr: defaultPlantDrCalibration(),
     },
     {
       id: 'MOCK-POT-DECLINE',
@@ -64,6 +74,7 @@ function createInitialPots(): MockPotState[] {
       soilConductivityEcPorous: 850,
       declinePerMinute: 1.2, // drops noticeably faster than MOCK-POT-NORMAL
       lastUpdate: now,
+      plantDr: defaultPlantDrCalibration(),
     },
   ];
 }
@@ -83,6 +94,17 @@ function applyPotDecay(state: MockPotState): void {
   state.soilConductivityEcb = Math.max(0, state.soilConductivityEcb + (Math.random() - 0.5) * 10);
   state.soilConductivityEcPorous = Math.max(0, state.soilConductivityEcPorous + (Math.random() - 0.5) * 15);
   state.lastUpdate = Date.now();
+}
+
+// Plant Dr STATUS_FLAGS (Batch 6) don't exist as separate mock state — derived from the same
+// thresholds a real device would use internally, no isInAir scenario simulated yet.
+function deriveStatusFlags(pot: MockPotState) {
+  return {
+    isDrySoil: pot.soilMoisturePercent < 20,
+    isWetSoil: pot.soilMoisturePercent > 50,
+    isEmptyTank: pot.waterTankLevelPercent <= 0,
+    isInAir: false,
+  };
 }
 
 function applyXiaomiNoise(state: MockXiaomiState): void {
@@ -151,6 +173,7 @@ export function createMockProvider(): DeviceProvider {
         result: 'OK',
         detail: `soil=${pot.soilMoisturePercent.toFixed(1)}% tank=${pot.waterTankLevelPercent}%`,
       });
+      const statusFlags = deriveStatusFlags(pot);
       return {
         kind: 'PARROT_POT',
         data: {
@@ -160,6 +183,10 @@ export function createMockProvider(): DeviceProvider {
           waterTankLevelPercent: pot.waterTankLevelPercent,
           soilConductivityEcb: pot.soilConductivityEcb,
           soilConductivityEcPorous: pot.soilConductivityEcPorous,
+          isDrySoil: statusFlags.isDrySoil,
+          isWetSoil: statusFlags.isWetSoil,
+          isEmptyTank: statusFlags.isEmptyTank,
+          isInAir: statusFlags.isInAir,
         },
       };
     },
@@ -189,6 +216,31 @@ export function createMockProvider(): DeviceProvider {
         deviceId,
         result: 'OK',
         detail: `nouveau tank=${pot.waterTankLevelPercent}% soil=${pot.soilMoisturePercent.toFixed(1)}%`,
+      });
+    },
+
+    async readPlantDrCalibration(deviceId: string): Promise<PlantDrCalibration> {
+      const pot = pots.get(deviceId);
+      if (!pot) throw new Error(`Mock device ${deviceId} inconnu`);
+      return pot.plantDr;
+    },
+
+    async writePlantDrCalibration(deviceId: string, values: PlantDrWriteValues): Promise<void> {
+      const pot = pots.get(deviceId);
+      if (!pot) throw new Error(`Mock device ${deviceId} inconnu`);
+      pot.plantDr = {
+        dryN: values.dryN,
+        dryVwcPercent: values.dryVwcRaw / 10,
+        wetN: values.wetN,
+        wetVwcPercent: values.wetVwcRaw / 10,
+        configId: values.configId,
+      };
+      log({
+        direction: 'WRITE',
+        label: 'Plant Dr calibration written (mock)',
+        deviceId,
+        result: 'OK',
+        detail: `dry=${pot.plantDr.dryVwcPercent}% wet=${pot.plantDr.wetVwcPercent}% configId=${pot.plantDr.configId}`,
       });
     },
   };

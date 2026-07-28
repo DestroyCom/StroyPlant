@@ -221,6 +221,20 @@ function DeviceDetailPage() {
       {canWater && <AutoWateringSection deviceId={deviceId} hasSpeciesAssigned={device.plantProfile != null} />}
 
       {canWater && (
+        <div className="my-7 flex items-center justify-between gap-3 rounded-lg border border-border-subtle p-4">
+          <div>
+            <div className="text-sm font-bold text-foreground">Calibration Plant Dr</div>
+            <div className="text-sm text-muted-foreground">Filet de sécurité côté pot, en complément de l'arrosage automatique.</div>
+          </div>
+          <Button variant="outline" size="sm" asChild>
+            <Link to="/devices/$deviceId/calibration" params={{ deviceId }}>
+              Configurer
+            </Link>
+          </Button>
+        </div>
+      )}
+
+      {canWater && (
         <div className="my-7">
           <div className="mb-3 text-sm font-bold text-foreground">Derniers arrosages</div>
           {!wateringEvents || wateringEvents.length === 0 ? (

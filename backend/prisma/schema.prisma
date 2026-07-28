@@ -89,6 +89,13 @@ model Reading {
   // scoring (see docs/HEALTH_ENGINE.md); `soilConductivityEcb` stays diagnostic-only for now.
   soilConductivityEcb      Float?
   soilConductivityEcPorous Float?
+  // Plant Dr STATUS_FLAGS (39e1FD86, Batch 6) — firmware-computed soil/reservoir/probe state, see
+  // docs/STROYPLANT_SPEC.md section 7.11. `isInAir` readings are excluded from the Health Engine's
+  // rolling-baseline calculations (section 7.3) — a probe out of the soil isn't a plant state.
+  isDrySoil   Boolean?
+  isWetSoil   Boolean?
+  isEmptyTank Boolean?
+  isInAir     Boolean?
 
   // Xiaomi LYWSD03MMC
   humidityPercent Float?

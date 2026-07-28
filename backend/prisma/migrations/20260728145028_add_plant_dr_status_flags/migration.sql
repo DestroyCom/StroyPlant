@@ -1,0 +1,5 @@
+-- AlterTable
+ALTER TABLE "Reading" ADD COLUMN "isDrySoil" BOOLEAN;
+ALTER TABLE "Reading" ADD COLUMN "isEmptyTank" BOOLEAN;
+ALTER TABLE "Reading" ADD COLUMN "isInAir" BOOLEAN;
+ALTER TABLE "Reading" ADD COLUMN "isWetSoil" BOOLEAN;

@@ -35,6 +35,10 @@ async function main() {
                 waterTankLevelPercent: reading.data.waterTankLevelPercent,
                 soilConductivityEcb: reading.data.soilConductivityEcb,
                 soilConductivityEcPorous: reading.data.soilConductivityEcPorous,
+                isDrySoil: reading.data.isDrySoil,
+                isWetSoil: reading.data.isWetSoil,
+                isEmptyTank: reading.data.isEmptyTank,
+                isInAir: reading.data.isInAir,
               }
             : {
                 temperatureC: reading.data.temperatureC,
