@@ -32,9 +32,11 @@ export function SensorGauge({
     <div className="flex w-28 flex-col items-center gap-2">
       <div
         className="flex h-21 w-21 items-center justify-center rounded-full"
-        style={{ background: `conic-gradient(${color} ${pct * 3.6}deg, var(--muted) 0deg)` }}
+        style={{
+          background: `conic-gradient(${color} ${pct * 3.6}deg, var(--muted) 0deg)`,
+        }}
       >
-        <div className="flex h-17 w-17 flex-col items-center justify-center gap-0.5 rounded-full bg-card">
+        <div className="flex h-17 w-17 flex-col items-center justify-center gap-0.5 rounded-full bg-card text-center">
           {icon}
           <span className="text-sm font-bold text-foreground">
             {Math.round(value)}

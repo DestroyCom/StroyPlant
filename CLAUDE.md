@@ -64,8 +64,8 @@ the production server:
   WebSocket, see the tRPC migration entry below). See technical detail below.
 - **Batch 2** ✅ — BetterAuth (credentials, single-admin, `disableSignUp: true`), all `/api/*`
   routes and the WS protected by session.
-- **Batch 3** ✅ (partial, see scope below) — Vite + React + TanStack Query/Router + Tailwind v4 +
-  shadcn/ui frontend. See technical detail below.
+- **Batch 3** ✅ (complete) — Vite + React + TanStack Query/Router + Tailwind v4 + shadcn/ui
+  frontend. See technical detail below.
 - **Batch 4 (backend + frontend)** ✅ — WatchFlower CSV import (`plant_profiles`), health scoring
   engine (rolling baseline + comparison against species ranges, luminosity included since the
   mol/m²/day unit confirmation), API endpoints, and on the frontend side: species picker on the
@@ -73,11 +73,60 @@ the production server:
   tone/expected range, consumer-friendly explanation of the scoring. Tested locally with the mock
   provider (real import, warming_up → warning transition, species assignment/removal), not yet
   validated by DestCom against real data accumulated on the the production server. See technical detail below.
-- **Next batch**: Batch 5 (auto-watering scheduler wired to the Health Engine). Possibly complete
-  Batch 3 first with the "Add device" and "Settings" screens from the claude.ai/design prototype
-  (see below) once explicit confirmation has been given — not done for now since these screens
-  depend on features not yet implemented (manual pairing, notifications, auto-watering = Batches
-  5/7/8).
+- **Batch 3 completed (2026-07-28)** — "Add device" and "Settings" screens added, closing out the
+  scope deferred since Batch 3b. Scope was clarified with DestCom rather than assumed (both screens
+  depend on unimplemented features — Batches 5/7/8 — so a literal implementation of the prototype
+  wasn't possible yet):
+  - **"Add device"**: no real BLE pairing exists for these devices (the scanner already
+    auto-discovers and upserts any device it sees), so this screen is a claiming step, not a
+    pairing flow. A `Device` row with `name = null` means "seen by the scanner, not yet added" —
+    `devices.listUnnamed` (tRPC) lists these, `devices.rename` (input `{deviceId, name}`) claims one
+    by giving it a name. `devices.list` (used by the dashboard) now filters to `name IS NOT NULL`,
+    so a freshly-scanned device no longer appears on the dashboard until named through this screen.
+    Frontend: `frontend/src/routes/_authenticated/devices.add.tsx`.
+  - **"Settings"**: built as a skeleton now rather than deferred entirely — an account section
+    (email, from BetterAuth's `useSession()`) is functional today; auto-watering (Batch 5),
+    notifications (Batch 7), and the MCP server (Batch 8) are shown as disabled "coming soon"
+    cards labeled with their batch, so the nav entry exists without faking functionality that isn't
+    there. Frontend: `frontend/src/routes/_authenticated/settings.tsx`.
+  - Sidebar nav (`frontend/src/components/app-shell.tsx`) gained the two corresponding links.
+- **Batch 5** ✅ (2026-07-28) — auto-watering scheduler, wired to the Health Engine
+  (`backend/src/health/scheduler.ts`). Key decisions, all explicitly confirmed with DestCom rather
+  than assumed:
+  - **Trigger condition**: only `soilMoisturePercent`'s status being `too_low` (not the overall
+    Health Engine status) — a temperature/luminosity issue never triggers a watering, since
+    watering can't fix those.
+  - **Configuration UI**: per device, on its detail page ("Arrosage automatique" section, backed by
+    the new `schedule.get`/`schedule.upsert` tRPC procedures) — not a single global setting, since
+    `Schedule` is a per-device row. `/settings`'s former "coming soon · Lot 5" card was replaced
+    with a link to the per-device page now that the feature is real.
+  - **Default active state**: a device becomes eligible for auto-watering **as soon as a species is
+    assigned** — no separate opt-in toggle required. Implemented with no backfill/migration: a
+    missing `Schedule` row resolves (`resolveEffectiveSchedule`) to `active =
+    plantProfileId != null`, applying identically to devices assigned before or after this batch.
+    **Real-hardware consequence**: `PARROT-A073` (the real Parrot Pot validated in Batch 4b)
+    already has a plant profile assigned from that earlier testing, so it is immediately eligible
+    for autonomous watering attempts once the scheduler runs against a real BLE provider — the
+    warm-up gate (below) and the 24h default cooldown are the only safeguards, not a manual
+    enable step.
+  - **Warm-up safeguard**: the scheduler also skips a device while the Health Engine's overall
+    status is `warming_up` (not enough personal baseline yet) — reusing the same guard the
+    dashboard badge uses, since trusting a single parameter's status before that would risk a real
+    watering trigger on a false read, not just a wrong badge. This wasn't one of the confirmed
+    choices above — added as a direct consequence of Batch 4's existing warm-up design, flagged to
+    DestCom rather than silently assumed.
+  - Anti-spam cooldown and allowed-hours window default to 24h / 6h-20h, both editable per device.
+  - `triggerWatering()` (`backend/src/watering.ts`) is now shared between the manual `devices.water`
+    mutation and the scheduler, so the never-fire-and-forget contract (7.1) lives in one place.
+  - Verified against the mock provider: `schedule.get`/`upsert` round trip, the warm-up gate
+    correctly blocking a freshly-assigned device, and — after backdating a reading past the warm-up
+    window — the scheduler actually calling `triggerWatering` and recording an explicit `CRON`
+    failure on `MOCK-POT-DECLINE`'s empty reservoir. All test rows/users cleaned up afterward.
+  - **Bugfix found during this batch**: the mock provider's simulated `luminosity` values (450/300)
+    were leftover placeholders from before the unit was confirmed to be real mol/m²/day DLI (a real
+    Parrot Pot capture reads ~0.1) — a healthy mock pot displayed "459 mol/m²/j" against an expected
+    "4-6" range. Rescaled to realistic indoor values (~5/~3) in `backend/src/providers/mock/index.ts`.
+- **Next batch**: Batch 6 (Plant Dr device-side calibration).
 - **`noble-bridge` validated with real hardware** ✅ (2026-07-27) — a real Parrot Pot
   (`PARROT-A073`) connected and read end-to-end (scan → connect → activate → read
   humidity/temp/luminosity/reservoir → deactivate → disconnect) via the Mac's Bluetooth, data
@@ -128,9 +177,13 @@ docs/            Full spec, Parrot Pot BLE reverse-engineering docs, frontend de
   `schema.prisma` folder, not the cwd** (already-encountered trap: `file:./prisma/dev.db` would
   create `prisma/prisma/dev.db`).
 - Business models: `Device` (id = uppercase colon-separated MAC, kind, name, lastSeenAt, optional
-  `plantProfileId`), `Reading` (all sensor fields for both device types, optional, on a single
-  table), `WateringEvent` (deviceId, triggerSource MANUAL/CRON, success, errorDetail),
-  `PlantProfile` (Batch 4, see below). `schedules` not yet created (Batch 5).
+  `plantProfileId`) — `name = null` means "seen by the scanner, not yet claimed by the user" (Batch
+  3's "Add device" screen, see Project status), the dashboard's `devices.list` only returns named
+  devices), `Reading` (all sensor fields for both device types, optional, on a single table),
+  `WateringEvent` (deviceId, triggerSource MANUAL/CRON, success, errorDetail), `PlantProfile` (Batch
+  4, see below), `Schedule` (Batch 5, one optional row per device — deviceId, active,
+  allowedStartHour/EndHour, cooldownHours; a missing row isn't "no schedule", it resolves to
+  defaults, see Project status).
 - **`DeviceProvider`** (`src/providers/types.ts`): common interface `scan()` /
   `readSensors(id, kind)` / `triggerAction(id, action)`. `kind` is passed by the caller because a
   provider can't always infer the device type from its id alone.
@@ -173,8 +226,10 @@ docs/            Full spec, Parrot Pot BLE reverse-engineering docs, frontend de
   `[int16 LE temp/100][uint8 humidity][int16 LE voltage mV/1000]`, battery% =
   `(voltage-2.1)*100` clamped 0-100. Formula confirmed by WatchFlower AND re-validated empirically
   on a real device.
-- **tRPC (`src/api/trpc/`)**: `router.ts` combines `devices` (`list`, `history`, `wateringEvents`,
-  `water`), `health` (`plantProfiles`, `assignPlantProfile`, `deviceHealth`) and `readings`
+- **tRPC (`src/api/trpc/`)**: `router.ts` combines `devices` (`list`, `listUnnamed`, `rename`,
+  `history`, `wateringEvents`, `water`), `health` (`plantProfiles`, `assignPlantProfile`,
+  `deviceHealth`), `schedule` (`get`, `upsert` — Batch 5 auto-watering config, see Project status)
+  and `readings`
   (`onReading`, a subscription) into `appRouter`; its type (`AppRouter`) is the single source of
   truth shared with the frontend. `trpc.ts` defines `publicProcedure`/`protectedProcedure`
   (`protectedProcedure` throws `TRPCError({code:'UNAUTHORIZED'})` when there's no session — same
@@ -244,13 +299,17 @@ docs/            Full spec, Parrot Pot BLE reverse-engineering docs, frontend de
   not the design system README's English. Satoshi fonts self-hosted in `public/fonts/` (only 4
   weights: Regular/Medium/Bold/Black — no italics or variable font, to stay lightweight).
 - **Currently covered scope**: login, dashboard (device grid with a colored banner based on real
-  status — offline / low reservoir / Health Engine health / normal), device detail (gauges with
-  tone and expected species range as a legend, 24h-7d-30d history/graph via `recharts`, "Recent
-  waterings" timeline, watering trigger with confirmation for Parrot Pots, "Species" section with
-  picker/removal via `SpeciesPickerDialog` and a consumer-friendly explanation of the scoring).
-  **Not done yet** (depend on unimplemented features): "Add device" screen (manual pairing),
-  "Settings" (notifications, auto-watering, MCP), global "History", "Calibration" — see the
-  Project status section.
+  status — offline / low reservoir / Health Engine health / normal, filtered to named/"claimed"
+  devices only), device detail (gauges with tone and expected species range as a legend, 24h-7d-30d
+  history/graph via `recharts`, "Recent waterings" timeline, watering trigger with confirmation for
+  Parrot Pots, "Species" section with picker/removal via `SpeciesPickerDialog` and a
+  consumer-friendly explanation of the scoring, "Arrosage automatique" section — Batch 5, active
+  toggle + allowed-hours window + cooldown, via `AutoWateringSection`), "Add device" (claims a
+  scanner-discovered, not-yet-named device by giving it a name — see the Project status section for
+  why this differs from the prototype's literal manual-pairing concept), "Settings" (account section
+  functional, auto-watering now links to the per-device page instead of "coming soon", notifications/
+  MCP still shown as disabled "coming soon" cards pending Batches 7/8). **Not done yet**: global
+  "History", "Calibration" — no backing feature yet (Plant Dr calibration is Batch 6).
 - Displayed titles/statuses (`src/lib/format.ts`, `statusHeadline`/`statusBandClasses`) prioritize
   verifiable facts (connectivity, reservoir level) then, since Batch 4b, the Health Engine's
   judgment (`healthHeadline`, if a species is assigned to the device) — with no species assigned,

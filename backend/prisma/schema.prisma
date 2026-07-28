@@ -25,6 +25,25 @@ model Device {
 
   readings       Reading[]
   wateringEvents WateringEvent[]
+  schedule       Schedule?
+}
+
+// Auto-watering scheduler (Batch 5, docs/STROYPLANT_SPEC.md section 7.4) — one optional row per
+// device. A missing row is not "no schedule", it's "defaults" (see
+// backend/src/health/scheduler.ts's resolveEffectiveSchedule): `active` then falls back to
+// `device.plantProfileId != null` (auto-on once a species is assigned, per DestCom's explicit
+// choice), the other fields fall back to DEFAULT_SCHEDULE. This row only starts existing once the
+// user explicitly saves the "Arrosage automatique" section on the device detail page.
+model Schedule {
+  deviceId String @id
+  device   Device @relation(fields: [deviceId], references: [id])
+
+  active           Boolean
+  allowedStartHour Int // 0-23, local server time, inclusive
+  allowedEndHour   Int // 0-23, local server time, exclusive — wraps past midnight if < allowedStartHour
+  cooldownHours    Int // minimum delay since the last watering attempt (any source) before triggering again
+
+  updatedAt DateTime @updatedAt
 }
 
 // Imported from assets/plants/watchflower_plantdb.csv (emericg/WatchFlower repo, GPLv3) — see

@@ -1,6 +1,6 @@
 import { useQueryClient } from '@tanstack/react-query';
 import { Link, useNavigate } from '@tanstack/react-router';
-import { Home, LogOut } from 'lucide-react';
+import { Home, LogOut, PlusCircle, Settings } from 'lucide-react';
 import type { ReactNode } from 'react';
 import logo from '@/assets/logo.svg';
 import { authClient } from '@/lib/auth-client';
@@ -35,6 +35,26 @@ export function AppShell({ children }: { children: ReactNode }) {
           >
             <Home size={18} />
             Tableau de bord
+          </Link>
+          <Link
+            to="/devices/add"
+            className={cn(
+              'flex items-center gap-2.5 rounded-md px-3 py-2.5 text-sm font-medium text-sidebar-foreground/70 hover:bg-sidebar-accent',
+              'data-[status=active]:font-bold data-[status=active]:text-sidebar-foreground [&[data-status=active]_svg]:text-sidebar-accent-foreground',
+            )}
+          >
+            <PlusCircle size={18} />
+            Ajouter un appareil
+          </Link>
+          <Link
+            to="/settings"
+            className={cn(
+              'flex items-center gap-2.5 rounded-md px-3 py-2.5 text-sm font-medium text-sidebar-foreground/70 hover:bg-sidebar-accent',
+              'data-[status=active]:font-bold data-[status=active]:text-sidebar-foreground [&[data-status=active]_svg]:text-sidebar-accent-foreground',
+            )}
+          >
+            <Settings size={18} />
+            Réglages
           </Link>
         </nav>
         <div className="mt-auto rounded-lg bg-muted p-3 text-xs leading-relaxed text-muted-foreground">

@@ -36,13 +36,13 @@ Replace WatchFlower (Qt desktop/mobile app, not suited to 24/7 server use) with 
 
 ## 3. Supported devices (by priority)
 
-| Priority | Device                            | BLE mode                                | Capabilities                                    |
-| -------- | --------------------------------- | ---------------------------------------- | ------------------------------------------------ |
-| **P0**   | Parrot Pot                        | GATT connection                          | Sensor reading + manual/auto watering           |
-| **P0**   | Xiaomi LYWSD03MMC (pvvx firmware) | Passive advertisement (no connection)   | Temperature / humidity                          |
-| P1       | Flower Power                      | GATT connection                          | Sensor reading only                             |
-| P1       | Flower Care / Flower Care Max     | GATT connection                          | Sensor reading + on-device internal history     |
-| P2       | RoPot, others                     | —                                        | Deferred until the core is validated             |
+| Priority | Device                            | BLE mode                              | Capabilities                                |
+| -------- | --------------------------------- | ------------------------------------- | ------------------------------------------- |
+| **P0**   | Parrot Pot                        | GATT connection                       | Sensor reading + manual/auto watering       |
+| **P0**   | Xiaomi LYWSD03MMC (pvvx firmware) | Passive advertisement (no connection) | Temperature / humidity                      |
+| P1       | Flower Power                      | GATT connection                       | Sensor reading only                         |
+| P1       | Flower Care / Flower Care Max     | GATT connection                       | Sensor reading + on-device internal history |
+| P2       | RoPot, others                     | —                                     | Deferred until the core is validated        |
 
 Important architectural point: the two P0 devices operate in fundamentally different BLE modes. The passive Xiaomi scan can run in the background continuously without ever monopolizing the dongle, while the GATT connection queue (Parrot Pot) runs its one-off, sequential cycles (BLE does not handle multiple simultaneous GATT connections well on a standard USB dongle).
 
@@ -74,11 +74,11 @@ the production server (Debian 12, USB BLE dongle — TP-Link UB500 Plus, Bluetoo
 
 DestCom develops on a **MacBook Air M3 (macOS)**, but the production target is **Linux (the production server)**. Since Docker doesn't allow real BLE on macOS (section 5), the real BLE layer must **never be developed/tested directly in the container locally on Mac**. Use an abstract `DeviceProvider` interface, with three interchangeable implementations via a `BLE_PROVIDER` environment variable:
 
-| Provider       | Where it runs                                                                                                    | Library used                          | What it validates                                                          |
-| -------------- | ------------------------------------------------------------------------------------------------------------------ | ------------------------------------- | --------------------------------------------------------------------------- |
-| `mock`         | In the container, Mac dev                                                                                          | None (simulated data)                | Pure business logic: Health Engine, cron, API, frontend, auth              |
-| `noble-bridge` | A small **native macOS** Node process (outside Docker) exposing a local HTTP API, called by the dockerized backend | `@abandonware/noble` (CoreBluetooth)  | Real BLE protocol against real hardware — but not the real Linux stack     |
-| `node-ble`     | Directly in the container, the production server only                                                                                | `node-ble` (BlueZ/D-Bus)              | The real production stack — the final, incompressible validation           |
+| Provider       | Where it runs                                                                                                      | Library used                         | What it validates                                                      |
+| -------------- | ------------------------------------------------------------------------------------------------------------------ | ------------------------------------ | ---------------------------------------------------------------------- |
+| `mock`         | In the container, Mac dev                                                                                          | None (simulated data)                | Pure business logic: Health Engine, cron, API, frontend, auth          |
+| `noble-bridge` | A small **native macOS** Node process (outside Docker) exposing a local HTTP API, called by the dockerized backend | `@abandonware/noble` (CoreBluetooth) | Real BLE protocol against real hardware — but not the real Linux stack |
+| `node-ble`     | Directly in the container, the production server only                                                                                | `node-ble` (BlueZ/D-Bus)             | The real production stack — the final, incompressible validation       |
 
 Notes:
 
@@ -120,10 +120,10 @@ Parrot SA's Bluetooth SIG Company ID = `0x0043`, confirmed — both devices do a
 manufacturer data under this key. Observed payload (`node-ble.getManufacturerData()['67']`, already
 stripped of the company ID by BlueZ):
 
-| Device            | Payload (hex) |
-| ----------------- | ------------- |
-| Parrot pot a073    | `01 23 03`    |
-| Parrot pot a3d3    | `01 23 23`    |
+| Device          | Payload (hex) |
+| --------------- | ------------- |
+| Parrot pot a073 | `01 23 03`    |
+| Parrot pot a3d3 | `01 23 23`    |
 
 **3 bytes, not 1 as initially assumed.** The "1 flags byte" table in the official PDF is
 explicitly scoped to firmwares < 1.1 — the Parrot Pot (VE0.29.1, confirmed identical on both
@@ -163,7 +163,8 @@ Tables at minimum:
 - `devices` (id, mac/identifier, type, name, last connection)
 - `readings` (device_id, timestamp, soil_moisture, conductivity, temp, luminosity, water_level, ...)
 - `watering_events` (device_id, timestamp, trigger_source: manual|cron, success bool, error detail if failed)
-- `schedules` (device_id, thresholds, allowed_hours, active bool)
+- `schedules` (device_id, thresholds, allowed_hours, active bool) — implemented as `Schedule`
+  (Batch 5, see 7.4), one optional row per device
 - `plant_profiles` (imported from CSV — see 7.3)
 
 ### 7.3 Health Engine
@@ -214,11 +215,36 @@ rolling baseline has observed a real low point over several real watering cycles
 implement this mechanism without discussing it with DestCom first** — ask the question directly
 when reaching this implementation point (Batch 6), do not choose a default value on his behalf.
 
-### 7.4 Scheduler / auto-watering
+### 7.4 Scheduler / auto-watering (Batch 5, implemented)
 
-- Internal cron (e.g. every X minutes), reads devices with `schedules.active = true`
-- Logic: if the Health Engine indicates a water shortage AND within an allowed time window AND not already watered in the last N hours (pump anti-spam) → trigger watering
-- Systematic logging of every attempt, explicit success or failure
+- `backend/src/health/scheduler.ts` — `setInterval` tick every `SCHEDULER_TICK_INTERVAL_MS` (15min
+  default). Only reads already-collected `Reading` rows (never triggers its own BLE read cycle,
+  only a watering write when it decides to act) — kept deliberately independent from the BLE
+  scan/poll interval.
+- Each tick queries every `PARROT_POT` device with a `plantProfileId` set (Xiaomi has no pump; no
+  profile means the Health Engine can't produce a soil-moisture status to act on) and, per device:
+  1. Resolves the effective schedule (`resolveEffectiveSchedule`) — a device with no `Schedule` row
+     yet still has one: `active` falls back to `plantProfileId != null` (**auto-on as soon as a
+     species is assigned, DestCom's explicit choice — no separate opt-in step**), the allowed-hours
+     window falls back to 6h-20h and the cooldown to 24h.
+  2. Skips if not `active`, outside the allowed hours window, or watered (any source) more
+     recently than `cooldownHours` ago (anti-spam).
+  3. Skips if the Health Engine's overall status is `warming_up` — same safeguard the dashboard
+     uses (7.3): trusting a single parameter before enough personal baseline exists would risk a
+     real-world watering trigger on a false read, not just a wrong badge.
+  4. Triggers watering only if `soilMoisturePercent`'s status is specifically `too_low` (not the
+     overall status — a temperature/luminosity issue never triggers watering, per DestCom).
+- `backend/src/watering.ts`'s `triggerWatering()` is shared between this scheduler and the manual
+  `devices.water` mutation — the never-fire-and-forget contract (7.1) is enforced in one place:
+  every attempt, from either caller, writes an explicit `WateringEvent{success, errorDetail}` row.
+- Configured per device on its detail page ("Arrosage automatique" section) via
+  `schedule.get`/`schedule.upsert` (tRPC) — active toggle, allowed-hours window, cooldown. Not a
+  global setting (`/settings` only links to the per-device page) — each `Schedule` row belongs to
+  one device.
+- **Real-hardware implication**: any Parrot Pot with a plant profile already assigned becomes
+  eligible for autonomous watering the moment this scheduler runs against a real BLE provider — no
+  migration/backfill was done, this falls out of the "no schedule row = active if profile assigned"
+  default applying uniformly to devices assigned before or after this batch.
 
 ### 7.5 Backend API
 
@@ -230,17 +256,20 @@ Batches 4-8. Implemented as `appRouter` (`backend/src/api/trpc/router.ts`), moun
 share the same `/api/trpc` prefix — see `CLAUDE.md`'s backend detail section for the exact
 procedure list and the Date-serialization note. Current procedures:
 
-- `devices.list` — list + latest reading per device
+- `devices.list` — list + latest reading per device, only devices with a name set (see `Device.name`
+  in 7.2/CLAUDE.md — `null` means seen by the scanner but not yet claimed)
+- `devices.listUnnamed` / `devices.rename` — backs the "Add device" screen (Batch 3): list devices
+  the scanner discovered but the user hasn't named yet, and claim one by giving it a name
 - `devices.history` — time series for graphs
 - `devices.wateringEvents` — last 10 watering attempts (success/failure) for a device
 - `devices.water` — manual trigger, never fire-and-forget (7.1)
 - `health.plantProfiles` / `health.assignPlantProfile` / `health.deviceHealth` — Health Engine (7.3)
+- `schedule.get` / `schedule.upsert` — per-device auto-watering configuration (Batch 5, see 7.4).
+  `get` always resolves to a full object (active/allowed hours/cooldown), never `null` — a device
+  with no `Schedule` row yet still has a well-defined effective schedule.
 - `readings.onReading` — subscription, replaces the native WebSocket push of new readings (backed
   by a Node `EventEmitter` server-side, consumed via `@trpc/tanstack-react-query`'s
   `useSubscription` client-side)
-
-`PUT /devices/:id/schedule` (configure thresholds/hours) is not implemented yet — belongs to the
-Batch 5 scheduler, not built.
 
 ### 7.6 Auth
 
@@ -282,6 +311,8 @@ Batch 5 scheduler, not built.
 
 ### 7.11 Plant Dr integration (device-side calibration)
 
+Read the official Parrot BLE doc /docs/FlowerPower-BLE.pdf to see if there's more information about the Plant Dr service.
+
 The **Plant Dr** service (`39e1FD80`) allows configuring a "dry"/"wet" calibration algorithm **directly on the device**. Once its `ALGORITHM_STATUS` is enabled, the Parrot Pot can decide and act autonomously — even if our backend is offline or out of BLE range.
 
 **Confirmed decision (both coexist, this is no longer an open question)**:
@@ -298,11 +329,11 @@ The **Plant Dr** service (`39e1FD80`) allows configuring a "dry"/"wet" calibrati
 
 **Directly usable bonus — `STATUS_FLAGS` (`39e1FD86`) fully decoded**: a single byte in notification, 4 significant bits:
 
-| Bit | Mask   | Meaning                                        |
-| --- | ------ | ----------------------------------------------- |
-| 0   | `0x01` | Soil detected dry                               |
-| 1   | `0x02` | Soil detected wet/saturated                     |
-| 2   | `0x04` | Water reservoir empty ("low reservoir")         |
+| Bit | Mask   | Meaning                                              |
+| --- | ------ | ---------------------------------------------------- |
+| 0   | `0x01` | Soil detected dry                                    |
+| 1   | `0x02` | Soil detected wet/saturated                          |
+| 2   | `0x04` | Water reservoir empty ("low reservoir")              |
 | 3   | `0x08` | Sensor out of soil (probe poorly planted or removed) |
 
 These flags aren't mutually exclusive (soil neither dry nor wet = normal state). To be surfaced directly in the dashboard and/or the Health Engine as a complement to threshold-based scoring — this is info already computed by the firmware, no need to recompute it.
@@ -322,11 +353,11 @@ Custom Parrot base UUID: `39e1xxxx-84a8-11e2-afba-0002a5d5c51b`.
 **Important correction (from `PARROT_BLE_DEEP_DIVE.md`) — sensor characteristics actually to be used**:
 The official app **does NOT use** `39e1fa01` through `39e1fa05` in live mode (these are vestigial characteristics, never subscribed to by the app for the Parrot Pot). Instead it uses:
 
-| UUID       | Role                        | Format                                                     |
-| ---------- | --------------------------- | ------------------------------------------------------------ |
-| `39e1fa09` | VWC (soil moisture, %)      | **little-endian float32**, already calibrated by the firmware |
-| `39e1fa0a` | Temperature (°C)            | float32 LE, already calibrated                                |
-| `39e1fa0b` | Luminosity                  | float32 LE, already calibrated (exact unit confirmed: mol/m²/day) |
+| UUID       | Role                   | Format                                                            |
+| ---------- | ---------------------- | ----------------------------------------------------------------- |
+| `39e1fa09` | VWC (soil moisture, %) | **little-endian float32**, already calibrated by the firmware     |
+| `39e1fa0a` | Temperature (°C)       | float32 LE, already calibrated                                    |
+| `39e1fa0b` | Luminosity             | float32 LE, already calibrated (exact unit confirmed: mol/m²/day) |
 
 **Unit confirmed 100%, no residual ambiguity**: `39e1fa0b` is documented in black and white
 as **"calibrated DLI"** (Daily Light Integral) in the official Parrot PDF
@@ -363,13 +394,13 @@ either one into `scoring.ts`.
 
 **Points confirmed with a high confidence level (direct code reading, not deduction)**:
 
-| Point                          | Confirmation                                                                                                                                                                                                                       |
-| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Manual watering trigger        | Service `39e1F900`, characteristic `39e1F906` (`UUID_WATERING_CMD`), payload `[0x08, 0x00]` = little-endian uint16 worth `8`                                                                                                        |
-| Write type                     | `WRITE_TYPE_DEFAULT` — **write with response** (settles the previous ambiguity)                                                                                                                                                      |
-| Watering mode (`39e1F90D`)     | Write uint8 — `0 = off`, `1 = auto`                                                                                                                                                                                                  |
-| Algorithm status (`39e1F912`)  | Write uint8 — enables/disables the auto-irrigation algorithm (not to be confused with a simple "status" — it's a functional toggle)                                                                                                |
-| Device identification          | A Parrot Pot advertises the `HAWAII_WATER_DEVICE` service (`39e1F900`) in BLE advertisements; a plain Flower Power sensor advertises `HAWAII_SENSOR` (`39e1FA00`) — use this filter to distinguish the two device types when scanning |
+| Point                         | Confirmation                                                                                                                                                                                                                          |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Manual watering trigger       | Service `39e1F900`, characteristic `39e1F906` (`UUID_WATERING_CMD`), payload `[0x08, 0x00]` = little-endian uint16 worth `8`                                                                                                          |
+| Write type                    | `WRITE_TYPE_DEFAULT` — **write with response** (settles the previous ambiguity)                                                                                                                                                       |
+| Watering mode (`39e1F90D`)    | Write uint8 — `0 = off`, `1 = auto`                                                                                                                                                                                                   |
+| Algorithm status (`39e1F912`) | Write uint8 — enables/disables the auto-irrigation algorithm (not to be confused with a simple "status" — it's a functional toggle)                                                                                                   |
+| Device identification         | A Parrot Pot advertises the `HAWAII_WATER_DEVICE` service (`39e1F900`) in BLE advertisements; a plain Flower Power sensor advertises `HAWAII_SENSOR` (`39e1FA00`) — use this filter to distinguish the two device types when scanning |
 
 **Discovered services, up-to-date status**:
 
@@ -424,17 +455,17 @@ divergence.
 
 ## 11. Breakdown into batches (roadmap)
 
-| Batch     | Content                                                                                                                                                                                                                                                                     |
-| --------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Batch 0** | Working Docker + Bluetooth setup on the production server (TP-Link UB500 Plus dongle). **Ask first whether working directly over SSH is wanted (section 6).**                                                                                                                              |
-| **Batch 1** | Xiaomi scanner (passive) + Parrot Pot driver (GATT), with the 3 interchangeable BLE providers (`mock`, `noble-bridge`, `node-ble`) + SQLite/Prisma + minimal API — includes the `39e1fa06` activation prerequisite (section 8) and the retry/reconnection pattern (section 7.1) |
-| **Batch 2** | Auth (BetterAuth, credentials only, OIDC hooks ready)                                                                                                                                                                                                                       |
-| **Batch 3** | Frontend Vite + React + TanStack Query/Router + Tailwind + shadcn/ui (protected by Batch 2's auth)                                                                                                                                                                          |
-| **Batch 4** | Plant DB CSV import + Health Engine (scoring, profiles, trends)                                                                                                                                                                                                             |
-| **Batch 5** | Auto-watering scheduler (wired to the Health Engine)                                                                                                                                                                                                                        |
-| **Batch 6** | Plant Dr integration (device-side dry/wet calibration), as a complement to the Health Engine — both coexist, see section 7.11                                                                                                                                              |
-| **Batch 7** | MQTT client + Home Assistant auto-discovery                                                                                                                                                                                                                                 |
-| **Batch 8** | MCP server (tools listed in 7.8), protected by auth                                                                                                                                                                                                                         |
+| Batch       | Content                                                                                                                                                                                                                                                                           |
+| ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Batch 0** | Working Docker + Bluetooth setup on the production server (TP-Link UB500 Plus dongle). **Ask first whether working directly over SSH is wanted (section 6).**                                                                                                                                       |
+| **Batch 1** | Xiaomi scanner (passive) + Parrot Pot driver (GATT), with the 3 interchangeable BLE providers (`mock`, `noble-bridge`, `node-ble`) + SQLite/Prisma + minimal API — includes the `39e1fa06` activation prerequisite (section 8) and the retry/reconnection pattern (section 7.1)   |
+| **Batch 2** | Auth (BetterAuth, credentials only, OIDC hooks ready)                                                                                                                                                                                                                             |
+| **Batch 3** | Frontend Vite + React + TanStack Query/Router + Tailwind + shadcn/ui (protected by Batch 2's auth)                                                                                                                                                                                |
+| **Batch 4** | Plant DB CSV import + Health Engine (scoring, profiles, trends)                                                                                                                                                                                                                   |
+| **Batch 5** | ✅ Auto-watering scheduler (wired to the Health Engine) — see section 7.4                                                                                                                                                                                                          |
+| **Batch 6** | Plant Dr integration (device-side dry/wet calibration), as a complement to the Health Engine — both coexist, see section 7.11                                                                                                                                                     |
+| **Batch 7** | MQTT client + Home Assistant auto-discovery                                                                                                                                                                                                                                       |
+| **Batch 8** | MCP server (tools listed in 7.8), protected by auth                                                                                                                                                                                                                               |
 | **Batch 9** | Extension to other devices (Flower Power, Flower Care). Also includes an optional empirical exploration: testing raw EC reading on the Parrot Pot (`39e1fa02`) on the real device via the the production server, with no guarantee of a usable result — the official app doesn't use it (section 8) |
 
 _(The old historical "Batch 2" removed: final decision in section 7.10 — fallback to live polling only, already covered by Batch 1, no dedicated development needed.)_

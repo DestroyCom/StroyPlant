@@ -5,6 +5,7 @@ import { ConnectionQueue } from './ble/connectionQueue.js';
 import { startScanner } from './ble/scanner.js';
 import { prisma } from './db/client.js';
 import { env } from './env.js';
+import { startScheduler } from './health/scheduler.js';
 import { log } from './logger.js';
 import { createDeviceProvider } from './providers/factory.js';
 
@@ -48,6 +49,8 @@ async function main() {
     connectionQueue,
     env.parrotPollIntervalMs,
   );
+
+  startScheduler(provider, connectionQueue);
 
   const app = await buildServer(provider, connectionQueue);
   await app.listen({ port: env.port, host: '0.0.0.0' });

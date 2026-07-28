@@ -3,6 +3,7 @@ import { createFileRoute, Link, notFound } from '@tanstack/react-router';
 import { ArrowLeft, BatteryMedium, Check, ChevronDown, Droplets, Info, Sun, Thermometer, X } from 'lucide-react';
 import { useState } from 'react';
 import { toast } from 'sonner';
+import { AutoWateringSection } from '@/components/auto-watering-section';
 import { DeviceKindIcon } from '@/components/device-kind-icon';
 import { HistoryChart, type HistoryReferenceLine } from '@/components/history-chart';
 import { SensorGauge } from '@/components/sensor-gauge';
@@ -216,6 +217,8 @@ function DeviceDetailPage() {
       {supportsSpeciesProfile && (
         <SpeciesPickerDialog open={speciesOpen} onOpenChange={setSpeciesOpen} deviceId={deviceId} currentProfile={device.plantProfile} />
       )}
+
+      {canWater && <AutoWateringSection deviceId={deviceId} hasSpeciesAssigned={device.plantProfile != null} />}
 
       {canWater && (
         <div className="my-7">

@@ -27,4 +27,9 @@ export const env = {
   // personal baseline doesn't have enough data, to avoid false positives from day 1).
   healthBaselineWindowDays: Number(process.env.HEALTH_BASELINE_WINDOW_DAYS ?? 14),
   healthWarmupMinDays: Number(process.env.HEALTH_WARMUP_MIN_DAYS ?? 3),
+  // Auto-watering scheduler (Batch 5, docs/STROYPLANT_SPEC.md section 7.4) — how often the cron
+  // re-evaluates every device's schedule. Deliberately independent from the BLE scan/poll
+  // interval: the scheduler only reads already-collected Reading rows, it never triggers its own
+  // BLE read cycle (only a watering write, when it decides to act).
+  schedulerTickIntervalMs: Number(process.env.SCHEDULER_TICK_INTERVAL_MS ?? 15 * 60_000),
 };

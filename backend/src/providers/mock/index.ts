@@ -39,7 +39,10 @@ function createInitialPots(): MockPotState[] {
       name: 'Parrot pot mock1',
       soilMoisturePercent: 38,
       temperatureC: 21,
-      luminosity: 450,
+      // mol/m²/day (DLI) — confirmed via a real Parrot Pot capture (docs/STROYPLANT_SPEC.md
+      // section 8) to be a small value (indoor readings around 0-10), not the hundreds this used
+      // to be set to (leftover from before that unit was confirmed, looked like lux instead).
+      luminosity: 5,
       waterTankLevelPercent: 90,
       // Synthetic values (no real data collected) — Ec porous > Ecb, consistent with the
       // derivation that removes the soil/air diluting effect (docs/HEALTH_ENGINE.md), used for
@@ -55,7 +58,7 @@ function createInitialPots(): MockPotState[] {
       name: 'Parrot pot mock2',
       soilMoisturePercent: 32,
       temperatureC: 22,
-      luminosity: 300,
+      luminosity: 3,
       waterTankLevelPercent: 0, // empty reservoir from the start — any triggerAction('water') must fail
       soilConductivityEcb: 550,
       soilConductivityEcPorous: 850,
@@ -76,7 +79,7 @@ function applyPotDecay(state: MockPotState): void {
   if (elapsedMinutes <= 0) return;
   state.soilMoisturePercent = Math.max(0, state.soilMoisturePercent - state.declinePerMinute * elapsedMinutes);
   state.temperatureC += (Math.random() - 0.5) * 0.3;
-  state.luminosity = Math.max(0, state.luminosity + (Math.random() - 0.5) * 20);
+  state.luminosity = Math.max(0, state.luminosity + (Math.random() - 0.5) * 0.3);
   state.soilConductivityEcb = Math.max(0, state.soilConductivityEcb + (Math.random() - 0.5) * 10);
   state.soilConductivityEcPorous = Math.max(0, state.soilConductivityEcPorous + (Math.random() - 0.5) * 15);
   state.lastUpdate = Date.now();
