@@ -62,7 +62,7 @@ function SettingsPage() {
           icon={<Bell size={18} className="text-muted-foreground" />}
           title="Notifications"
           description="Alertes réservoir bas, appareil hors ligne ou score de santé dégradé."
-          batch="Lot 7"
+          batch="Non planifié"
         />
         <ComingSoonSection
           icon={<Bot size={18} className="text-muted-foreground" />}

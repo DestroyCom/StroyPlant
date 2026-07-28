@@ -1,4 +1,5 @@
 import type { Device, PlantProfile, Schedule } from '@prisma/client';
+import type { MqttClient } from 'mqtt';
 import type { ConnectionQueue } from '../ble/connectionQueue.js';
 import { prisma } from '../db/client.js';
 import { env } from '../env.js';
@@ -40,7 +41,12 @@ function isWithinAllowedWindow(hour: number, startHour: number, endHour: number)
 
 type DeviceForTick = Device & { plantProfile: PlantProfile | null; schedule: Schedule | null };
 
-async function evaluateDevice(device: DeviceForTick, provider: DeviceProvider, connectionQueue: ConnectionQueue): Promise<void> {
+async function evaluateDevice(
+  device: DeviceForTick,
+  provider: DeviceProvider,
+  connectionQueue: ConnectionQueue,
+  mqttClient: MqttClient | null,
+): Promise<void> {
   const effective = resolveEffectiveSchedule(device, device.schedule);
   if (!effective.active) return;
 
@@ -65,10 +71,10 @@ async function evaluateDevice(device: DeviceForTick, provider: DeviceProvider, c
   if (health.parameters.soilMoisturePercent?.status !== 'too_low') return;
 
   log({ direction: 'WRITE', label: 'Scheduler triggering auto-watering (soil moisture too low)', deviceId: device.id, result: 'OK' });
-  await triggerWatering(device.id, 'CRON', provider, connectionQueue);
+  await triggerWatering(device.id, 'CRON', provider, connectionQueue, mqttClient);
 }
 
-async function tick(provider: DeviceProvider, connectionQueue: ConnectionQueue): Promise<void> {
+async function tick(provider: DeviceProvider, connectionQueue: ConnectionQueue, mqttClient: MqttClient | null): Promise<void> {
   // Only Parrot Pots have a pump; only devices with a species assigned can ever produce a
   // `soilMoisturePercent` status to act on (computeDeviceHealth returns `no_profile` otherwise).
   const devices = await prisma.device.findMany({
@@ -78,7 +84,7 @@ async function tick(provider: DeviceProvider, connectionQueue: ConnectionQueue):
 
   for (const device of devices) {
     try {
-      await evaluateDevice(device, provider, connectionQueue);
+      await evaluateDevice(device, provider, connectionQueue, mqttClient);
     } catch (error) {
       log({
         direction: 'INFO',
@@ -91,9 +97,14 @@ async function tick(provider: DeviceProvider, connectionQueue: ConnectionQueue):
   }
 }
 
-export function startScheduler(provider: DeviceProvider, connectionQueue: ConnectionQueue, intervalMs = env.schedulerTickIntervalMs): void {
+export function startScheduler(
+  provider: DeviceProvider,
+  connectionQueue: ConnectionQueue,
+  mqttClient: MqttClient | null,
+  intervalMs = env.schedulerTickIntervalMs,
+): void {
   log({ direction: 'INFO', label: `Auto-watering scheduler started — tick every ${intervalMs / 60_000}min`, result: 'OK' });
   setInterval(() => {
-    void tick(provider, connectionQueue);
+    void tick(provider, connectionQueue, mqttClient);
   }, intervalMs);
 }

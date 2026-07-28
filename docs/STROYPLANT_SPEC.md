@@ -290,10 +290,62 @@ procedure list and the Date-serialization note. Current procedures:
 - Design now for a future addition of BetterAuth's native OIDC plugin, without rewriting — the future target is a self-hosted IdP such as **Authentik** (LDAP outpost + OIDC provider in one place), not Keycloak (too heavy for this use case)
 - The MCP server (7.8) must be protected by this same auth layer, or at minimum restricted to the local network — never exposed unprotected since it exposes a real action (`trigger_watering`)
 
-### 7.7 Home Assistant integration
+### 7.7 Home Assistant integration (Batch 7, implemented)
 
 - **MQTT + auto-discovery** (no HACS Python custom component — consistent with the refusal to mix Python into a 100% TS stack)
 - The backend publishes sensors on an MQTT topic in HA's discovery format; Home Assistant detects them automatically with no custom code on the HA side
+
+**Implementation** (`backend/src/mqtt/`: `topics.ts`, `discovery.ts`, `client.ts`, `publisher.ts`,
+`commands.ts`):
+
+- **Entirely optional, off by default**: `MQTT_URL` unset means `connectMqtt()` returns `null` and
+  every call site treats that as "skip publishing", never as an error — DestCom has no
+  Mosquitto/Home Assistant instance to test against yet in production, so the integration must
+  never block the backend from starting. `MQTT_USERNAME`/`MQTT_PASSWORD` optional,
+  `MQTT_DISCOVERY_PREFIX` (default `homeassistant`) and `MQTT_BASE_TOPIC` (default `stroyplant`)
+  configurable.
+- **One JSON state topic per device** (`stroyplant/<sanitized-id>/state`), not one raw topic per
+  sensor field — each HA entity's discovery config points at the same state topic with its own
+  `value_template` (e.g. `{{ value_json.soilMoisturePercent }}`). A separate
+  `stroyplant/<id>/health` topic carries the Health Engine's `computeDeviceHealth()` output verbatim
+  (7.3) — the "Statut santé" sensor is only meaningful once a species is assigned, but is always
+  declared so HA shows "unknown" rather than nothing until then.
+- **Entities per device kind**: Parrot Pot gets soil moisture (%), temperature (°C), luminosity
+  (mol/m²/j), reservoir level (%), a health-status sensor, an "Arroser maintenant" **button**, and a
+  "Dernier arrosage" result sensor (see below). Xiaomi gets temperature, humidity, battery, and the
+  same health-status sensor. **Scope explicitly confirmed with DestCom**: the watering button and
+  the health-status sensor were both chosen over the simpler/safer "read-only sensors" default.
+- **Availability**: a single bridge-wide topic (`stroyplant/bridge/status`), `online` published on
+  connect, `offline` as the MQTT client's LWT (retained) — entities go "unavailable" in HA if the
+  backend process dies or loses its broker connection, without per-device BLE-connectivity
+  granularity (that's a different concept, already shown in StroyPlant's own dashboard).
+- **Discovery is republished, not just published once**: at startup, for every already-named
+  (claimed) device; on `devices.rename` (a device just got claimed or renamed — same "claimed"
+  definition `devices.list` already uses, so nothing appears in HA that isn't in StroyPlant's own
+  dashboard); and once from `onDeviceSeen` the first time a device transitions from unnamed to
+  named — needed because the mock provider pre-names its devices directly (unlike real BLE
+  providers, whose raw advertisement never carries a friendly name), so mock devices would
+  otherwise never trigger the `devices.rename` hook at all.
+- **The watering button and the never-fire-and-forget rule (7.1)**: Home Assistant's MQTT `button`
+  component is a fire-and-forget `command_topic` with no built-in per-press result channel. Rather
+  than accept a silent HA-side failure, `triggerWatering()` (`backend/src/watering.ts`) — already
+  shared by the manual `devices.water` mutation and the CRON scheduler — now also takes an optional
+  MQTT client and publishes the outcome (`success`, `errorDetail`, `timestamp`) to a retained
+  `stroyplant/<id>/watering/result` topic **regardless of which surface triggered the watering**, so
+  a failure (e.g. empty reservoir) stays visible in Home Assistant too, not just in StroyPlant's own
+  UI/logs or the `WateringEvent` table. `backend/src/mqtt/commands.ts` subscribes once to
+  `stroyplant/+/watering/set`, resolves the sanitized topic segment back to a real device by
+  recomputing `sanitizeDeviceId()` over every named device (ids are MAC addresses containing `:`,
+  not reversible from the sanitized form), and calls the exact same `triggerWatering()`.
+- **Verified** against the mock provider with a disposable embedded MQTT broker (`aedes`, run
+  standalone in the session scratchpad — the local Docker daemon wasn't running this session, so a
+  disposable Mosquitto container wasn't an option this time): startup discovery for every named
+  device (including real devices already claimed in `dev.db` from earlier batches), live
+  state/health publishing on every poll, a watering button press on the empty-reservoir mock pot
+  producing an explicit failure surfaced both as a `WateringEvent{success:false}` row and over MQTT,
+  and `devices.rename` republishing discovery with the updated device name. No production
+  Mosquitto/HA instance exists yet to validate against — this remains to be re-confirmed once one
+  is available.
 
 ### 7.8 MCP server
 
@@ -474,18 +526,19 @@ divergence.
 
 ## 11. Breakdown into batches (roadmap)
 
-| Batch       | Content                                                                                                                                                                                                                                                                           |
-| ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Batch 0** | Working Docker + Bluetooth setup on the production server (TP-Link UB500 Plus dongle). **Ask first whether working directly over SSH is wanted (section 6).**                                                                                                                                       |
-| **Batch 1** | Xiaomi scanner (passive) + Parrot Pot driver (GATT), with the 3 interchangeable BLE providers (`mock`, `noble-bridge`, `node-ble`) + SQLite/Prisma + minimal API — includes the `39e1fa06` activation prerequisite (section 8) and the retry/reconnection pattern (section 7.1)   |
-| **Batch 2** | Auth (BetterAuth, credentials only, OIDC hooks ready)                                                                                                                                                                                                                             |
-| **Batch 3** | Frontend Vite + React + TanStack Query/Router + Tailwind + shadcn/ui (protected by Batch 2's auth)                                                                                                                                                                                |
-| **Batch 4** | Plant DB CSV import + Health Engine (scoring, profiles, trends)                                                                                                                                                                                                                   |
-| **Batch 5** | ✅ Auto-watering scheduler (wired to the Health Engine) — see section 7.4                                                                                                                                                                                                          |
-| **Batch 6** | ✅ Plant Dr integration (device-side dry/wet calibration + STATUS_FLAGS), complement to the Health Engine, see section 7.11. `ALGORITHM_STATUS` real-hardware test still pending (follow-up)                                                                                     |
-| **Batch 7** | MQTT client + Home Assistant auto-discovery                                                                                                                                                                                                                                       |
-| **Batch 8** | MCP server (tools listed in 7.8), protected by auth                                                                                                                                                                                                                               |
-| **Batch 9** | Extension to other devices (Flower Power, Flower Care). Also includes an optional empirical exploration: testing raw EC reading on the Parrot Pot (`39e1fa02`) on the real device via the the production server, with no guarantee of a usable result — the official app doesn't use it (section 8) |
+| Batch        | Content                                                                                                                                                                                                                                                                           |
+| ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Batch 0**  | Working Docker + Bluetooth setup on the production server (TP-Link UB500 Plus dongle). **Ask first whether working directly over SSH is wanted (section 6).**                                                                                                                                       |
+| **Batch 1**  | Xiaomi scanner (passive) + Parrot Pot driver (GATT), with the 3 interchangeable BLE providers (`mock`, `noble-bridge`, `node-ble`) + SQLite/Prisma + minimal API — includes the `39e1fa06` activation prerequisite (section 8) and the retry/reconnection pattern (section 7.1)   |
+| **Batch 2**  | Auth (BetterAuth, credentials only, OIDC hooks ready)                                                                                                                                                                                                                             |
+| **Batch 3**  | Frontend Vite + React + TanStack Query/Router + Tailwind + shadcn/ui (protected by Batch 2's auth)                                                                                                                                                                                |
+| **Batch 4**  | Plant DB CSV import + Health Engine (scoring, profiles, trends)                                                                                                                                                                                                                   |
+| **Batch 5**  | ✅ Auto-watering scheduler (wired to the Health Engine) — see section 7.4                                                                                                                                                                                                         |
+| **Batch 6**  | ✅ Plant Dr integration (device-side dry/wet calibration + STATUS_FLAGS), complement to the Health Engine, see section 7.11. `ALGORITHM_STATUS` real-hardware test still pending (follow-up)                                                                                      |
+| **Batch 7**  | ✅ MQTT client + Home Assistant auto-discovery, see section 7.7. No production Mosquitto/HA instance to validate against yet (follow-up)                                                                                                                                          |
+| **Batch 8**  | MCP server (tools listed in 7.8), protected by auth                                                                                                                                                                                                                               |
+| **Batch 9**  | Create the Docker evironnement, dockerfile, dockercompose prod, dockercompose test, GitHub action to build image on GHCR, and all the other necessay things                                                                                                                       |
+| **Batch 10** | Extension to other devices (Flower Power, Flower Care). Also includes an optional empirical exploration: testing raw EC reading on the Parrot Pot (`39e1fa02`) on the real device via the the production server, with no guarantee of a usable result — the official app doesn't use it (section 8) |
 
 _(The old historical "Batch 2" removed: final decision in section 7.10 — fallback to live polling only, already covered by Batch 1, no dedicated development needed.)_
 

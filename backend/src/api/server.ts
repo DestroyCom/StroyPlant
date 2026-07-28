@@ -2,13 +2,14 @@ import websocketPlugin from '@fastify/websocket';
 import { fastifyTRPCPlugin } from '@trpc/server/adapters/fastify';
 import { fromNodeHeaders } from 'better-auth/node';
 import Fastify from 'fastify';
+import type { MqttClient } from 'mqtt';
 import { auth } from '../auth/auth.js';
 import type { ConnectionQueue } from '../ble/connectionQueue.js';
 import type { DeviceProvider } from '../providers/types.js';
 import { createContextFactory } from './trpc/context.js';
 import { appRouter } from './trpc/router.js';
 
-export async function buildServer(provider: DeviceProvider, connectionQueue: ConnectionQueue) {
+export async function buildServer(provider: DeviceProvider, connectionQueue: ConnectionQueue, mqttClient: MqttClient | null = null) {
   const app = Fastify({ logger: false });
   await app.register(websocketPlugin);
 
@@ -41,7 +42,7 @@ export async function buildServer(provider: DeviceProvider, connectionQueue: Con
   await app.register(fastifyTRPCPlugin, {
     prefix: '/api/trpc',
     useWSS: true,
-    trpcOptions: { router: appRouter, createContext: createContextFactory({ provider, connectionQueue }) },
+    trpcOptions: { router: appRouter, createContext: createContextFactory({ provider, connectionQueue, mqttClient }) },
   });
 
   return app;

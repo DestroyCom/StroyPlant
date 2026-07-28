@@ -32,4 +32,12 @@ export const env = {
   // interval: the scheduler only reads already-collected Reading rows, it never triggers its own
   // BLE read cycle (only a watering write, when it decides to act).
   schedulerTickIntervalMs: Number(process.env.SCHEDULER_TICK_INTERVAL_MS ?? 15 * 60_000),
+  // MQTT + Home Assistant auto-discovery (Batch 7, docs/STROYPLANT_SPEC.md section 7.7).
+  // MQTT_URL unset means the integration is entirely disabled — DestCom has no broker to test
+  // against yet, so this must never be required for the backend to start.
+  mqttUrl: process.env.MQTT_URL,
+  mqttUsername: process.env.MQTT_USERNAME,
+  mqttPassword: process.env.MQTT_PASSWORD,
+  mqttDiscoveryPrefix: process.env.MQTT_DISCOVERY_PREFIX ?? 'homeassistant',
+  mqttBaseTopic: process.env.MQTT_BASE_TOPIC ?? 'stroyplant',
 };

@@ -170,7 +170,37 @@ the production server:
   - Verified against the mock provider via curl (temp admin user, cleaned up after): checksum
     matches hand-computed XOR, the "no species assigned" guard rejects correctly, and the full
     read → calibrate → re-read round trip reflects the newly written values.
-- **Next batch**: Batch 7 (MQTT client + Home Assistant auto-discovery).
+- **Batch 7** ✅ (2026-07-28) — MQTT client + Home Assistant auto-discovery
+  (`backend/src/mqtt/`: `topics.ts`, `discovery.ts`, `client.ts`, `publisher.ts`, `commands.ts`).
+  Key decisions, confirmed with DestCom rather than assumed:
+  - **Entirely optional**: `MQTT_URL` unset (the real default today — DestCom has no
+    Mosquitto/Home Assistant instance to test against yet) means `connectMqtt()` returns `null`
+    and every call site treats that as "skip publishing", never as an error. Nothing about backend
+    startup depends on a broker being reachable.
+  - **Scope, both explicitly chosen over the simpler/safer defaults**: a "Statut santé" HA sensor
+    mirroring the Health Engine's `computeDeviceHealth()` output, and an "Arroser maintenant" HA
+    **button** (not read-only sensors only). Home Assistant's MQTT button has no built-in per-press
+    result channel, so `triggerWatering()` (`backend/src/watering.ts` — already shared by the
+    manual `devices.water` mutation and the CRON scheduler) now also takes an optional MQTT client
+    and republishes the outcome to a retained `.../watering/result` topic **regardless of trigger
+    source**, extending the never-fire-and-forget rule (7.1) to the HA-visible side too.
+  - **One JSON state topic per device** (`stroyplant/<id>/state`, `.../health`), each entity's
+    discovery config pointing at it via its own `value_template` — not one raw MQTT topic per
+    sensor field.
+  - Discovery (HA auto-discovery format) is republished at startup for every already-named device,
+    on `devices.rename`, and once from `onDeviceSeen` the first time a device transitions to named
+    — the last one needed because the mock provider pre-names its devices directly (unlike real
+    BLE providers), so it would otherwise never hit the `devices.rename` hook.
+  - **Verified** against the mock provider using a disposable embedded MQTT broker (`aedes`, run
+    standalone in the session scratchpad — the local Docker daemon wasn't running this session):
+    startup discovery for every named device (including real devices already claimed in `dev.db`
+    from earlier batches), live state/health publishing, a watering-button press on the
+    empty-reservoir mock pot producing an explicit failure surfaced both as a
+    `WateringEvent{success:false}` row and over MQTT, and `devices.rename` republishing discovery
+    with the updated name. **Not yet validated against a real Mosquitto/Home Assistant instance**
+    (none exists yet) — tracked as a follow-up once DestCom sets one up.
+  - Full design detail in `docs/STROYPLANT_SPEC.md` section 7.7.
+- **Next batch**: Batch 8 (MCP server).
 - **`noble-bridge` validated with real hardware** ✅ (2026-07-27) — a real Parrot Pot
   (`PARROT-A073`) connected and read end-to-end (scan → connect → activate → read
   humidity/temp/luminosity/reservoir → deactivate → disconnect) via the Mac's Bluetooth, data
@@ -201,6 +231,8 @@ backend/         API + business logic (Fastify, Prisma/SQLite, auth, BLE) — ru
   src/ble/         scanner, connectionQueue, Parrot protocol logic (ble/parrot/) and Xiaomi (ble/xiaomi/)
   src/providers/   DeviceProvider implementations (mock, noble-bridge, node-ble) + factory
   src/health/      Health Engine (Batch 4): plant_profiles CSV import + scoring engine
+  src/mqtt/        MQTT client + Home Assistant auto-discovery (Batch 7): topics, discovery
+                   payloads, publisher (state/health/watering-result), commands (HA button → watering)
   src/db/          Prisma client
   prisma/          schema.prisma + migrations
 frontend/        Vite + React SPA + TanStack Router/Query + Tailwind v4 + shadcn/ui (Batch 3)
