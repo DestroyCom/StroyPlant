@@ -38,7 +38,18 @@ function parseRange(rawMin: string | undefined, rawMax: string | undefined): [nu
   return [Number.isNaN(min) ? null : min, Number.isNaN(max) ? null : max];
 }
 
+// Idempotent by design, same as seed-admin.ts: docker-entrypoint.sh runs this on every container
+// boot, not just the first one. Unlike seed-admin's single findUnique check, this skips the whole
+// download+parse pass (not just the upsert) once any profile exists — a full re-import was
+// previously a manual, easy-to-forget step; production ran with 0 rows in plant_profiles until this
+// was actually run once by hand (found empirically on the production server, 2026-07-29).
 async function main() {
+  const existingCount = await prisma.plantProfile.count();
+  if (existingCount > 0) {
+    console.log(`plant_profiles already has ${existingCount} rows — skipping download/import.`);
+    return;
+  }
+
   console.log(`Downloading CSV from ${WATCHFLOWER_CSV_URL}...`);
   const response = await fetch(WATCHFLOWER_CSV_URL);
   if (!response.ok) {

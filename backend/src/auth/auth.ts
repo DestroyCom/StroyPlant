@@ -29,6 +29,19 @@ export const auth = betterAuth({
   // Kept conditional on NODE_ENV=production — still to be set explicitly when the prod
   // Dockerfile is written (nothing sets it today, so env.nodeEnv stays 'development' everywhere).
   trustedOrigins: env.nodeEnv === 'production' ? [] : ['http://localhost:5173'],
+  // Production sits behind a reverse proxy for TLS termination (docs/STROYPLANT_SPEC.md section 14
+  // says front+back share one origin — true, but that origin is still reached through the proxy,
+  // not directly). Without this, better-auth can't resolve a real client IP from the raw socket
+  // (it sees the proxy's own address) and falls back to a single shared rate-limit bucket for
+  // everyone — observed in production logs, 2026-07-29. The proxy already sends X-Forwarded-For;
+  // trustedProxies is scoped to RFC1918 ranges (Docker bridge networks + the LAN) rather than the
+  // proxy's specific container IP, which changes on every network recreate.
+  advanced: {
+    ipAddress: {
+      ipAddressHeaders: ['x-forwarded-for'],
+      trustedProxies: ['127.0.0.1', '::1', '10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16'],
+    },
+  },
   plugins: [
     admin(),
     // MCP server (Batch 8, docs/STROYPLANT_SPEC.md section 7.8) — OAuth 2.1 authorization for MCP

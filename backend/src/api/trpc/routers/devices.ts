@@ -52,6 +52,42 @@ export const devicesRouter = router({
     return withLastReading(updated);
   }),
 
+  // Edits from the device detail page, after claiming (unlike `rename`, which is the claim step
+  // itself and always requires a non-empty name) — all 3 fields optional/independent so the
+  // frontend can save just one at a time. `environment` is storage only for now (DestCom's explicit
+  // choice, 2026-07-29): the Health Engine still scores every device against the same
+  // indoor-calibrated WatchFlower ranges regardless of this value — see docs/HEALTH_ENGINE.md and
+  // the Environment enum's comment in schema.prisma.
+  updateDetails: protectedProcedure
+    .input(
+      z.object({
+        deviceId: z.string(),
+        name: z.string().trim().min(1).optional(),
+        location: z.string().trim().max(120).nullable().optional(),
+        environment: z.enum(['INDOOR', 'OUTDOOR']).nullable().optional(),
+      }),
+    )
+    .mutation(async ({ input }) => {
+      const device = await prisma.device.findUnique({ where: { id: input.deviceId } });
+      if (!device) throw new TRPCError({ code: 'NOT_FOUND', message: 'Device not found' });
+
+      const data: Prisma.DeviceUpdateInput = {};
+      if (input.name !== undefined) data.name = input.name;
+      if (input.location !== undefined) data.location = input.location;
+      if (input.environment !== undefined) data.environment = input.environment;
+
+      const updated = await prisma.device.update({ where: { id: input.deviceId }, data, include: { plantProfile: true } });
+
+      // Only the name change is relevant to Home Assistant's entity naming — matches `rename`'s
+      // own reasoning above.
+      if (input.name !== undefined) {
+        const mqttState = getMqttState();
+        if (mqttState) publishDiscovery(mqttState.client, updated, mqttState);
+      }
+
+      return withLastReading(updated);
+    }),
+
   history: protectedProcedure.input(z.object({ deviceId: z.string(), hours: z.number().optional() })).query(async ({ input }) => {
     const device = await prisma.device.findUnique({ where: { id: input.deviceId } });
     if (!device) throw new TRPCError({ code: 'NOT_FOUND', message: 'Device not found' });

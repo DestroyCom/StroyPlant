@@ -61,11 +61,15 @@ export interface DeviceHealth {
   trend: HealthTrend;
 }
 
+export type Environment = 'INDOOR' | 'OUTDOOR';
+
 export interface Device {
   id: string;
   kind: DeviceKind;
   name: string | null;
   lastSeenAt: string | null;
+  location: string | null;
+  environment: Environment | null;
   lastReading: Reading | null;
   plantProfile: PlantProfile | null;
 }

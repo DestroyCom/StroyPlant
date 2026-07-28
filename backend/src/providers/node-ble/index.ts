@@ -28,6 +28,24 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+// node-ble's Device wrapper (node_modules/node-ble/src/BusHelper.js, verified against the
+// installed 1.13.0 source) registers a D-Bus PropertiesChanged match rule the moment any property
+// is read, and only ever releases it via removeListeners() — which the public Device API calls
+// exclusively from disconnect(). Two places in this file need that release without going through
+// disconnect(): scan() reads advertisement props without ever connecting, and connectDevice()'s
+// own device.connect() can fail before a Device is ever handed to a caller's try/finally. Left
+// unreleased, each of these leaks one match rule forever; production hit BlueZ's dbus-daemon
+// max_match_rules_per_connection (512) within minutes of uptime and crashed the whole process on
+// every occurrence (12 consecutive restarts observed) — root-caused 2026-07-29 via the actual
+// installed node-ble source on the production server, not guessed.
+function releaseDeviceListeners(device: NodeBleDevice): void {
+  try {
+    (device as unknown as { helper: { removeListeners(): void } }).helper.removeListeners();
+  } catch {
+    // best-effort — cleanup must never fail a scan tick or a connect attempt
+  }
+}
+
 // Raw payload only — NO bit-level interpretation as long as the correlation protocol
 // (docs/STROYPLANT_SPEC.md section 7.1) hasn't produced a reproducible result (requires physical
 // access to the devices, not done yet). Must never fail device discovery if
@@ -119,7 +137,15 @@ export function createNodeBleProvider(): DeviceProvider {
     const adapter = await getAdapter();
     if (!(await adapter.isDiscovering())) await adapter.startDiscovery().catch(() => {});
     const device = await withTimeout(adapter.waitDevice(macAddress, CONNECT_TIMEOUT_MS), CONNECT_TIMEOUT_MS + 2000, 'waitDevice');
-    await withTimeout(device.connect(), CONNECT_TIMEOUT_MS, 'connect');
+    try {
+      await withTimeout(device.connect(), CONNECT_TIMEOUT_MS, 'connect');
+    } catch (error) {
+      // device.connect() itself registers a PropertiesChanged listener before calling BlueZ's
+      // Connect() (node-ble's Device.connect()) — on failure this Device is never returned to a
+      // caller's try/finally, so disconnect() (the only public path that releases it) never runs.
+      releaseDeviceListeners(device);
+      throw error;
+    }
     return device;
   }
 
@@ -136,8 +162,9 @@ export function createNodeBleProvider(): DeviceProvider {
         while (Date.now() < cycleDeadline && !signal.aborted) {
           const macs = await adapter.devices();
           for (const mac of macs) {
+            let device: NodeBleDevice | undefined;
             try {
-              const device = await adapter.getDevice(mac);
+              device = await adapter.getDevice(mac);
               const name = await device.getName().catch(() => undefined);
               const kind = name?.startsWith(PARROT_POT_NAME_PREFIX)
                 ? 'PARROT_POT'
@@ -165,6 +192,8 @@ export function createNodeBleProvider(): DeviceProvider {
               onDiscovered({ id: mac, kind, name, rssi, advertisementPayloadHex });
             } catch {
               // the device can disappear between devices() and getDevice() — not an error to report
+            } finally {
+              if (device) releaseDeviceListeners(device);
             }
           }
           await sleep(1000);

@@ -19,7 +19,21 @@ export async function registerStaticFrontend(app: FastifyInstance): Promise<void
     return;
   }
 
-  await app.register(fastifyStatic, { root: FRONTEND_DIST, wildcard: false });
+  await app.register(fastifyStatic, {
+    root: FRONTEND_DIST,
+    wildcard: false,
+    // Vite content-hashes everything under assets/ (a filename only changes when its content
+    // does), so those files can be cached forever — unlike index.html, which must always be
+    // re-fetched fresh since it's what references the current hashed filenames after a deploy.
+    // Previously unset entirely: every page load re-downloaded the full JS/CSS bundle uncached,
+    // reported as pages taking a long time to display (found alongside gzip being off at the
+    // reverse-proxy layer in front of the app, a separate production-infra fix).
+    setHeaders: (res, filePath) => {
+      if (filePath.includes(`${path.sep}assets${path.sep}`)) {
+        res.header('Cache-Control', 'public, max-age=31536000, immutable');
+      }
+    },
+  });
 
   // Mandatory SPA fallback (section 14): any route that isn't /api/*, /mcp*, /.well-known/* nor an
   // existing static asset must return index.html, so TanStack Router's client-side routing works

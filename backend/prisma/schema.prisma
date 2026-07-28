@@ -12,11 +12,23 @@ enum DeviceKind {
   XIAOMI_LYWSD03MMC
 }
 
+// Storage only for now (DestCom's explicit choice, 2026-07-29) — the Health Engine's scoring
+// still compares every device against the same WatchFlower species ranges regardless of this
+// value, even though those ranges are indoor-calibrated (real outdoor sun/temperature swings
+// would make luminosity/temperature scoring meaningless outdoors). Wiring that distinction into
+// scoring is deliberately deferred to a later batch, not guessed at here.
+enum Environment {
+  INDOOR
+  OUTDOOR
+}
+
 model Device {
-  id         String     @id // MAC address, uppercase colon-separated — stable across providers
-  kind       DeviceKind
-  name       String?
-  lastSeenAt DateTime?
+  id          String       @id // MAC address, uppercase colon-separated — stable across providers
+  kind        DeviceKind
+  name        String?
+  lastSeenAt  DateTime?
+  location    String? // free-text placement, e.g. "Salon", "Balcon" — user-entered, not validated
+  environment Environment?
 
   // Optional assignment (Batch 4, Health Engine) — never blocking, same logic as the Plant Dr
   // calibration (section 7.11): a device works perfectly fine with no profile assigned.

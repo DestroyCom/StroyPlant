@@ -1,10 +1,11 @@
 import { useMutation, useQuery, useQueryClient, useSuspenseQuery } from '@tanstack/react-query';
 import { createFileRoute, Link, notFound } from '@tanstack/react-router';
-import { ArrowLeft, BatteryMedium, Check, ChevronDown, Droplets, Info, Sun, Thermometer, X } from 'lucide-react';
+import { ArrowLeft, BatteryMedium, Check, ChevronDown, Droplets, Info, Pencil, Sun, Thermometer, X } from 'lucide-react';
 import { useState } from 'react';
 import { toast } from 'sonner';
 import { AutoWateringSection } from '@/components/auto-watering-section';
 import { DeviceKindIcon } from '@/components/device-kind-icon';
+import { EditDeviceDialog } from '@/components/edit-device-dialog';
 import { HistoryChart, type HistoryReferenceLine } from '@/components/history-chart';
 import { SensorGauge } from '@/components/sensor-gauge';
 import { SpeciesPickerDialog } from '@/components/species-picker-dialog';
@@ -78,6 +79,7 @@ function DeviceDetailPage() {
   const { data: wateringEvents } = useQuery(trpc.devices.wateringEvents.queryOptions({ deviceId }));
   const { data: health } = useQuery(trpc.health.deviceHealth.queryOptions({ deviceId }, { refetchInterval: 60_000 }));
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
   const queryClient = useQueryClient();
 
   const waterMutation = useMutation(
@@ -161,8 +163,20 @@ function DeviceDetailPage() {
             <DeviceKindIcon kind={device.kind} size={44} className={icon} />
           </div>
         </div>
-        <div className="mb-1.5 text-xs font-medium tracking-wide text-muted-foreground uppercase">
-          {device.name ?? device.id} · {formatDeviceKind(device.kind)}
+        <div className="mb-1.5 flex items-center gap-1.5 text-xs font-medium tracking-wide text-muted-foreground uppercase">
+          <span>
+            {device.name ?? device.id} · {formatDeviceKind(device.kind)}
+            {device.location && ` · ${device.location}`}
+            {device.environment && ` · ${device.environment === 'INDOOR' ? 'Intérieur' : 'Extérieur'}`}
+          </span>
+          <button
+            type="button"
+            onClick={() => setEditOpen(true)}
+            className="text-muted-foreground normal-case hover:text-foreground"
+            aria-label="Modifier l'appareil"
+          >
+            <Pencil size={13} />
+          </button>
         </div>
         <h1 className="max-w-lg text-[32px] leading-tight font-black tracking-tight text-foreground">{statusHeadline(device, health)}</h1>
         <p className="mt-3.5 max-w-md text-base text-muted-foreground">{statusDetail(device)}</p>
@@ -386,6 +400,8 @@ function DeviceDetailPage() {
           </div>
         )}
       </div>
+
+      <EditDeviceDialog open={editOpen} onOpenChange={setEditOpen} device={device} />
 
       <Dialog open={confirmOpen} onOpenChange={setConfirmOpen}>
         <DialogContent>
