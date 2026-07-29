@@ -1,0 +1,22 @@
+diff --git a/lib/bus.js b/lib/bus.js
+index 5d679eb347531f548f24872a6c121712e05f4d60..eb5198304385f53faef1f026b49f396e79127768 100644
+--- a/lib/bus.js
++++ b/lib/bus.js
+@@ -461,7 +461,7 @@ class MessageBus extends EventEmitter {
+   }
+ 
+   _addMatch (match) {
+-    if (Object.prototype.hasOwnProperty.call(match, this._matchRules)) {
++    if (Object.prototype.hasOwnProperty.call(this._matchRules, match)) {
+       this._matchRules[match] += 1;
+       return Promise.resolve();
+     }
+@@ -485,7 +485,7 @@ class MessageBus extends EventEmitter {
+       return Promise.resolve();
+     }
+ 
+-    if (Object.prototype.hasOwnProperty.call(match, this._matchRules)) {
++    if (Object.prototype.hasOwnProperty.call(this._matchRules, match)) {
+       this._matchRules[match] -= 1;
+       if (this._matchRules[match] > 0) {
+         return Promise.resolve();

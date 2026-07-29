@@ -9,3 +9,5 @@ allowBuilds:
   esbuild: true
   prisma: true
   usocket: true
+patchedDependencies:
+  dbus-next@0.10.2: patches/dbus-next@0.10.2.patch
