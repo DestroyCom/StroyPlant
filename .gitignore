@@ -13,3 +13,4 @@ backend/prisma/dev.db-journal
 *.db
 *.db-journal
 .DS_Store
+.superpowers/
