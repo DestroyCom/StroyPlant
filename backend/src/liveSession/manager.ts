@@ -31,6 +31,11 @@ interface ActiveSession {
   deviceId: string;
   controller: AbortController;
   startedAt: number;
+  // Stored so stopLiveSession() can cancel it — without this, a manual stop racing a
+  // near-simultaneous auto-cutoff could let the timeout still fire after abort() (e.g. while a
+  // real node-ble provider's post-abort GATT cleanup is still in flight) and overwrite
+  // stopReason from 'stopped' to 'timeout', misreporting a manual stop as a timeout.
+  timeoutHandle: ReturnType<typeof setTimeout>;
 }
 
 // Module-level singleton state, same pattern as mqtt/manager.ts — exactly one live session
@@ -60,18 +65,21 @@ export function startLiveSession(
 
   const controller = new AbortController();
   let stopReason: 'stopped' | 'timeout' = 'stopped';
-  activeSession = { deviceId, controller, startedAt: Date.now() };
 
   const timeoutHandle = setTimeout(() => {
     stopReason = 'timeout';
     controller.abort();
   }, maxDurationMs);
 
+  activeSession = { deviceId, controller, startedAt: Date.now(), timeoutHandle };
+
   const onSample = async (reading: SensorReading): Promise<void> => {
+    // try/catch scoped to persistReading only — a downstream 'event' listener throwing must
+    // never be caught here and misreported under the "persist failed" label when persistence
+    // actually succeeded.
+    let created: Awaited<ReturnType<typeof persistReading>>;
     try {
-      const created = await persistReading(deviceId, kind, reading, 'LIVE');
-      const event: LiveSampleEvent = { type: 'sample', deviceId, reading: serializeReading(created) };
-      liveSessionEmitter.emit('event', event);
+      created = await persistReading(deviceId, kind, reading, 'LIVE');
     } catch (error) {
       // Best-effort persistence for a streaming UI feature — a single failed DB write must never
       // kill an otherwise-healthy live session (unlike a real BLE device action, which
@@ -83,7 +91,10 @@ export function startLiveSession(
         result: 'ERROR',
         detail: error instanceof Error ? error.message : String(error),
       });
+      return;
     }
+    const event: LiveSampleEvent = { type: 'sample', deviceId, reading: serializeReading(created) };
+    liveSessionEmitter.emit('event', event);
   };
 
   connectionQueue
@@ -103,11 +114,25 @@ export function startLiveSession(
     .finally(() => {
       clearTimeout(timeoutHandle);
       activeSession = null;
+    })
+    .catch((error: unknown) => {
+      // Defensive only: a synchronous throw inside a liveSessionEmitter 'event' listener (in
+      // either .then() branch above) would otherwise be an unhandled rejection. activeSession is
+      // already cleared correctly by .finally() regardless — this just prevents the process-level
+      // warning/crash.
+      log({
+        direction: 'INFO',
+        label: 'Live session settlement handler threw',
+        deviceId,
+        result: 'ERROR',
+        detail: error instanceof Error ? error.message : String(error),
+      });
     });
 }
 
 export function stopLiveSession(deviceId: string): void {
   if (activeSession?.deviceId === deviceId) {
+    clearTimeout(activeSession.timeoutHandle);
     activeSession.controller.abort();
   }
 }
