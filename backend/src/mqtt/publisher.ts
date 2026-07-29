@@ -27,7 +27,10 @@ export async function publishHealthState(client: MqttClient, deviceId: string, b
 
   const healthSettings = await getHealthSettings();
   const since = new Date(Date.now() - healthSettings.baselineWindowDays * 24 * 3600_000);
-  const readings = await prisma.reading.findMany({ where: { deviceId, timestamp: { gte: since } }, orderBy: { timestamp: 'asc' } });
+  const readings = await prisma.reading.findMany({
+    where: { deviceId, timestamp: { gte: since }, source: 'POLL' },
+    orderBy: { timestamp: 'asc' },
+  });
   const health = computeDeviceHealth(device, readings, device.plantProfile, healthSettings.warmupMinDays);
   client.publish(healthTopic(baseTopic, deviceId), JSON.stringify(health), { qos: 0, retain: true });
 }

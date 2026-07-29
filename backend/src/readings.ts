@@ -1,3 +1,4 @@
+import type { ReadingSource } from '@prisma/client';
 import { emitReading } from './api/trpc/readingsEmitter.js';
 import { serializeReading } from './api/trpc/serialize.js';
 import { prisma } from './db/client.js';
@@ -6,11 +7,13 @@ import { publishHealthState, publishReadingState } from './mqtt/publisher.js';
 import type { DeviceKind, SensorReading } from './providers/types.js';
 
 // Shared by the scanner's automatic poll cycle (ble/scanner.ts, via index.ts's onReading
-// callback) and the manual "sync now" tRPC mutation (devices.sync) — a manual sync must
-// persist/broadcast a reading identically to an automatic poll, not duplicate this logic (same
-// reasoning as triggerWatering() in watering.ts being shared between the manual water mutation and
-// the auto-watering scheduler).
-export async function persistReading(deviceId: string, kind: DeviceKind, reading: SensorReading) {
+// callback), the manual "sync now"/"forcer la synchro" tRPC mutations (devices.sync/forceSyncAll),
+// and the live-mode session manager (liveSession/manager.ts) — every producer of a Reading row
+// goes through this one function so persistence/broadcast never diverges between them. `source` is
+// required (no default) so every call site is explicit about which one it is — POLL rows feed the
+// Health Engine's rolling baseline and history charts, LIVE rows never do (see
+// docs/superpowers/specs/2026-07-29-live-sensor-mode-design.md).
+export async function persistReading(deviceId: string, kind: DeviceKind, reading: SensorReading, source: ReadingSource) {
   const data =
     reading.kind === 'PARROT_POT'
       ? {
@@ -31,7 +34,7 @@ export async function persistReading(deviceId: string, kind: DeviceKind, reading
           batteryPercent: reading.data.batteryPercent,
         };
 
-  const created = await prisma.reading.create({ data: { deviceId, ...data } });
+  const created = await prisma.reading.create({ data: { deviceId, source, ...data } });
   emitReading({ deviceId, kind, reading: serializeReading(created) });
 
   const mqttState = getMqttState();

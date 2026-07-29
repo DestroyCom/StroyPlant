@@ -97,7 +97,7 @@ export const devicesRouter = router({
     const hours = input.hours ?? 24;
     const since = new Date(Date.now() - hours * 60 * 60 * 1000);
     const readings = await prisma.reading.findMany({
-      where: { deviceId: device.id, timestamp: { gte: since } },
+      where: { deviceId: device.id, timestamp: { gte: since }, source: 'POLL' },
       orderBy: { timestamp: 'asc' },
     });
     return readings.map((reading) => serializeReading(reading));
@@ -141,7 +141,7 @@ export const devicesRouter = router({
       throw new TRPCError({ code: 'BAD_GATEWAY', message: error instanceof Error ? error.message : String(error) });
     }
 
-    await persistReading(device.id, device.kind, reading);
+    await persistReading(device.id, device.kind, reading, 'POLL');
 
     const updated = await prisma.device.findUniqueOrThrow({ where: { id: device.id }, include: { plantProfile: true } });
     return withLastReading(updated);
@@ -160,7 +160,7 @@ export const devicesRouter = router({
     for (const device of devices) {
       void ctx.connectionQueue
         .run(() => ctx.provider.readSensors(device.id, device.kind))
-        .then((reading) => persistReading(device.id, device.kind, reading))
+        .then((reading) => persistReading(device.id, device.kind, reading, 'POLL'))
         .catch((error) => {
           log({
             direction: 'READ',

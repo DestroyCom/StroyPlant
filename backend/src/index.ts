@@ -42,7 +42,7 @@ async function main() {
         }
       },
       async onReading(deviceId, kind, reading) {
-        await persistReading(deviceId, kind, reading);
+        await persistReading(deviceId, kind, reading, 'POLL');
       },
     },
     connectionQueue,

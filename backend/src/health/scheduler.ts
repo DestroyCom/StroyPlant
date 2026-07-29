@@ -54,7 +54,7 @@ async function evaluateDevice(device: DeviceForTick, provider: DeviceProvider, c
   const healthSettings = await getHealthSettings();
   const since = new Date(Date.now() - healthSettings.baselineWindowDays * 24 * 3600_000);
   const readings = await prisma.reading.findMany({
-    where: { deviceId: device.id, timestamp: { gte: since } },
+    where: { deviceId: device.id, timestamp: { gte: since }, source: 'POLL' },
     orderBy: { timestamp: 'asc' },
   });
   const health = computeDeviceHealth(device, readings, device.plantProfile, healthSettings.warmupMinDays);

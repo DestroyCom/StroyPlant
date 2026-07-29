@@ -10,6 +10,7 @@ export type DeviceKind = 'PARROT_POT' | 'XIAOMI_LYWSD03MMC';
 export interface Reading {
   id: number;
   deviceId: string;
+  source: 'POLL' | 'LIVE';
   timestamp: string;
   soilMoisturePercent: number | null;
   temperatureC: number | null;
