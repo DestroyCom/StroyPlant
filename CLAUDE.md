@@ -390,6 +390,56 @@ production server:
   - BetterAuth now trusts the reverse proxy's forwarded-for header (`auth/auth.ts`), fixing a
     "could not determine a client IP" rate-limit warning in the logs.
   - Hashed static assets served by `api/staticFrontend.ts` now get long-lived cache headers.
+- **Live sensor mode** ✅ (2026-07-29) — real-time GATT sampling (continuous notifications, ~1/s for
+  Parrot Pot, firmware-controlled for Xiaomi) instead of waiting for the scanner's ~5min poll.
+  Backend (`src/liveSession/manager.ts`) + frontend (`LiveModeSection` component on device detail page)
+  + new `liveSession` tRPC router (`status`, `start`, `stop`, `onSample` subscription). Full design rationale
+  in `docs/superpowers/specs/2026-07-29-live-sensor-mode-design.md`. Key implementation decisions, all
+  explicit:
+  - **Single shared GATT connection constraint**: the project has exactly one dongle/connection at a time,
+    shared by the scanner's ~5min poll, the auto-watering scheduler, and now live sessions. Bounding it:
+    only one live session globally active at a time (a second attempt throws `CONFLICT` immediately, never
+    silently queues); hard 5-minute auto-cutoff (`LIVE_SESSION_MAX_DURATION_MS`), even if the user stays on
+    the page; ending a session (auto-cutoff / manual stop / leaving the page) immediately frees the queue
+    for everything else.
+  - **`Reading.source` tagging** (`POLL`/`LIVE`): persisted on every sample, 4 read sites now filter by source
+    — polling loop (`ble/scanner.ts`), manual sync mutations (`devices.sync`/`forceSyncAll`), auto-watering
+    scheduler, and MQTT publisher all explicitly skip/include based on source as their use case requires
+    (e.g., the scheduler only re-checks recent readings, not old polled baseline; the MQTT publisher
+    publishes live samples in real-time but ignores ancient polled readings).
+  - **Provider scope**: `mock` (full simulation with debouncing, used in dev/testing) and `node-ble`
+    (production BlueZ/D-Bus) both implement real `subscribeLive(deviceId, kind, onSample, signal)` —
+    Parrot Pot via GATT notify on the 3 sensor characteristics (soil/temp/lux), Xiaomi likewise. `noble-bridge`
+    explicitly throws "not implemented" if called. **node-ble implementation unverified on real hardware**
+    (matching the "not yet validated" phrasing used elsewhere for the same gap) — first live test happens
+    on the production server once DestCom tries the feature.
+  - **Abort-signal handling (node-ble)**: `subscribeLive` re-checks `signal.aborted` at multiple points
+    during connection setup (connectDevice / gatt() / getPrimaryService / getCharacteristic / startNotifications),
+    not just once at function entry — a race where an abort landed while connectDevice was blocked waiting
+    ~20s for the device's next advertisement used to be lost (the live-notify loop, the only place with an
+    abort listener, never got created to observe it), leaving the connection hung forever and starving
+    `connectionQueue`. Fixed during Task 4 review.
+  - **onSample error propagation (node-ble + mock)**: failures persisting a live sample (e.g., a transient
+    DB write while the graph is updating) must end the session as a thrown error, never silently become an
+    unhandled rejection. Both providers chain `onSample` calls with a pending promise that catches and
+    rejects the session on error (Xiaomi notify loop and Parrot Pot debounce-flushed loop both use this).
+    Fixed during Task 4 review.
+  - **stopLiveSession timer cleanup**: `stopLiveSession(deviceId)` now also calls `clearTimeout()` on the
+    pending auto-cutoff timer — without this, a manual stop racing a near-simultaneous auto-cutoff could
+    let the timeout still fire after abort() (e.g. while GATT cleanup is in flight) and overwrite stopReason
+    from 'stopped' to 'timeout', misreporting a manual stop as a timeout. Fixed during Task 4 review.
+  - **Frontend UX**: on a non-manual end (timeout or `error` reason), displays a transient "Session terminée"
+    notice with details (e.g., "Session terminée : coupure automatique après 5 minutes.") that auto-clears
+    after 6s. Also auto-resumes watching an already-active session if the page reloads while one is running
+    on that device (guarded against re-firing on the component's own `endSession()` call, a race that would
+    otherwise mask the "session terminée" notice). Manual stops ('stopped' reason) need no extra message,
+    the button's revert is feedback enough. Implemented via `hasAttemptedResumeRef`, checked once per mount.
+  - **Verification**: end-to-end against the mock provider (real hardware unavailable in this dev environment)
+    — session lifecycle (start/auto-cutoff/manual stop/error cases), the 5-min timer countdown, live sample
+    persistence with correct `source='LIVE'` tagging, debouncing on the Parrot side, and the "session terminée"
+    notices all working. Per-device page reload resume tested. **Known gap**: a full backend-process restart
+    mid-session currently leaves the frontend's WS subscription stuck retrying with no error shown — a product
+    decision (bounding retries or adding a client staleness timeout) not yet made, tracked as follow-up.
 - **Next batch**: Batch 10 (extension to other devices — Flower Power, Flower Care).
 - **`noble-bridge` validated with real hardware** ✅ (2026-07-27) — a real Parrot Pot
   (`PARROT-A073`) connected and read end-to-end (scan → connect → activate → read
@@ -507,7 +557,8 @@ Dockerfile, docker-entrypoint.sh, docker-compose.prod.yml, docker-compose.test.y
   `deviceHealth`, `getSettings`/`upsertSettings` — Health Engine baseline/warm-up config, DB-backed,
   see Project status), `mqtt` (`get`, `upsert` — MQTT broker config, DB-backed, see Project status),
   `schedule` (`get`, `upsert` — Batch 5 auto-watering config, see Project status),
-  `plantDr` (`getCalibration`, `calibrateWet` — Batch 6 device-side calibration, see Project status)
+  `plantDr` (`getCalibration`, `calibrateWet` — Batch 6 device-side calibration, see Project status),
+  `liveSession` (`status`, `start`, `stop`, `onSample` — real-time GATT sampling, see Project status)
   and `readings`
   (`onReading`, a subscription) into `appRouter`; its type (`AppRouter`) is the single source of
   truth shared with the frontend. `trpc.ts` defines `publicProcedure`/`protectedProcedure`
