@@ -195,42 +195,63 @@ export function createMockProvider(): DeviceProvider {
 
     async subscribeLive(deviceId: string, kind, onSample, signal): Promise<void> {
       await new Promise<void>((resolve, reject) => {
-        const interval = setInterval(() => {
-          void (async () => {
-            try {
-              if (kind === 'XIAOMI_LYWSD03MMC') {
-                const sensor = xiaomiSensors.get(deviceId);
-                if (!sensor) throw new Error(`Mock device ${deviceId} inconnu`);
-                applyXiaomiNoise(sensor);
-                await onSample({
-                  kind: 'XIAOMI_LYWSD03MMC',
-                  data: {
-                    temperatureC: sensor.temperatureC,
-                    humidityPercent: sensor.humidityPercent,
-                    batteryPercent: sensor.batteryPercent,
-                  },
-                });
-                return;
-              }
+        if (signal.aborted) {
+          resolve();
+          return;
+        }
 
-              const pot = pots.get(deviceId);
-              if (!pot) throw new Error(`Mock device ${deviceId} inconnu`);
-              applyPotDecay(pot);
-              await onSample({
-                kind: 'PARROT_POT',
-                data: { soilMoisturePercent: pot.soilMoisturePercent, temperatureC: pot.temperatureC, luminosity: pot.luminosity },
-              });
-            } catch (error) {
-              clearInterval(interval);
-              reject(error);
-            }
-          })();
-        }, MOCK_LIVE_SAMPLE_INTERVAL_MS);
+        let timeoutId: ReturnType<typeof setTimeout> | null = null;
+
+        const scheduleNextTick = () => {
+          if (signal.aborted) {
+            resolve();
+            return;
+          }
+
+          timeoutId = setTimeout(() => {
+            void (async () => {
+              try {
+                if (kind === 'XIAOMI_LYWSD03MMC') {
+                  const sensor = xiaomiSensors.get(deviceId);
+                  if (!sensor) throw new Error(`Mock device ${deviceId} inconnu`);
+                  applyXiaomiNoise(sensor);
+                  await onSample({
+                    kind: 'XIAOMI_LYWSD03MMC',
+                    data: {
+                      temperatureC: sensor.temperatureC,
+                      humidityPercent: sensor.humidityPercent,
+                      batteryPercent: sensor.batteryPercent,
+                    },
+                  });
+                } else {
+                  const pot = pots.get(deviceId);
+                  if (!pot) throw new Error(`Mock device ${deviceId} inconnu`);
+                  applyPotDecay(pot);
+                  await onSample({
+                    kind: 'PARROT_POT',
+                    data: { soilMoisturePercent: pot.soilMoisturePercent, temperatureC: pot.temperatureC, luminosity: pot.luminosity },
+                  });
+                }
+
+                scheduleNextTick();
+              } catch (error) {
+                if (timeoutId !== null) {
+                  clearTimeout(timeoutId);
+                }
+                reject(error);
+              }
+            })();
+          }, MOCK_LIVE_SAMPLE_INTERVAL_MS);
+        };
+
+        scheduleNextTick();
 
         signal.addEventListener(
           'abort',
           () => {
-            clearInterval(interval);
+            if (timeoutId !== null) {
+              clearTimeout(timeoutId);
+            }
             resolve();
           },
           { once: true },
