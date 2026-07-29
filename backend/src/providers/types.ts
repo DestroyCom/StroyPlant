@@ -64,6 +64,20 @@ export interface DeviceProvider {
   // (already known from discovery) since a provider can't always infer device type from id alone.
   readSensors(deviceId: string, kind: DeviceKind): Promise<SensorReading>;
 
+  // Streams live sensor samples (real GATT notify on the Parrot Pot, best-effort on the Xiaomi —
+  // see docs/superpowers/specs/2026-07-29-live-sensor-mode-design.md) until `signal` aborts.
+  // Resolves cleanly on abort. Throws on any unrecoverable failure (GATT error, unexpected
+  // disconnect) — callers must treat a thrown error as the session having ended abnormally, never
+  // retry it themselves (a live session that already streamed real samples must not silently
+  // restart from scratch). `onSample` is awaited before the provider processes the next
+  // notification, so persistence (which it triggers) never races itself.
+  subscribeLive(
+    deviceId: string,
+    kind: DeviceKind,
+    onSample: (reading: SensorReading) => Promise<void>,
+    signal: AbortSignal,
+  ): Promise<void>;
+
   triggerAction(deviceId: string, action: DeviceAction): Promise<void>;
 
   // Plant Dr device-side calibration (Batch 6, docs/STROYPLANT_SPEC.md section 7.11), Parrot Pot

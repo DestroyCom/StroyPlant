@@ -113,6 +113,8 @@ function applyXiaomiNoise(state: MockXiaomiState): void {
   state.lastUpdate = Date.now();
 }
 
+const MOCK_LIVE_SAMPLE_INTERVAL_MS = 1000;
+
 export function createMockProvider(): DeviceProvider {
   const pots = new Map(createInitialPots().map((p) => [p.id, p]));
   const xiaomiSensors = new Map(createInitialXiaomi().map((x) => [x.id, x]));
@@ -189,6 +191,51 @@ export function createMockProvider(): DeviceProvider {
           isInAir: statusFlags.isInAir,
         },
       };
+    },
+
+    async subscribeLive(deviceId: string, kind, onSample, signal): Promise<void> {
+      await new Promise<void>((resolve, reject) => {
+        const interval = setInterval(() => {
+          void (async () => {
+            try {
+              if (kind === 'XIAOMI_LYWSD03MMC') {
+                const sensor = xiaomiSensors.get(deviceId);
+                if (!sensor) throw new Error(`Mock device ${deviceId} inconnu`);
+                applyXiaomiNoise(sensor);
+                await onSample({
+                  kind: 'XIAOMI_LYWSD03MMC',
+                  data: {
+                    temperatureC: sensor.temperatureC,
+                    humidityPercent: sensor.humidityPercent,
+                    batteryPercent: sensor.batteryPercent,
+                  },
+                });
+                return;
+              }
+
+              const pot = pots.get(deviceId);
+              if (!pot) throw new Error(`Mock device ${deviceId} inconnu`);
+              applyPotDecay(pot);
+              await onSample({
+                kind: 'PARROT_POT',
+                data: { soilMoisturePercent: pot.soilMoisturePercent, temperatureC: pot.temperatureC, luminosity: pot.luminosity },
+              });
+            } catch (error) {
+              clearInterval(interval);
+              reject(error);
+            }
+          })();
+        }, MOCK_LIVE_SAMPLE_INTERVAL_MS);
+
+        signal.addEventListener(
+          'abort',
+          () => {
+            clearInterval(interval);
+            resolve();
+          },
+          { once: true },
+        );
+      });
     },
 
     async triggerAction(deviceId: string, action): Promise<void> {
