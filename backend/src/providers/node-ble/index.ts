@@ -77,6 +77,11 @@ async function readParrotAdvertisementPayload(device: NodeBleDevice): Promise<st
 
 const XIAOMI_NOTIFY_TIMEOUT_MS = 15000;
 
+// The 3 Parrot Pot live characteristics (soil/temp/lux) notify independently, not in lockstep —
+// this debounce combines whatever's most recently known into one combined sample instead of
+// persisting 3x/second with 2 stale fields each time (see subscribeLive below).
+const LIVE_SAMPLE_DEBOUNCE_MS = 150;
+
 // The LYWSD03MMC (unlike the Parrot Pot) can't be read with a simple readValue() — you have to
 // subscribe to notifications on ebe0ccc1 and wait for the first value (validated empirically on
 // a real device, see backend/src/ble/xiaomi/uuids.ts).
@@ -423,6 +428,153 @@ export function createNodeBleProvider(): DeviceProvider {
           }
         },
       });
+    },
+
+    // Deliberately does NOT wrap the whole session in withGattRetry like readSensors does — that
+    // helper's retry semantics assume a quick one-shot operation; retrying a multi-minute live
+    // session from scratch after it already streamed real samples would be wrong. Only the
+    // initial connectDevice() call can fail outright (surfaced as a thrown error, no retry) — a
+    // mid-session disconnect ends the function the same way.
+    async subscribeLive(deviceId: string, kind, onSample, signal): Promise<void> {
+      // A signal that's already aborted before this method is even called must return
+      // immediately — an `addEventListener('abort', ...)` added afterward never fires for an
+      // event that already happened (AbortSignal semantics), which would otherwise hang forever
+      // (found during Task 3's review on the mock provider — the same class of bug applies here).
+      if (signal.aborted) return;
+
+      if (kind === 'XIAOMI_LYWSD03MMC') {
+        const device = await connectDevice(deviceId);
+        try {
+          const gatt = await withTimeout(device.gatt(), CONNECT_TIMEOUT_MS, 'gatt');
+          const dataService = await gatt.getPrimaryService(XIAOMI_DATA_SERVICE_UUID);
+          const tempHumidityChar = await dataService.getCharacteristic(TEMP_HUMIDITY_CHARACTERISTIC_UUID);
+          await tempHumidityChar.startNotifications();
+          try {
+            await new Promise<void>((resolve, reject) => {
+              let pending: Promise<void> = Promise.resolve();
+              const onValue = (buf: Buffer) => {
+                const data = parseTempHumidityPayload(buf);
+                pending = pending.then(() => onSample({ kind: 'XIAOMI_LYWSD03MMC', data }));
+              };
+              const onAbort = () => {
+                tempHumidityChar.removeListener('valuechanged', onValue);
+                device.removeListener('disconnect', onDisconnect);
+                resolve();
+              };
+              const onDisconnect = () => {
+                tempHumidityChar.removeListener('valuechanged', onValue);
+                signal.removeEventListener('abort', onAbort);
+                reject(new Error('Device disconnected unexpectedly during live session'));
+              };
+              tempHumidityChar.on('valuechanged', onValue);
+              signal.addEventListener('abort', onAbort, { once: true });
+              device.once('disconnect', onDisconnect);
+            });
+          } finally {
+            await tempHumidityChar.stopNotifications().catch(() => {});
+            releaseDbusListeners(tempHumidityChar);
+          }
+        } finally {
+          await withTimeout(device.disconnect(), CONNECT_TIMEOUT_MS, 'disconnect').catch(() => {});
+          releaseDbusListeners(device);
+        }
+        return;
+      }
+
+      const device = await connectDevice(deviceId);
+      const characteristics: GattCharacteristic[] = [];
+      try {
+        const gatt = await withTimeout(device.gatt(), CONNECT_TIMEOUT_MS, 'gatt');
+        const sensorService = await gatt.getPrimaryService(SENSOR_SERVICE_UUID);
+
+        const measurePeriod = await trackedCharacteristic(sensorService, UUIDS.live.measurePeriod, characteristics);
+        await measurePeriod.writeValueWithResponse(Buffer.from([1]));
+        log({
+          direction: 'WRITE',
+          label: 'Activate live measure period (live session)',
+          uuid: UUIDS.live.measurePeriod,
+          deviceId,
+          payloadHex: '01',
+          result: 'OK',
+        });
+
+        const soilChar = await trackedCharacteristic(sensorService, UUIDS.live.soilMoisturePercent, characteristics);
+        const tempChar = await trackedCharacteristic(sensorService, UUIDS.live.temperatureC, characteristics);
+        const luxChar = await trackedCharacteristic(sensorService, UUIDS.live.luminosity, characteristics);
+
+        await soilChar.startNotifications();
+        await tempChar.startNotifications();
+        await luxChar.startNotifications();
+
+        try {
+          await new Promise<void>((resolve, reject) => {
+            const pending: { soilMoisturePercent?: number; temperatureC?: number; luminosity?: number } = {};
+            let flushTimer: NodeJS.Timeout | undefined;
+            let flushing: Promise<void> = Promise.resolve();
+
+            const scheduleFlush = () => {
+              if (flushTimer) return;
+              flushTimer = setTimeout(() => {
+                flushTimer = undefined;
+                if (pending.soilMoisturePercent === undefined || pending.temperatureC === undefined || pending.luminosity === undefined) {
+                  return; // wait for the first complete triple before ever sampling
+                }
+                const snapshot = {
+                  soilMoisturePercent: pending.soilMoisturePercent,
+                  temperatureC: pending.temperatureC,
+                  luminosity: pending.luminosity,
+                };
+                flushing = flushing.then(() => onSample({ kind: 'PARROT_POT', data: snapshot }));
+              }, LIVE_SAMPLE_DEBOUNCE_MS);
+            };
+
+            const onSoil = (buf: Buffer) => {
+              pending.soilMoisturePercent = buf.readFloatLE(0);
+              scheduleFlush();
+            };
+            const onTemp = (buf: Buffer) => {
+              pending.temperatureC = buf.readFloatLE(0);
+              scheduleFlush();
+            };
+            const onLux = (buf: Buffer) => {
+              pending.luminosity = buf.readFloatLE(0);
+              scheduleFlush();
+            };
+
+            const cleanupListeners = () => {
+              soilChar.removeListener('valuechanged', onSoil);
+              tempChar.removeListener('valuechanged', onTemp);
+              luxChar.removeListener('valuechanged', onLux);
+              if (flushTimer) clearTimeout(flushTimer);
+            };
+            const onAbort = () => {
+              cleanupListeners();
+              device.removeListener('disconnect', onDisconnect);
+              resolve();
+            };
+            const onDisconnect = () => {
+              cleanupListeners();
+              signal.removeEventListener('abort', onAbort);
+              reject(new Error('Device disconnected unexpectedly during live session'));
+            };
+
+            soilChar.on('valuechanged', onSoil);
+            tempChar.on('valuechanged', onTemp);
+            luxChar.on('valuechanged', onLux);
+            signal.addEventListener('abort', onAbort, { once: true });
+            device.once('disconnect', onDisconnect);
+          });
+        } finally {
+          for (const characteristic of [soilChar, tempChar, luxChar]) {
+            await characteristic.stopNotifications().catch(() => {});
+          }
+          await measurePeriod.writeValueWithResponse(Buffer.from([0])).catch(() => {});
+        }
+      } finally {
+        for (const characteristic of characteristics) releaseDbusListeners(characteristic);
+        await withTimeout(device.disconnect(), CONNECT_TIMEOUT_MS, 'disconnect').catch(() => {});
+        releaseDbusListeners(device);
+      }
     },
 
     async triggerAction(deviceId: string, action): Promise<void> {
