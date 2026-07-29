@@ -33,24 +33,65 @@ const XIAOMI_METRICS: MetricSpec[] = [
 // project-wide: only one live session at a time, hence the `status` query below.
 export function LiveModeSection({ deviceId, kind }: { deviceId: string; kind: DeviceKind }) {
   const queryClient = useQueryClient();
-  const { data: status } = useQuery(trpc.liveSession.status.queryOptions(undefined, { refetchInterval: 5000 }));
+  const { data: status, isLoading: statusLoading } = useQuery(trpc.liveSession.status.queryOptions(undefined, { refetchInterval: 5000 }));
   const [isLive, setIsLive] = useState(false);
   const [remainingMs, setRemainingMs] = useState(LIVE_SESSION_MAX_DURATION_MS);
   const startedAtRef = useRef(0);
   const [buffers, setBuffers] = useState<Record<string, HistoryPoint[]>>({});
+  // Transient "Session terminée" message shown after a non-manual end (timeout or error) — a
+  // manual stop (reason 'stopped') needs no message, the user already sees the button revert.
+  const [endedNotice, setEndedNotice] = useState<string | null>(null);
 
   const metrics = kind === 'PARROT_POT' ? PARROT_METRICS : XIAOMI_METRICS;
   const activeElsewhere = status != null && status.deviceId !== deviceId;
+  // Guards the resume-on-mount effect below so it only ever acts once per mount, on the first
+  // status resolution — NOT every time `isLive` locally flips (see its own comment for why that
+  // distinction matters).
+  const hasAttemptedResumeRef = useRef(false);
 
-  function endSession() {
+  function endSession(notice?: string) {
     setIsLive(false);
+    setEndedNotice(notice ?? null);
     void queryClient.invalidateQueries({ queryKey: trpc.liveSession.status.queryKey() });
   }
+
+  // Auto-clear the transient "ended" notice after a few seconds instead of leaving it stuck.
+  useEffect(() => {
+    if (!endedNotice) return;
+    const timeout = setTimeout(() => setEndedNotice(null), 6000);
+    return () => clearTimeout(timeout);
+  }, [endedNotice]);
+
+  // If the backend already reports THIS device as the active session the first time the status
+  // query resolves after mount (e.g. a hard reload happened while live mode was running — the
+  // unmount cleanup below can't run in that case since the whole JS context is torn down first),
+  // resume watching it instead of showing a plain "Démarrer" that would just error out against
+  // its own session (manager.ts's own-device CONFLICT). liveSession.onSample doesn't require
+  // having called start() ourselves, so this is a straight resume, countdown computed from the
+  // session's real startedAt rather than reset to the full 5 minutes.
+  //
+  // Deliberately one-shot (guarded by hasAttemptedResumeRef, not just an `isLive` check): a naive
+  // "re-run whenever status/isLive changes" version re-fires right after our OWN endSession() —
+  // at that point `isLive` has just flipped to false but the invalidated status query hasn't
+  // re-fetched yet, so `status` is still the stale "active on this device" object from before we
+  // ended it, and the effect would immediately flip isLive back to true, masking the "session
+  // terminée" notice with a phantom resumed session. Checked only once, right after mount, this
+  // race can't happen — by the time we end our own session mid-mount, the resume check has long
+  // since run and settled.
+  useEffect(() => {
+    if (statusLoading || hasAttemptedResumeRef.current) return;
+    hasAttemptedResumeRef.current = true;
+    if (status?.deviceId !== deviceId) return;
+    startedAtRef.current = new Date(status.startedAt).getTime();
+    setRemainingMs(Math.max(0, LIVE_SESSION_MAX_DURATION_MS - (Date.now() - startedAtRef.current)));
+    setIsLive(true);
+  }, [statusLoading, status, deviceId]);
 
   const startMutation = useMutation(
     trpc.liveSession.start.mutationOptions({
       onSuccess: () => {
         setBuffers({});
+        setEndedNotice(null);
         startedAtRef.current = Date.now();
         setRemainingMs(LIVE_SESSION_MAX_DURATION_MS);
         setIsLive(true);
@@ -61,7 +102,7 @@ export function LiveModeSection({ deviceId, kind }: { deviceId: string; kind: De
     }),
   );
 
-  const stopMutation = useMutation(trpc.liveSession.stop.mutationOptions({ onSuccess: endSession }));
+  const stopMutation = useMutation(trpc.liveSession.stop.mutationOptions({ onSuccess: () => endSession() }));
 
   useSubscription(
     trpc.liveSession.onSample.subscriptionOptions(
@@ -72,8 +113,14 @@ export function LiveModeSection({ deviceId, kind }: { deviceId: string; kind: De
           if (event.type === 'ended') {
             if (event.reason === 'error') {
               toast.error('Session live interrompue', { description: event.detail });
+              endSession(event.detail ? `Session terminée : ${event.detail}` : 'Session terminée suite à une erreur.');
+            } else if (event.reason === 'timeout') {
+              endSession('Session terminée : coupure automatique après 5 minutes.');
+            } else {
+              // 'stopped' — a manual stop (this page's own button, or another caller); the
+              // button reverting is feedback enough, no extra message.
+              endSession();
             }
-            endSession();
             return;
           }
           setBuffers((prev) => {
@@ -88,7 +135,8 @@ export function LiveModeSection({ deviceId, kind }: { deviceId: string; kind: De
           });
         },
         onError: () => {
-          endSession();
+          toast.error('Session live interrompue', { description: 'La connexion temps réel a été perdue.' });
+          endSession('Session terminée suite à une erreur de connexion.');
         },
       },
     ),
@@ -119,9 +167,11 @@ export function LiveModeSection({ deviceId, kind }: { deviceId: string; kind: De
           <div className="text-sm text-muted-foreground">
             {isLive
               ? `Se coupe automatiquement dans ${Math.ceil(remainingMs / 1000)}s`
-              : activeElsewhere
-                ? `Session déjà active sur un autre appareil`
-                : 'Graph mis à jour en direct (coupure automatique après 5 min).'}
+              : endedNotice
+                ? endedNotice
+                : activeElsewhere
+                  ? `Session déjà active sur un autre appareil`
+                  : 'Graph mis à jour en direct (coupure automatique après 5 min).'}
           </div>
         </div>
         {isLive ? (
@@ -132,7 +182,7 @@ export function LiveModeSection({ deviceId, kind }: { deviceId: string; kind: De
           <Button
             variant="outline"
             size="sm"
-            disabled={activeElsewhere || startMutation.isPending}
+            disabled={activeElsewhere || startMutation.isPending || statusLoading}
             onClick={() => startMutation.mutate({ deviceId })}
           >
             Démarrer
