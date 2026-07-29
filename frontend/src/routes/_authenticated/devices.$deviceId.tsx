@@ -7,6 +7,7 @@ import { AutoWateringSection } from '@/components/auto-watering-section';
 import { DeviceKindIcon } from '@/components/device-kind-icon';
 import { EditDeviceDialog } from '@/components/edit-device-dialog';
 import { HistoryChart, type HistoryReferenceLine } from '@/components/history-chart';
+import { LiveModeSection } from '@/components/live-mode-section';
 import { SensorGauge } from '@/components/sensor-gauge';
 import { SpeciesPickerDialog } from '@/components/species-picker-dialog';
 import { Badge } from '@/components/ui/badge';
@@ -260,6 +261,8 @@ function DeviceDetailPage() {
       )}
 
       {canWater && <AutoWateringSection deviceId={deviceId} hasSpeciesAssigned={device.plantProfile != null} />}
+
+      <LiveModeSection deviceId={deviceId} kind={device.kind} />
 
       {canWater && (
         <div className="my-7 flex items-center justify-between gap-3 rounded-lg border border-border-subtle p-4">
