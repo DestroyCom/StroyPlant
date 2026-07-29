@@ -402,11 +402,25 @@ production server:
     silently queues); hard 5-minute auto-cutoff (`LIVE_SESSION_MAX_DURATION_MS`), even if the user stays on
     the page; ending a session (auto-cutoff / manual stop / leaving the page) immediately frees the queue
     for everything else.
-  - **`Reading.source` tagging** (`POLL`/`LIVE`): persisted on every sample, 4 read sites now filter by source
-    — polling loop (`ble/scanner.ts`), manual sync mutations (`devices.sync`/`forceSyncAll`), auto-watering
-    scheduler, and MQTT publisher all explicitly skip/include based on source as their use case requires
-    (e.g., the scheduler only re-checks recent readings, not old polled baseline; the MQTT publisher
-    publishes live samples in real-time but ignores ancient polled readings).
+  - **`Reading.source` tagging** (`POLL`/`LIVE`): persisted on every sample (written as `'POLL'` by
+    `ble/scanner.ts` and the manual sync mutations `devices.sync`/`forceSyncAll`, as `'LIVE'` by a live
+    session). 4 read sites filter to `where: { ..., source: 'POLL' }` so a live session can never skew them:
+    `health/scheduler.ts`'s `evaluateDevice`, `api/trpc/routers/health.ts`'s `deviceHealth`,
+    `api/trpc/routers/devices.ts`'s `history`, and `mqtt/publisher.ts`'s `publishHealthState`.
+  - **Final-review fix (2026-07-29)**: the backend-side filtering above was correct from the start, but a
+    pre-existing file the branch never touched — `frontend/src/lib/use-live-readings.ts` (subscribes to the
+    global, unfiltered `readings.onReading` WS event) — still needed a fix on the client side. It now (a)
+    skips appending to the cached `devices.history` array entirely for a `LIVE` event (was polluting an
+    already-open device detail page's chart with up to ~300 dense extra points, never invalidated back out
+    once the session ended), and (b) merges a `LIVE` event into the cached `devices.list` `lastReading`
+    instead of fully replacing it (a live Parrot Pot sample never reports
+    `waterTankLevelPercent`/status flags/conductivity, so a full replace was silently nulling those out on
+    the dashboard card for up to 5 minutes) — a `POLL` event still fully replaces as before, it's always
+    complete. **Known low-priority consequence, not fixed**: `mqtt/publisher.ts`'s `publishReadingState` is
+    called from `persistReading` for every reading regardless of source, so a live session's retained MQTT
+    state would show the same partial payload to Home Assistant for up to ~5 minutes after the session
+    ends — low real-world urgency today since MQTT/HA isn't validated against a real broker yet (see Batch 7
+    above).
   - **Provider scope**: `mock` (full simulation with debouncing, used in dev/testing) and `node-ble`
     (production BlueZ/D-Bus) both implement real `subscribeLive(deviceId, kind, onSample, signal)` —
     Parrot Pot via GATT notify on the 3 sensor characteristics (soil/temp/lux), Xiaomi likewise. `noble-bridge`
