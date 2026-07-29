@@ -109,5 +109,13 @@ export function createNobleBridgeProvider(): DeviceProvider {
       const body = await res.json();
       if (!res.ok) throw new Error(`noble-bridge writePlantDrCalibration ${deviceId}: ${body.error ?? res.statusText}`);
     },
+
+    async subscribeLive(): Promise<void> {
+      // Deliberate scope cut (docs/superpowers/specs/2026-07-29-live-sensor-mode-design.md):
+      // noble-bridge (Mac dev environment) doesn't implement real live sampling yet — validating
+      // node-ble's live GATT notify happens directly on the production server, matching how
+      // node-ble itself was originally validated there rather than via this provider.
+      throw new Error('subscribeLive not implemented on noble-bridge');
+    },
   };
 }
