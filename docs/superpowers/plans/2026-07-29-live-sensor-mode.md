@@ -589,6 +589,12 @@ branch:
 
 ```typescript
     async subscribeLive(deviceId: string, kind, onSample, signal): Promise<void> {
+      // A signal that's already aborted before this method is even called must return
+      // immediately — an `addEventListener('abort', ...)` added afterward never fires for an
+      // event that already happened (AbortSignal semantics), which would otherwise hang forever
+      // (found during Task 3's review on the mock provider — the same class of bug applies here).
+      if (signal.aborted) return;
+
       if (kind === 'XIAOMI_LYWSD03MMC') {
         const device = await connectDevice(deviceId);
         try {
