@@ -312,6 +312,84 @@ production server:
     working end-to-end with the new parameterized topic settings, and the "blank password keeps
     existing" behavior. Health settings verified via the tRPC round trip
     (`getSettings`/`upsertSettings`/`deviceHealth` all consistent).
+- **First real production incident** (2026-07-29) — the first real `node-ble` prod deployment
+  crash-looped (`docker inspect`'s `RestartCount=60`), then — after a fix — silently stopped
+  syncing entirely for 12h+ while staying up (not crash-looping), with the web UI also unable to
+  trigger watering. Two separate rounds of fixes, both root-caused against real evidence (the
+  actual installed `node-ble`/`dbus-next` source, and `docker logs`/`docker inspect` on the
+  production server) rather than guessed:
+  - **Round 1 — D-Bus match-rule leak** (commits `3d5b312`, `0a10413`, same day, not previously
+    documented here): `node-ble`'s `Device` **and** `GattCharacteristic` wrappers both register a
+    D-Bus `PropertiesChanged` match rule the moment any property/method is used —
+    for `GattCharacteristic` that means *every* plain `readValue()`/`writeValue()` call, not just
+    notification subscriptions — and only release it via `removeListeners()`, called exclusively
+    from `disconnect()`/`stopNotifications()`. Every `scan()` tick's device property reads, every
+    failed `connect()`, and every sensor read/write (soil/temp/lux/tank/conductivity/status-flags/
+    watering-trigger/Plant-Dr-calibration) leaked one match rule forever with no release path.
+    Enough leaks hit BlueZ's `max_match_rules_per_connection=512`, and the next registration threw
+    an **uncaught** `DBusError` that crashed the whole process — the cause of the 60 restarts.
+    Fixed with a `releaseDbusListeners()` backstop called from `scan()`'s per-device `finally`, a
+    per-GATT-session `trackedCharacteristic()` helper releasing every characteristic used, and
+    `connectDevice()` releasing listeners on a failed `connect()` too. **Verified already deployed**
+    to production (`docker exec stroyplant grep -c trackedCharacteristic /app/dist/...` — present),
+    so the crash-loop itself is resolved.
+  - **Round 2 — scanner never recovers from a transient error** (this entry, same day, DestCom
+    reported "plus de sync depuis 3h" the morning after round 1's deploy): despite round 1's fix
+    being live and the container no longer crash-looping, all 5 devices still went completely
+    silent for 12h+, confirmed via the *complete* raw `docker logs` (not just the pasted excerpt) —
+    zero log output at all after one `[SCAN] Scanner (node-ble) stopped on error result=ERROR
+    detail=Resource Not Ready` line, matching `docker inspect`'s single, 17h-old `StartedAt` (no
+    further restarts — this is a hang, not a crash). Root cause, untouched by round 1:
+    - `startScanner()` (`ble/scanner.ts`) launched `provider.scan()` exactly once at startup and
+      only logged+gave up if it ever threw — nothing ever relaunched it. Fixed: `runScanLoop()` now
+      relaunches `scan()` with a capped exponential backoff (5s → 60s, reset to 5s once a run has
+      stayed healthy for 60s+), and also treats a clean-but-early return from `scan()` (violates its
+      own documented "runs until abort" contract) as a failure to restart from, not a silent exit.
+    - The `Resource Not Ready` that killed it was itself a race: `restartAdapter()` (`retry.ts`'s
+      2-consecutive-GATT_ERROR=133 policy) power-cycles the adapter via `bluetoothctl power off/on`
+      with zero coordination with the concurrently-running `scan()` loop sharing the same adapter
+      object — a scan cycle landing mid-power-cycle throws. Fixed: each scan cycle in
+      `node-ble/index.ts`'s `scan()` is now wrapped in its own try/catch that logs and retries after
+      a short pause instead of letting the whole function die on what's usually transient —
+      `runScanLoop()`'s restart above is now a safety net for anything unanticipated, not the
+      primary defense.
+    - Also hardened while in there: all 5 `device.disconnect()` call sites are now wrapped in
+      `withTimeout` too (previously only `connect()`/`gatt()` were) — an un-wrapped hung
+      `Disconnect()` D-Bus call would block the single sequential `connectionQueue` forever
+      (polling *and* every future manual watering trigger), a plausible contributor to DestCom
+      separately reporting the web UI's watering button not responding. `releaseDbusListeners()`
+      (round 1) still runs unconditionally afterward, so this doesn't regress that fix.
+  - **Verified against the mock provider** (real BLE hardware not available from this environment):
+    booted the backend standalone twice against a scratch, migrated copy of the dev DB — confirmed
+    `devices.forceSyncAll`/`devices.sync` (see below) round-trip correctly, log (never throw) on
+    devices the mock provider doesn't know about, and `devices.water` still works end-to-end on
+    both a healthy mock pot (success) and the empty-reservoir one (explicit `BAD_GATEWAY`, per the
+    7.1 never-fire-and-forget contract) — no regression in the existing watering path.
+  - **New: manual "Forcer la synchro" global sync** (DestCom's request, alongside the fix) — a
+    `devices.forceSyncAll` mutation, added next to round 1's per-device `devices.sync` in
+    `api/trpc/routers/devices.ts` and built the same way (same `connectionQueue`-serialized
+    `readSensors` + `persistReading()` from `readings.ts` round 1 introduced), but for every named
+    device and without awaiting each read to completion — a full sequential sweep across 5 devices
+    can take well over a minute behind the connectionQueue, and each reading already pushes live to
+    the frontend via the existing `readings.onReading` subscription as it lands, so the mutation
+    only needs to confirm the syncs were queued. Dashboard gained a "Forcer la synchro" button
+    (`frontend/src/routes/_authenticated/index.tsx`), separate from round 1's per-device "sync now"
+    button on the detail page.
+- **Device location + indoor/outdoor, and post-deploy triage fixes** (commit `3d5b312`, same day as
+  the incident above, not previously documented here) — bundled alongside round 1's match-rule fix:
+  - `Device` gained `location` (free text) and `environment` (`INDOOR`/`OUTDOOR`, nullable) columns
+    (migration `20260728221126_add_device_location_environment`), editable from the device detail
+    page (`frontend/src/components/edit-device-dialog.tsx`) via the new `devices.updateDetails`
+    mutation. **Storage only for now** — the Health Engine still scores every device against the
+    same indoor-calibrated WatchFlower ranges regardless of this value (see `docs/HEALTH_ENGINE.md`
+    and the `Environment` enum's comment in `schema.prisma`); how indoor/outdoor should actually
+    affect scoring is an open decision, not made yet.
+  - Species CSV import (`health/importSpeciesProfiles.ts`) is now idempotent and runs on every boot
+    from `docker-entrypoint.sh`, matching how `seed-admin` already worked — it used to be a manual
+    step nobody had run against production, which is why no species could be assigned post-deploy.
+  - BetterAuth now trusts the reverse proxy's forwarded-for header (`auth/auth.ts`), fixing a
+    "could not determine a client IP" rate-limit warning in the logs.
+  - Hashed static assets served by `api/staticFrontend.ts` now get long-lived cache headers.
 - **Next batch**: Batch 10 (extension to other devices — Flower Power, Flower Care).
 - **`noble-bridge` validated with real hardware** ✅ (2026-07-27) — a real Parrot Pot
   (`PARROT-A073`) connected and read end-to-end (scan → connect → activate → read
@@ -423,7 +501,9 @@ Dockerfile, docker-entrypoint.sh, docker-compose.prod.yml, docker-compose.test.y
   `(voltage-2.1)*100` clamped 0-100. Formula confirmed by WatchFlower AND re-validated empirically
   on a real device.
 - **tRPC (`src/api/trpc/`)**: `router.ts` combines `devices` (`list`, `listUnnamed`, `rename`,
-  `history`, `wateringEvents`, `water`), `health` (`plantProfiles`, `assignPlantProfile`,
+  `updateDetails` — location/indoor-outdoor, storage only for now, see the device location/
+  environment entry below —, `history`, `wateringEvents`, `water`, `sync`/`forceSyncAll` — manual
+  per-device/global sensor sync, see the production incident entry above), `health` (`plantProfiles`, `assignPlantProfile`,
   `deviceHealth`, `getSettings`/`upsertSettings` — Health Engine baseline/warm-up config, DB-backed,
   see Project status), `mqtt` (`get`, `upsert` — MQTT broker config, DB-backed, see Project status),
   `schedule` (`get`, `upsert` — Batch 5 auto-watering config, see Project status),

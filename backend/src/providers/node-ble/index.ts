@@ -4,7 +4,7 @@ import type { GattCharacteristic, GattService, Device as NodeBleDevice } from 'n
 import { createBluetooth } from 'node-ble';
 import { extractParrotManufacturerPayload } from '../../ble/parrot/advertisement.js';
 import { decodePlantDrStatusFlags, type PlantDrCalibration, type PlantDrWriteValues } from '../../ble/parrot/plantDr.js';
-import { CONNECT_TIMEOUT_MS, withGattRetry, withTimeout } from '../../ble/parrot/retry.js';
+import { CONNECT_TIMEOUT_MS, GATT_133_BACKOFF_MS, withGattRetry, withTimeout } from '../../ble/parrot/retry.js';
 import {
   PARROT_POT_NAME_PREFIX,
   PLANT_DR_SERVICE_UUID,
@@ -177,50 +177,71 @@ export function createNodeBleProvider(): DeviceProvider {
       const adapter = await getAdapter();
 
       while (!signal.aborted) {
-        if (!(await adapter.isDiscovering())) await adapter.startDiscovery();
+        // A whole scan cycle (start discovery, poll for SCAN_WINDOW_MS, stop discovery) is
+        // wrapped defensively: restartAdapter() (retry.ts, triggered by a GATT_ERROR=133 during a
+        // concurrent readSensors/connect elsewhere) power-cycles this exact same shared adapter
+        // with no coordination with this loop, so an adapter method call landing mid-power-cycle
+        // throws a transient "Resource Not Ready"/"Not Ready" D-Bus error here. That single error
+        // used to propagate out of scan() and kill discovery forever (2026-07-29 incident — the
+        // caller, backend/src/ble/scanner.ts, never relaunched it). Now: log, back off briefly,
+        // and retry the cycle instead of letting the whole function die on a transient condition.
+        try {
+          if (!(await adapter.isDiscovering())) await adapter.startDiscovery();
 
-        const cycleDeadline = Date.now() + SCAN_WINDOW_MS;
-        while (Date.now() < cycleDeadline && !signal.aborted) {
-          const macs = await adapter.devices();
-          for (const mac of macs) {
-            let device: NodeBleDevice | undefined;
-            try {
-              device = await adapter.getDevice(mac);
-              const name = await device.getName().catch(() => undefined);
-              const kind = name?.startsWith(PARROT_POT_NAME_PREFIX)
-                ? 'PARROT_POT'
-                : name === LYWSD03MMC_NAME
-                  ? 'XIAOMI_LYWSD03MMC'
-                  : undefined;
-              if (!kind) continue;
-              const rssiRaw = await device.getRSSI().catch(() => undefined);
-              const rssi = rssiRaw !== undefined ? Number(rssiRaw) : undefined;
-              if (rssi !== undefined && rssi < RSSI_MIN) continue;
+          const cycleDeadline = Date.now() + SCAN_WINDOW_MS;
+          while (Date.now() < cycleDeadline && !signal.aborted) {
+            const macs = await adapter.devices();
+            for (const mac of macs) {
+              let device: NodeBleDevice | undefined;
+              try {
+                device = await adapter.getDevice(mac);
+                const name = await device.getName().catch(() => undefined);
+                const kind = name?.startsWith(PARROT_POT_NAME_PREFIX)
+                  ? 'PARROT_POT'
+                  : name === LYWSD03MMC_NAME
+                    ? 'XIAOMI_LYWSD03MMC'
+                    : undefined;
+                if (!kind) continue;
+                const rssiRaw = await device.getRSSI().catch(() => undefined);
+                const rssi = rssiRaw !== undefined ? Number(rssiRaw) : undefined;
+                if (rssi !== undefined && rssi < RSSI_MIN) continue;
 
-              // Diagnostics only — raw payload, not interpreted (docs/STROYPLANT_SPEC.md
-              // section 7.1, correlation protocol not executed yet).
-              const advertisementPayloadHex = kind === 'PARROT_POT' ? await readParrotAdvertisementPayload(device) : undefined;
-              if (advertisementPayloadHex) {
-                log({
-                  direction: 'SCAN',
-                  label: 'Parrot advertisement manufacturer data (diagnostic, not interpreted)',
-                  deviceId: mac,
-                  result: 'OK',
-                  detail: advertisementPayloadHex,
-                });
+                // Diagnostics only — raw payload, not interpreted (docs/STROYPLANT_SPEC.md
+                // section 7.1, correlation protocol not executed yet).
+                const advertisementPayloadHex = kind === 'PARROT_POT' ? await readParrotAdvertisementPayload(device) : undefined;
+                if (advertisementPayloadHex) {
+                  log({
+                    direction: 'SCAN',
+                    label: 'Parrot advertisement manufacturer data (diagnostic, not interpreted)',
+                    deviceId: mac,
+                    result: 'OK',
+                    detail: advertisementPayloadHex,
+                  });
+                }
+
+                onDiscovered({ id: mac, kind, name, rssi, advertisementPayloadHex });
+              } catch {
+                // the device can disappear between devices() and getDevice() — not an error to report
+              } finally {
+                if (device) releaseDbusListeners(device);
               }
-
-              onDiscovered({ id: mac, kind, name, rssi, advertisementPayloadHex });
-            } catch {
-              // the device can disappear between devices() and getDevice() — not an error to report
-            } finally {
-              if (device) releaseDbusListeners(device);
             }
+            await sleep(1000);
           }
-          await sleep(1000);
+
+          if (await adapter.isDiscovering()) await adapter.stopDiscovery().catch(() => {});
+        } catch (error) {
+          log({
+            direction: 'SCAN',
+            label: 'Scan cycle failed (adapter likely mid-restart) — retrying shortly',
+            result: 'ERROR',
+            detail: error instanceof Error ? error.message : String(error),
+          });
+          if (signal.aborted) break;
+          await sleep(GATT_133_BACKOFF_MS * 4);
+          continue;
         }
 
-        if (await adapter.isDiscovering()) await adapter.stopDiscovery().catch(() => {});
         if (signal.aborted) break;
         await sleep(SCAN_PAUSE_MS);
       }
@@ -257,7 +278,12 @@ export function createNodeBleProvider(): DeviceProvider {
               // already dropped off, that call can throw and .catch() below only swallows it at our
               // level, leaving the match rule registered. releaseDbusListeners is an idempotent
               // backstop, safe to call whether or not disconnect()'s own cleanup already ran.
-              await device.disconnect().catch(() => {});
+              // Also timeout-wrapped (all 5 disconnect() sites in this file, 2026-07-29): an
+              // un-wrapped Disconnect() D-Bus call that hangs (observed in production right after
+              // an adapter restart) used to block forever — and since every GATT operation goes
+              // through the single sequential connectionQueue, that one hung disconnect froze it
+              // permanently, silently killing both polling AND every future manual "water" trigger.
+              await withTimeout(device.disconnect(), CONNECT_TIMEOUT_MS, 'disconnect').catch(() => {});
               releaseDbusListeners(device);
             }
           },
@@ -392,7 +418,7 @@ export function createNodeBleProvider(): DeviceProvider {
             // already dropped off, that call can throw and .catch() below only swallows it at our
             // level, leaving the match rule registered. releaseDbusListeners is an idempotent
             // backstop, safe to call whether or not disconnect()'s own cleanup already ran.
-            await device.disconnect().catch(() => {});
+            await withTimeout(device.disconnect(), CONNECT_TIMEOUT_MS, 'disconnect').catch(() => {});
             releaseDbusListeners(device);
           }
         },
@@ -429,7 +455,7 @@ export function createNodeBleProvider(): DeviceProvider {
             // already dropped off, that call can throw and .catch() below only swallows it at our
             // level, leaving the match rule registered. releaseDbusListeners is an idempotent
             // backstop, safe to call whether or not disconnect()'s own cleanup already ran.
-            await device.disconnect().catch(() => {});
+            await withTimeout(device.disconnect(), CONNECT_TIMEOUT_MS, 'disconnect').catch(() => {});
             releaseDbusListeners(device);
           }
         },
@@ -473,7 +499,7 @@ export function createNodeBleProvider(): DeviceProvider {
             // already dropped off, that call can throw and .catch() below only swallows it at our
             // level, leaving the match rule registered. releaseDbusListeners is an idempotent
             // backstop, safe to call whether or not disconnect()'s own cleanup already ran.
-            await device.disconnect().catch(() => {});
+            await withTimeout(device.disconnect(), CONNECT_TIMEOUT_MS, 'disconnect').catch(() => {});
             releaseDbusListeners(device);
           }
         },
@@ -515,7 +541,7 @@ export function createNodeBleProvider(): DeviceProvider {
             // already dropped off, that call can throw and .catch() below only swallows it at our
             // level, leaving the match rule registered. releaseDbusListeners is an idempotent
             // backstop, safe to call whether or not disconnect()'s own cleanup already ran.
-            await device.disconnect().catch(() => {});
+            await withTimeout(device.disconnect(), CONNECT_TIMEOUT_MS, 'disconnect').catch(() => {});
             releaseDbusListeners(device);
           }
         },

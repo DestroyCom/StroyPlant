@@ -1,6 +1,9 @@
-import { useSuspenseQuery } from '@tanstack/react-query';
+import { useMutation, useQueryClient, useSuspenseQuery } from '@tanstack/react-query';
 import { createFileRoute } from '@tanstack/react-router';
+import { RefreshCw } from 'lucide-react';
+import { toast } from 'sonner';
 import { DeviceCard } from '@/components/device-card';
+import { Button } from '@/components/ui/button';
 import { isDeviceOnline, isTankLow } from '@/lib/format';
 import { trpc } from '@/lib/trpc';
 import type { Device } from '@/lib/types';
@@ -23,12 +26,43 @@ function summarySentence(devices: Device[]): string {
 
 function DashboardPage() {
   const { data: devices } = useSuspenseQuery(trpc.devices.list.queryOptions());
+  const queryClient = useQueryClient();
+
+  // "Forcer la synchro" — poll every named device right now, bypassing the scanner's own 5min
+  // per-device throttle. The mutation only confirms the reads were queued (not that they've
+  // finished): each one is already pushed live via the readings.onReading subscription as it
+  // completes, same as automatic polling — see backend/src/api/trpc/routers/devices.ts.
+  const forceSyncMutation = useMutation(
+    trpc.devices.forceSyncAll.mutationOptions({
+      onSuccess: ({ triggered }) => {
+        toast.success('Synchronisation lancée', {
+          description: `${triggered} appareil${triggered > 1 ? 's' : ''} en cours de lecture — les valeurs arrivent au fil de l'eau.`,
+        });
+        void queryClient.invalidateQueries({ queryKey: trpc.devices.list.queryKey() });
+      },
+      onError: (error) => {
+        toast.error('Échec de la synchronisation', { description: error.message });
+      },
+    }),
+  );
 
   return (
     <div>
-      <div className="mb-8">
-        <div className="mb-1.5 text-sm font-medium text-muted-foreground">Bonjour !</div>
-        <h1 className="text-[30px] leading-tight font-black tracking-tight text-foreground">{summarySentence(devices)}</h1>
+      <div className="mb-8 flex items-start justify-between gap-4">
+        <div>
+          <div className="mb-1.5 text-sm font-medium text-muted-foreground">Bonjour !</div>
+          <h1 className="text-[30px] leading-tight font-black tracking-tight text-foreground">{summarySentence(devices)}</h1>
+        </div>
+        <Button
+          variant="outline"
+          size="sm"
+          className="mt-1 shrink-0"
+          disabled={forceSyncMutation.isPending || devices.length === 0}
+          onClick={() => forceSyncMutation.mutate()}
+        >
+          <RefreshCw size={14} className={forceSyncMutation.isPending ? 'animate-spin' : undefined} />
+          Forcer la synchro
+        </Button>
       </div>
 
       {devices.length === 0 ? (

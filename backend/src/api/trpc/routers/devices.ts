@@ -2,6 +2,7 @@ import type { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { z } from 'zod';
 import { prisma } from '../../../db/client.js';
+import { log } from '../../../logger.js';
 import { getMqttState } from '../../../mqtt/manager.js';
 import { publishDiscovery } from '../../../mqtt/publisher.js';
 import { persistReading } from '../../../readings.js';
@@ -144,5 +145,32 @@ export const devicesRouter = router({
 
     const updated = await prisma.device.findUniqueOrThrow({ where: { id: device.id }, include: { plantProfile: true } });
     return withLastReading(updated);
+  }),
+
+  // "Forcer la synchro" (dashboard button) — same idea as `sync` above, but for every named device
+  // at once. Deliberately doesn't await each read to completion: with up to 5 sequential GATT
+  // connections behind the single connectionQueue, a full sweep can take well over a minute, and
+  // there's no reason to hold the HTTP request open for that — each device still goes through the
+  // exact same connectionQueue-serialized read + persistReading() path as `sync`/the automatic
+  // poll, and pushes live to the frontend via the existing readings.onReading subscription as soon
+  // as it lands. This mutation only confirms the syncs were queued, logging (never throwing) any
+  // individual failure the same way the scanner's own poll loop already does.
+  forceSyncAll: protectedProcedure.mutation(async ({ ctx }) => {
+    const devices = await prisma.device.findMany({ where: { name: { not: null } } });
+    for (const device of devices) {
+      void ctx.connectionQueue
+        .run(() => ctx.provider.readSensors(device.id, device.kind))
+        .then((reading) => persistReading(device.id, device.kind, reading))
+        .catch((error) => {
+          log({
+            direction: 'READ',
+            label: 'Forced sync readSensors failed',
+            deviceId: device.id,
+            result: 'ERROR',
+            detail: error instanceof Error ? error.message : String(error),
+          });
+        });
+    }
+    return { triggered: devices.length };
   }),
 });
