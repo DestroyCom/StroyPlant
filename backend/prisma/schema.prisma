@@ -110,6 +110,11 @@ model PlantProfile {
   devices Device[]
 }
 
+enum ReadingSource {
+  POLL // scanner's periodic poll, manual "sync now"/"forcer la synchro", MCP tool reads
+  LIVE // live-mode session (backend/src/liveSession/manager.ts)
+}
+
 model Reading {
   id        Int      @id @default(autoincrement())
   deviceId  String
@@ -138,6 +143,11 @@ model Reading {
   // Xiaomi LYWSD03MMC
   humidityPercent Float?
   batteryPercent  Float?
+
+  // How this row was produced — POLL rows feed the Health Engine's rolling baseline and the
+  // 24h/7d/30d history charts; LIVE rows (up to 300 in a 5min session) never do, so a live
+  // session can never skew either (docs/superpowers/specs/2026-07-29-live-sensor-mode-design.md).
+  source ReadingSource @default(POLL)
 
   @@index([deviceId, timestamp])
 }
