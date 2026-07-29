@@ -574,8 +574,18 @@ signature alone):
 
 - [ ] **Step 1: Implement the Xiaomi path**
 
-In `backend/src/providers/node-ble/index.ts`, add `subscribeLive` to the returned object, right
-after `readSensors`. Start with the Xiaomi branch:
+In `backend/src/providers/node-ble/index.ts`, add a constant next to the existing
+`XIAOMI_NOTIFY_TIMEOUT_MS` declaration:
+
+```typescript
+// The 3 Parrot Pot live characteristics (soil/temp/lux) notify independently, not in lockstep —
+// this debounce combines whatever's most recently known into one combined sample instead of
+// persisting 3x/second with 2 stale fields each time (see subscribeLive below).
+const LIVE_SAMPLE_DEBOUNCE_MS = 150;
+```
+
+Then add `subscribeLive` to the returned object, right after `readSensors`. Start with the Xiaomi
+branch:
 
 ```typescript
     async subscribeLive(deviceId: string, kind, onSample, signal): Promise<void> {
@@ -667,7 +677,7 @@ Replace the `// Parrot Pot branch — Step 2.` comment with:
                   luminosity: pending.luminosity,
                 };
                 flushing = flushing.then(() => onSample({ kind: 'PARROT_POT', data: snapshot }));
-              }, 150);
+              }, LIVE_SAMPLE_DEBOUNCE_MS);
             };
 
             const onSoil = (buf: Buffer) => {
