@@ -159,20 +159,41 @@ export function createNodeBleProvider(): DeviceProvider {
     throw new Error("Adapter still 'not powered' after 60s restart");
   }
 
+  // Set while a discovery session's scan() loop (below) is actively running, so connectDevice()
+  // knows not to stop discovery out from under it. Cleared when scan() exits for any reason
+  // (signal abort or an unrecoverable error after retries) — see the try/finally around scan()'s
+  // loop body.
+  let scanSessionActive = false;
+
   async function connectDevice(macAddress: string) {
     const adapter = await getAdapter();
-    if (!(await adapter.isDiscovering())) await adapter.startDiscovery().catch(() => {});
-    const device = await withTimeout(adapter.waitDevice(macAddress, CONNECT_TIMEOUT_MS), CONNECT_TIMEOUT_MS + 2000, 'waitDevice');
-    try {
-      await withTimeout(device.connect(), CONNECT_TIMEOUT_MS, 'connect');
-    } catch (error) {
-      // device.connect() itself registers a PropertiesChanged listener before calling BlueZ's
-      // Connect() (node-ble's Device.connect()) — on failure this Device is never returned to a
-      // caller's try/finally, so disconnect() (the only public path that releases it) never runs.
-      releaseDbusListeners(device);
-      throw error;
+    // Now that discovery only runs during an explicit discoverySession (see scan() below), this
+    // module must not leave BlueZ discovery on forever just because a single connectDevice() call
+    // needed it — that would silently defeat the whole point of scoping discovery. Only stop it
+    // afterward if THIS call is the one that turned it on, and only if no scan() session currently
+    // depends on it staying on (tracked via scanSessionActive).
+    let startedDiscoveryHere = false;
+    if (!(await adapter.isDiscovering())) {
+      await adapter.startDiscovery().catch(() => {});
+      startedDiscoveryHere = true;
     }
-    return device;
+    try {
+      const device = await withTimeout(adapter.waitDevice(macAddress, CONNECT_TIMEOUT_MS), CONNECT_TIMEOUT_MS + 2000, 'waitDevice');
+      try {
+        await withTimeout(device.connect(), CONNECT_TIMEOUT_MS, 'connect');
+      } catch (error) {
+        // device.connect() itself registers a PropertiesChanged listener before calling BlueZ's
+        // Connect() (node-ble's Device.connect()) — on failure this Device is never returned to a
+        // caller's try/finally, so disconnect() (the only public path that releases it) never runs.
+        releaseDbusListeners(device);
+        throw error;
+      }
+      return device;
+    } finally {
+      if (startedDiscoveryHere && !scanSessionActive) {
+        await adapter.stopDiscovery().catch(() => {});
+      }
+    }
   }
 
   return {
@@ -181,75 +202,89 @@ export function createNodeBleProvider(): DeviceProvider {
     async scan(onDiscovered, signal) {
       const adapter = await getAdapter();
 
-      while (!signal.aborted) {
-        // A whole scan cycle (start discovery, poll for SCAN_WINDOW_MS, stop discovery) is
-        // wrapped defensively: restartAdapter() (retry.ts, triggered by a GATT_ERROR=133 during a
-        // concurrent readSensors/connect elsewhere) power-cycles this exact same shared adapter
-        // with no coordination with this loop, so an adapter method call landing mid-power-cycle
-        // throws a transient "Resource Not Ready"/"Not Ready" D-Bus error here. That single error
-        // used to propagate out of scan() and kill discovery forever (2026-07-29 incident — the
-        // caller at the time never relaunched it; that caller has since been replaced by
-        // backend/src/ble/discoverySession.ts). Now: log, back off briefly, and retry the cycle
-        // instead of letting the whole function die on a transient condition.
-        try {
-          if (!(await adapter.isDiscovering())) await adapter.startDiscovery();
+      // Marks this scan() session as owning discovery for the whole loop's duration, so a
+      // concurrent connectDevice() call (e.g. namedDevicePoller reading a device while this
+      // discovery session is also active) never stops discovery out from under this loop in its
+      // own finally block. Cleared unconditionally below regardless of how the loop exits (abort,
+      // or falling through after signal.aborted becomes true).
+      scanSessionActive = true;
+      try {
+        while (!signal.aborted) {
+          // A whole scan cycle (start discovery, poll for SCAN_WINDOW_MS, stop discovery) is
+          // wrapped defensively: restartAdapter() (retry.ts, triggered by a GATT_ERROR=133 during a
+          // concurrent readSensors/connect elsewhere) power-cycles this exact same shared adapter
+          // with no coordination with this loop, so an adapter method call landing mid-power-cycle
+          // throws a transient "Resource Not Ready"/"Not Ready" D-Bus error here. That single error
+          // used to propagate out of scan() and kill discovery forever (2026-07-29 incident — the
+          // caller at the time never relaunched it; that caller has since been replaced by
+          // backend/src/ble/discoverySession.ts). Now: log, back off briefly, and retry the cycle
+          // instead of letting the whole function die on a transient condition.
+          try {
+            if (!(await adapter.isDiscovering())) await adapter.startDiscovery();
 
-          const cycleDeadline = Date.now() + SCAN_WINDOW_MS;
-          while (Date.now() < cycleDeadline && !signal.aborted) {
-            const macs = await adapter.devices();
-            for (const mac of macs) {
-              let device: NodeBleDevice | undefined;
-              try {
-                device = await adapter.getDevice(mac);
-                const name = await device.getName().catch(() => undefined);
-                const kind = name?.startsWith(PARROT_POT_NAME_PREFIX)
-                  ? 'PARROT_POT'
-                  : name === LYWSD03MMC_NAME
-                    ? 'XIAOMI_LYWSD03MMC'
-                    : undefined;
-                if (!kind) continue;
-                const rssiRaw = await device.getRSSI().catch(() => undefined);
-                const rssi = rssiRaw !== undefined ? Number(rssiRaw) : undefined;
-                if (rssi !== undefined && rssi < RSSI_MIN) continue;
+            const cycleDeadline = Date.now() + SCAN_WINDOW_MS;
+            while (Date.now() < cycleDeadline && !signal.aborted) {
+              const macs = await adapter.devices();
+              for (const mac of macs) {
+                let device: NodeBleDevice | undefined;
+                try {
+                  device = await adapter.getDevice(mac);
+                  const name = await device.getName().catch(() => undefined);
+                  const kind = name?.startsWith(PARROT_POT_NAME_PREFIX)
+                    ? 'PARROT_POT'
+                    : name === LYWSD03MMC_NAME
+                      ? 'XIAOMI_LYWSD03MMC'
+                      : undefined;
+                  if (!kind) continue;
+                  const rssiRaw = await device.getRSSI().catch(() => undefined);
+                  const rssi = rssiRaw !== undefined ? Number(rssiRaw) : undefined;
+                  if (rssi !== undefined && rssi < RSSI_MIN) continue;
 
-                // Diagnostics only — raw payload, not interpreted (docs/STROYPLANT_SPEC.md
-                // section 7.1, correlation protocol not executed yet).
-                const advertisementPayloadHex = kind === 'PARROT_POT' ? await readParrotAdvertisementPayload(device) : undefined;
-                if (advertisementPayloadHex) {
-                  log({
-                    direction: 'SCAN',
-                    label: 'Parrot advertisement manufacturer data (diagnostic, not interpreted)',
-                    deviceId: mac,
-                    result: 'OK',
-                    detail: advertisementPayloadHex,
-                  });
+                  // Diagnostics only — raw payload, not interpreted (docs/STROYPLANT_SPEC.md
+                  // section 7.1, correlation protocol not executed yet).
+                  const advertisementPayloadHex = kind === 'PARROT_POT' ? await readParrotAdvertisementPayload(device) : undefined;
+                  if (advertisementPayloadHex) {
+                    log({
+                      direction: 'SCAN',
+                      label: 'Parrot advertisement manufacturer data (diagnostic, not interpreted)',
+                      deviceId: mac,
+                      result: 'OK',
+                      detail: advertisementPayloadHex,
+                    });
+                  }
+
+                  onDiscovered({ id: mac, kind, name, rssi, advertisementPayloadHex });
+                } catch {
+                  // the device can disappear between devices() and getDevice() — not an error to report
+                } finally {
+                  if (device) releaseDbusListeners(device);
                 }
-
-                onDiscovered({ id: mac, kind, name, rssi, advertisementPayloadHex });
-              } catch {
-                // the device can disappear between devices() and getDevice() — not an error to report
-              } finally {
-                if (device) releaseDbusListeners(device);
               }
+              await sleep(1000);
             }
-            await sleep(1000);
+
+            if (await adapter.isDiscovering()) await adapter.stopDiscovery().catch(() => {});
+          } catch (error) {
+            log({
+              direction: 'SCAN',
+              label: 'Scan cycle failed (adapter likely mid-restart) — retrying shortly',
+              result: 'ERROR',
+              detail: error instanceof Error ? error.message : String(error),
+            });
+            if (signal.aborted) break;
+            await sleep(GATT_133_BACKOFF_MS * 4);
+            continue;
           }
 
-          if (await adapter.isDiscovering()) await adapter.stopDiscovery().catch(() => {});
-        } catch (error) {
-          log({
-            direction: 'SCAN',
-            label: 'Scan cycle failed (adapter likely mid-restart) — retrying shortly',
-            result: 'ERROR',
-            detail: error instanceof Error ? error.message : String(error),
-          });
           if (signal.aborted) break;
-          await sleep(GATT_133_BACKOFF_MS * 4);
-          continue;
+          await sleep(SCAN_PAUSE_MS);
         }
-
-        if (signal.aborted) break;
-        await sleep(SCAN_PAUSE_MS);
+      } finally {
+        // Cleared unconditionally (loop exit via abort, or an uncaught error escaping the inner
+        // try/catch above — shouldn't happen given that catch, but this must never leave the flag
+        // stuck true) so a subsequent connectDevice() call is free to stop discovery again once no
+        // session depends on it.
+        scanSessionActive = false;
       }
     },
 
