@@ -1,4 +1,5 @@
 import { devicesRouter } from './routers/devices.js';
+import { discoverySessionRouter } from './routers/discoverySession.js';
 import { healthRouter } from './routers/health.js';
 import { historyRouter } from './routers/history.js';
 import { liveSessionRouter } from './routers/liveSession.js';
@@ -10,6 +11,7 @@ import { router } from './trpc.js';
 
 export const appRouter = router({
   devices: devicesRouter,
+  discoverySession: discoverySessionRouter,
   health: healthRouter,
   history: historyRouter,
   liveSession: liveSessionRouter,
