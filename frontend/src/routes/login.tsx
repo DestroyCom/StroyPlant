@@ -2,6 +2,8 @@ import { createFileRoute, useNavigate } from '@tanstack/react-router';
 import { Leaf } from 'lucide-react';
 import { useId, useState } from 'react';
 import { toast } from 'sonner';
+import logo from '@/assets/logo.svg';
+import logoMonoLight from '@/assets/logo-mono-light.svg';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -43,13 +45,21 @@ function LoginPage() {
   return (
     <div className="flex min-h-svh w-full">
       <div className="relative hidden flex-1 flex-col items-center justify-center overflow-hidden bg-[linear-gradient(160deg,var(--color-teal-700),var(--color-teal-500))] p-16 text-center text-white md:flex">
+        <div className="mb-6 flex items-center gap-2.5">
+          <img src={logoMonoLight} alt="" className="h-7 w-7" />
+          <span className="text-lg font-black tracking-tight">StroyPlant</span>
+        </div>
         <div className="mb-7 flex h-30 w-30 items-center justify-center rounded-full bg-white/12">
           <Leaf size={60} strokeWidth={1.6} />
         </div>
         <h2 className="max-w-sm text-4xl font-black tracking-tight">Content de te revoir</h2>
         <p className="mt-3 max-w-sm text-lg text-paper-400">Tes plantes t'attendent. Connecte-toi pour prendre de leurs nouvelles.</p>
       </div>
-      <div className="flex flex-1 items-center justify-center p-10">
+      <div className="flex flex-1 flex-col items-center justify-center gap-8 p-6 md:p-10">
+        <div className="flex items-center gap-2 md:hidden">
+          <img src={logo} alt="" className="h-6.5 w-6.5" />
+          <span className="text-[17px] font-black tracking-tight text-foreground">StroyPlant</span>
+        </div>
         <form className="flex w-full max-w-sm flex-col gap-5" onSubmit={handleSubmit}>
           <div>
             <h1 className="text-[26px] font-black tracking-tight text-foreground">Se connecter</h1>
