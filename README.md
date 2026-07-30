@@ -59,3 +59,10 @@ Lint/format: `pnpm lint` (Biome) from the root.
 
 This project builds on prior open-source BLE reverse-engineering work and a number of
 open-source libraries — see [`CREDITS.md`](CREDITS.md).
+
+## License
+
+[PolyForm Noncommercial License 1.0.0](LICENSE) — free to use, study, modify, and share for any
+noncommercial purpose. Not an OSI-approved "open source" license in the strict sense (it
+excludes commercial use, which the Open Source Definition doesn't permit), but source-available
+under the same free/share-alike spirit.
