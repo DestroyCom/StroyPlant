@@ -54,3 +54,8 @@ pnpm dev
 ```
 
 Lint/format: `pnpm lint` (Biome) from the root.
+
+## Credits
+
+This project builds on prior open-source BLE reverse-engineering work and a number of
+open-source libraries — see [`CREDITS.md`](CREDITS.md).
