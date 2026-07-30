@@ -156,11 +156,91 @@ DestCom)**:
    "starting".
 
 **Status (2026-07-28)**: protocol defined, no test executed (DestCom has no physical access
-to the pots for now) — to resume once access is possible. **Do not interpret the 3rd
-byte or implement any logic based on it until these tests produce a reproducible result**
-— if no test moves a bit consistently, stay in "raw log, no interpretation" mode indefinitely
-rather than forcing a mapping, and Batch 1's connection strategy remains a classic fixed-interval
-scan.
+to the pots for now) — to resume once access is possible.
+
+**Status update (2026-07-30) — steps 2 and 3 executed on `a3d3` (A0:14:3D:CD:A3:D3), step 1
+partially executed**:
+
+- **History service UUID confirmed empirically**: `39e1fc00-84a8-11e2-afba-0002a5d5c51b`
+  (never previously read off the device — the official PDF only gives the characteristic UUIDs
+  FC01-FC06, not the service UUID itself). Fresh GATT read on `a3d3`: NB_ENTRIES=500,
+  LAST_ENTRY_INDEX=3198, TRANSFER_START_INDEX=0, CURRENT_SESSION_ID=8,
+  CURRENT_SESSION_START_INDEX=**0xFFFFFFFF** (sentinel, unlike `a073`'s earlier finite value —
+  meaning unconfirmed, possibly "no session currently open"), CURRENT_SESSION_PERIOD=900 (matches
+  `a073`, confirms 900s/15min is not device-specific).
+- **"Move detected" (step 2) — no reproducible signal**: tested twice on `a3d3` (a single
+  pick-up-and-relocate, then ~30s of continuous vigorous shaking). In both cases the 3rd byte
+  stayed at its baseline value throughout, with only transient blank reads _during_ the active
+  handling (consistent with a momentary BLE signal/RSSI drop while the pot was in motion, not a
+  flag) — it reverted to the exact same baseline value within one poll cycle (~5s) of the motion
+  stopping. **No evidence bit 1 (the documented "move detected" mask) responds to physical
+  movement of the whole pot** (the probe itself is fixed to this pot's body, not removable, so
+  only whole-pot movement was tested, which the accelerometer should still register).
+- **"Restart" (step 3) — real, reproducible signal, but not a clean match for the documented
+  table**: battery pull + reinsert on `a3d3`, observed via a continuous 5s-poll capture:
+  - Before (stable ~6.5min): `01 23 23`
+  - T+0 to T+25s after power-on: `01 23 3e` (transient)
+  - T+25s onward (stable 6+min, does not revert): `01 23 22`
+  - Bit-level: `0x23`→`0x22` differs by exactly **bit 0** (`0x01`, documented "unread entries")
+    flipping 1→0, persisting well past a normal read. The transient `0x3e` additionally sets bit 2
+    (`0x04`, documented "starting") **and** two bits outside the documented 3-bit range (bits 3 and
+    4) — confirming the earlier suspicion that this payload encodes more than the `<1.1`-firmware
+    3-flag table describes. Bit 2 ("starting") did clear within ~25s here, notably faster than the
+    documented "less than 3 minutes" window — small sample (n=1), not enough to revise that number.
+- **Unplanned but informative side-finding**: immediately after the History-service GATT read
+  above (a trivial connect→read→disconnect, ~2s, no history upload performed), the advertisement's
+  3rd byte flipped `0x22`→`0x23` — i.e. bit 0 ("unread entries") went 0→1 **right after a GATT
+  connection**, not after waiting the 900s session period. This is the opposite of what "unread
+  entries" would suggest (a read should clear it, not set it) — plausible alternative readings:
+  the bit may track "device has been connected to since its last self-initiated event" rather than
+  literally history-upload state, or connecting itself increments some internal counter. **Not
+  conclusive** (n=1, no repeat yet) — flagged here rather than acted on.
+- **Step 1 (unread-entries-after-a-real-new-sample) — completed, negative-but-informative
+  result**: a second History-service GATT read (same `docker stop`/read/`docker start` pattern,
+  ~21 minutes after the first) showed real progress — NB_ENTRIES 500→503, LAST_ENTRY_INDEX
+  3198→3201, CURRENT_SESSION_ID **rolled over 8→9** (a new session genuinely started),
+  CURRENT_SESSION_START_INDEX went from the `0xFFFFFFFF` sentinel to a real value (3199). So new
+  history data unambiguously appeared. **But the advertisement's bit 0 did not change at all
+  across this entire window** — it was already `1` (from the connect-triggered flip above) before
+  the wait and stayed exactly `1` after, confirmed via a passive-only rescan (no connect) both
+  right after the 2nd read and multiple checks during the 21-minute wait. Passive `bluetoothctl`
+  checks throughout the wait never showed anything but `01 23 23`.
+  - **Coherent reading of all 4 findings together** (still not "confirmed" in the sense the
+    protocol demands, but the pieces now fit one story): bit 0 looks like a plain **boolean**
+    "at least one unread entry exists", not an incrementing counter — so once truly unread data
+    exists in bulk (very plausible on these pots: the official app has presumably never run
+    against them to perform a real history upload, so the backlog is likely large and permanent),
+    the bit saturates at `1` and adding 3 more unread entries on top has nothing left to signal.
+    The restart test's transient `0→1→...→0` dip is the only edge we've seen: firmware boot
+    appears to zero this in-RAM flag, and it isn't until some device activity (here, a GATT
+    connection) causes the firmware to re-evaluate its backlog and set it back to `1`. This is
+    consistent with the officially-documented meaning of bit 0 — just observed on a device whose
+    backlog is apparently permanent, so the flag reads as "stuck on" outside of the narrow
+    post-restart window.
+  - **Still not fully proven**: we have exactly one clean 0→1 edge (post-restart, connect-induced)
+    and zero observations of a spontaneous 0→1 transition with no connection involved — so
+    "connecting sets it" vs. "time/backlog alone sets it" remains unresolved (the 21-minute passive
+    wait couldn't distinguish these, since the bit was already `1` throughout). Resolving that
+    would need a _third_ restart, followed by a purely passive wait with **no GATT connection at
+    all** for 15+ minutes — not attempted this session (would mean a 3rd adapter/collision
+    exposure for a data point that's already 80% explained).
+- **Operational finding, not a protocol result**: a manual GATT connect from a throwaway
+  container **does collide** with the always-on production poller's own `connectionQueue` — tested
+  twice, both produced `le-connection-abort-by-local` on the poller side (once on `a3d3`, once
+  triggering `a073`'s 2nd-consecutive-133 adapter restart). Both times the poller's own
+  retry/adapter-restart logic (see the "First real production incident" CLAUDE.md entry, round 1/2
+  fixes) recovered automatically within one cycle with no lasting effect — an unplanned but
+  reassuring real-conditions validation of that resilience code. Going forward, any further manual
+  GATT read on a named, actively-polled device should either briefly `docker stop`/`docker start`
+  the production container around the read (used successfully for the History-service read above)
+  or accept the small, self-healing collision risk — never assume a manual connect is free.
+
+**Do not interpret the 3rd byte or implement any logic based on it until these tests produce a
+fully reproducible result** — the restart signal is real and repeatable in direction (bit 0
+clears, or is it the connection that clears/sets it? — still ambiguous, see above), but is not yet
+clean enough to hang connection-strategy logic on. If no further test disambiguates this, stay in
+"raw log, no interpretation" mode indefinitely rather than forcing a mapping, and Batch 1's
+connection strategy remains a classic fixed-interval scan.
 
 ### 7.2 Persistence (SQLite + Prisma)
 
