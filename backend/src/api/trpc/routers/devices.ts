@@ -54,6 +54,36 @@ export const devicesRouter = router({
     return withLastReading(updated);
   }),
 
+  // Registers a device directly by its known BLE address, without waiting for a discovery
+  // session to find it — for a device that's temporarily out of range, or when the user already
+  // knows the address (docs/superpowers/specs/2026-07-30-scoped-ble-discovery-design.md).
+  addByAddress: protectedProcedure
+    .input(
+      z.object({
+        macAddress: z
+          .string()
+          .trim()
+          .regex(/^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$/, 'Adresse invalide (format attendu : AA:BB:CC:DD:EE:FF)')
+          .transform((value) => value.toUpperCase()),
+        kind: z.enum(['PARROT_POT', 'XIAOMI_LYWSD03MMC']),
+        name: z.string().trim().min(1),
+      }),
+    )
+    .mutation(async ({ input }) => {
+      const existing = await prisma.device.findUnique({ where: { id: input.macAddress } });
+      if (existing) throw new TRPCError({ code: 'CONFLICT', message: 'Un appareil avec cette adresse existe déjà' });
+
+      const created = await prisma.device.create({
+        data: { id: input.macAddress, kind: input.kind, name: input.name, lastSeenAt: new Date() },
+        include: { plantProfile: true },
+      });
+
+      const mqttState = getMqttState();
+      if (mqttState) publishDiscovery(mqttState.client, created, mqttState);
+
+      return withLastReading(created);
+    }),
+
   // Edits from the device detail page, after claiming (unlike `rename`, which is the claim step
   // itself and always requires a non-empty name) — all 3 fields optional/independent so the
   // frontend can save just one at a time. `environment` is storage only for now (DestCom's explicit

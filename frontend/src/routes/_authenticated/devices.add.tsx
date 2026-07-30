@@ -6,6 +6,7 @@ import { toast } from 'sonner';
 import { DeviceKindIcon } from '@/components/device-kind-icon';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { formatDeviceKind, formatRelativeTime } from '@/lib/format';
 import { trpc } from '@/lib/trpc';
 import type { Device } from '@/lib/types';
@@ -66,7 +67,68 @@ function UnnamedDeviceRow({ device }: { device: Device }) {
   );
 }
 
+function AddByAddressForm({ queryClient }: { queryClient: ReturnType<typeof useQueryClient> }) {
+  const [macAddress, setMacAddress] = useState('');
+  const [kind, setKind] = useState<'PARROT_POT' | 'XIAOMI_LYWSD03MMC'>('PARROT_POT');
+  const [name, setName] = useState('');
+
+  const addMutation = useMutation(
+    trpc.devices.addByAddress.mutationOptions({
+      onSuccess: () => {
+        void queryClient.invalidateQueries({ queryKey: trpc.devices.list.queryKey() });
+        toast.success('Appareil ajouté');
+        setMacAddress('');
+        setName('');
+      },
+      onError: (error) => {
+        toast.error("Échec de l'ajout", { description: error.message });
+      },
+    }),
+  );
+
+  function handleSubmit(event: React.FormEvent) {
+    event.preventDefault();
+    if (!macAddress.trim() || !name.trim()) return;
+    addMutation.mutate({ macAddress: macAddress.trim(), kind, name: name.trim() });
+  }
+
+  return (
+    <form onSubmit={handleSubmit} className="mt-8 flex flex-col gap-3 rounded-lg border border-border-subtle p-4 sm:flex-row sm:items-end">
+      <div className="flex flex-col gap-2">
+        <Label htmlFor="mac-address">Adresse BLE</Label>
+        <Input
+          id="mac-address"
+          value={macAddress}
+          onChange={(event) => setMacAddress(event.target.value)}
+          placeholder="AA:BB:CC:DD:EE:FF"
+          className="sm:w-48"
+        />
+      </div>
+      <div className="flex flex-col gap-2">
+        <Label htmlFor="device-kind">Type</Label>
+        <select
+          id="device-kind"
+          value={kind}
+          onChange={(event) => setKind(event.target.value as 'PARROT_POT' | 'XIAOMI_LYWSD03MMC')}
+          className="h-9 rounded-lg border border-input bg-transparent px-3 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
+        >
+          <option value="PARROT_POT">Parrot Pot</option>
+          <option value="XIAOMI_LYWSD03MMC">Capteur Xiaomi</option>
+        </select>
+      </div>
+      <div className="flex flex-1 flex-col gap-2">
+        <Label htmlFor="device-name">Nom</Label>
+        <Input id="device-name" value={name} onChange={(event) => setName(event.target.value)} placeholder="Nom de la plante" />
+      </div>
+      <Button type="submit" disabled={!macAddress.trim() || !name.trim() || addMutation.isPending}>
+        Ajouter par adresse
+      </Button>
+    </form>
+  );
+}
+
 function AddDevicePage() {
+  const queryClient = useQueryClient();
   const [discoveryActive, setDiscoveryActive] = useState(false);
 
   const startMutation = useMutation(
@@ -132,6 +194,8 @@ function AddDevicePage() {
           ))}
         </div>
       )}
+
+      <AddByAddressForm queryClient={queryClient} />
     </div>
   );
 }
