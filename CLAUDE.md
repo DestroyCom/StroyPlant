@@ -454,6 +454,47 @@ production server:
     notices all working. Per-device page reload resume tested. **Known gap**: a full backend-process restart
     mid-session currently leaves the frontend's WS subscription stuck retrying with no error shown — a product
     decision (bounding retries or adding a client staleness timeout) not yet made, tracked as follow-up.
+- **Responsive layout + global History page** ✅ (2026-07-30) — two independent pieces of work on
+  the same branch: a responsive pass over the existing frontend (mobile header + bottom tab nav
+  below `md` in `app-shell.tsx`, safe-area-aware padding for the iOS home-indicator area, mobile
+  padding tweaks across the dashboard/detail/add/calibration pages), and a new global "Historique"
+  page (`frontend/src/routes/_authenticated/history.tsx`) showing a day-grouped feed merging every
+  `WateringEvent` and the new `SyncEvent` model (backend/src/api/trpc/routers/history.ts's `list`
+  procedure), filterable by device and by period (all/7d/30d).
+  - **`SyncEvent`** (new Prisma model, see the Business models entry above): persists sync/BLE read
+    failures that used to only be logged to the console (`ble/scanner.ts`'s `pollDeviceNow`,
+    `devices.ts`'s `sync`/`forceSyncAll`) — additive to that existing `log(...)` call, never a
+    replacement (docs/STROYPLANT_SPEC.md section 7.1). **Only failures are persisted, never
+    successes** — a successful sync already produces a `Reading` row proving it happened, so a
+    success-case row would just duplicate that with no new information.
+  - **Final-review fix (name filter)**: `history.list`'s "no `deviceId`" branch originally scoped to
+    every device with no name filter, unlike `devices.list`'s own `name IS NOT NULL` filter — an
+    unclaimed/unnamed device (e.g. a neighbour's Xiaomi the scanner discovers but nobody claims)
+    would flood the unfiltered feed with its failed reads, potentially pushing real watering events
+    out of the 200-row cap. Fixed to scope both the `WateringEvent` and `SyncEvent` queries to
+    `device: { name: { not: null } }` when no explicit `deviceId` is given. Verified empirically: a
+    temporary unnamed device + `SyncEvent` row were seeded, confirmed excluded from the unfiltered
+    query and still reachable via an explicit `deviceId` filter, then cleaned up (`dev.db` diffed
+    against a pre-test backup to confirm no residue).
+  - **Final-review mitigation (dedup)**: a persistently unreachable device would otherwise write a
+    near-identical `SyncEvent` row every ~5min forever. `persistSyncFailure`
+    (`backend/src/readings.ts`) now skips the insert if the most recent `SyncEvent` for that device
+    has the same `errorDetail` and landed within the last poll interval (`DEFAULT_POLL_INTERVAL_MS`,
+    now exported from `ble/scanner.ts` and imported here rather than duplicated as a second constant
+    — a genuine module cycle between the two files, confirmed harmless empirically since the value is
+    only read inside a function body called at runtime, never at module-evaluation time). **Broader
+    `SyncEvent` retention/pruning policy (e.g. a cap or a TTL) is a deliberate, explicit open
+    follow-up, not an oversight** — DestCom chose to defer that decision until real production
+    volume data exists to inform it, this dedup is only a stopgap against the worst case in the
+    meantime.
+  - Final-review also fixed: the history page previously showed "Aucun événement pour cette
+    période." during loading and on a genuine query error alike (plain `data` destructuring treated
+    `undefined` the same as an empty array) — now renders distinct loading/"Chargement…", error
+    (inline, `error.message`), and empty states; the device-filter `<select>` gained
+    `aria-label="Filtrer par plante"` (no visible `<Label>`, consistent with the compact filter-bar
+    layout); and `devices.ts`'s `sync` mutation now catches a `persistSyncFailure` failure the same
+    way `forceSyncAll` already did, so a secondary DB error can never mask the real BLE error as the
+    thing surfaced to the caller.
 - **Next batch**: Batch 10 (extension to other devices — Flower Power, Flower Care).
 - **`noble-bridge` validated with real hardware** ✅ (2026-07-27) — a real Parrot Pot
   (`PARROT-A073`) connected and read end-to-end (scan → connect → activate → read
@@ -491,11 +532,15 @@ backend/         API + business logic (Fastify, Prisma/SQLite, auth, BLE) — ru
                    publisher (state/health/watering-result), commands (HA button → watering)
   src/mcp/         MCP server (Batch 8): OAuth session → tRPC context (context.ts), the 4 tools
                    (server.ts), Fastify routes for /mcp + OAuth discovery metadata (routes.ts)
+  src/api/trpc/routers/history.ts  global History page's tRPC router (merged WateringEvent/SyncEvent
+                   feed, see Project status)
   src/db/          Prisma client
   prisma/          schema.prisma + migrations
 frontend/        Vite + React SPA + TanStack Router/Query + Tailwind v4 + shadcn/ui (Batch 3)
-  src/routes/      TanStack Router pages (file-based): login, _authenticated (layout+guard) and its children
-  src/components/  Shell (sidebar), DeviceCard, SensorGauge, HistoryChart, shadcn components in ui/
+  src/routes/      TanStack Router pages (file-based): login, _authenticated (layout+guard) and its
+                   children, including history.tsx (the global "Historique" page, see Project status)
+  src/components/  Shell (sidebar, responsive — see Project status), DeviceCard, SensorGauge,
+                   HistoryChart, shadcn components in ui/
   src/lib/         auth-client (BetterAuth), trpc.ts (tRPC client + TanStack Query options proxy),
                    use-live-readings (readings.onReading subscription)
 noble-bridge/    Native macOS process (outside Docker), exposes the Mac's Bluetooth over HTTP/WS —
@@ -521,7 +566,11 @@ Dockerfile, docker-entrypoint.sh, docker-compose.prod.yml, docker-compose.test.y
   `WateringEvent` (deviceId, triggerSource MANUAL/CRON, success, errorDetail), `PlantProfile` (Batch
   4, see below), `Schedule` (Batch 5, one optional row per device — deviceId, active,
   allowedStartHour/EndHour, cooldownHours; a missing row isn't "no schedule", it resolves to
-  defaults, see Project status).
+  defaults, see Project status), `SyncEvent` (the global History page, see Project status —
+  deviceId, source POLL/MANUAL, errorDetail, timestamp; **only failures are ever persisted, never
+  successes** — a successful sync already produces a `Reading` row proving it happened, so a
+  success-case `SyncEvent` would just duplicate that with no new information — do not "fix" this by
+  adding success rows).
 - **`DeviceProvider`** (`src/providers/types.ts`): common interface `scan()` /
   `readSensors(id, kind)` / `triggerAction(id, action)`. `kind` is passed by the caller because a
   provider can't always infer the device type from its id alone.
@@ -572,8 +621,9 @@ Dockerfile, docker-entrypoint.sh, docker-compose.prod.yml, docker-compose.test.y
   see Project status), `mqtt` (`get`, `upsert` — MQTT broker config, DB-backed, see Project status),
   `schedule` (`get`, `upsert` — Batch 5 auto-watering config, see Project status),
   `plantDr` (`getCalibration`, `calibrateWet` — Batch 6 device-side calibration, see Project status),
-  `liveSession` (`status`, `start`, `stop`, `onSample` — real-time GATT sampling, see Project status)
-  and `readings`
+  `liveSession` (`status`, `start`, `stop`, `onSample` — real-time GATT sampling, see Project status),
+  `history` (`list` — the global History page's merged `WateringEvent`/`SyncEvent` feed, see Project
+  status) and `readings`
   (`onReading`, a subscription) into `appRouter`; its type (`AppRouter`) is the single source of
   truth shared with the frontend. `trpc.ts` defines `publicProcedure`/`protectedProcedure`
   (`protectedProcedure` throws `TRPCError({code:'UNAUTHORIZED'})` when there's no session — same
@@ -657,7 +707,9 @@ Dockerfile, docker-entrypoint.sh, docker-compose.prod.yml, docker-compose.test.y
   to the per-device page instead of "coming soon", notifications/MCP still shown as disabled
   "coming soon" cards pending Batches 7/8), "Calibration" (`/devices/$deviceId/calibration`, Batch
   6 — shows the device's current Plant Dr dry/wet thresholds live and a "capture wet point" action,
-  gated on a species being assigned). **Not done yet**: global "History".
+  gated on a species being assigned), "Historique" (`/history`, global — see the Project status
+  entry below for the full design: a day-grouped feed merging `WateringEvent` and `SyncEvent` rows
+  across every named device, filterable by device and by period).
 - App shell layout (`components/app-shell.tsx`): the sidebar is pinned to the viewport height
   (`h-svh` + `overflow-hidden` on the root flex row) and only the content `<main>` scrolls
   (`overflow-y-auto`) — fixed 2026-07-28 after the sidebar was found stretching to the full page

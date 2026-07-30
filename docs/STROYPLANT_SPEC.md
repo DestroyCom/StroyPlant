@@ -166,6 +166,12 @@ Tables at minimum:
 - `schedules` (device_id, thresholds, allowed_hours, active bool) — implemented as `Schedule`
   (Batch 5, see 7.4), one optional row per device
 - `plant_profiles` (imported from CSV — see 7.3)
+- `sync_events` (device_id, timestamp, source: poll|manual, error detail) — implemented as
+  `SyncEvent` (global History page, 2026-07-30), persisting sync/BLE read failures that used to only
+  be logged to the console. **Failures only, never successes** — a successful sync already produces
+  a `Reading` row, so a success-case row would duplicate that with no new information. Backs the
+  `history.list` tRPC procedure (7.5), a merged, day-grouped feed of `WateringEvent` + `SyncEvent`
+  scoped to named devices only (same `name IS NOT NULL` filter as `devices.list`).
 
 ### 7.3 Health Engine
 
@@ -282,6 +288,9 @@ procedure list and the Date-serialization note. Current procedures:
 - `readings.onReading` — subscription, replaces the native WebSocket push of new readings (backed
   by a Node `EventEmitter` server-side, consumed via `@trpc/tanstack-react-query`'s
   `useSubscription` client-side)
+- `history.list` — global History page (2026-07-30): merges `WateringEvent` and `SyncEvent` rows,
+  optionally filtered to one device (defaults to every *named* device, never unclaimed ones) and/or
+  a time window, capped at 200 rows, most recent first
 
 ### 7.6 Auth
 
@@ -425,6 +434,11 @@ connection attempt.
 - Tailwind CSS + shadcn/ui
 - The build (`dist/`) is served statically directly by the Node backend — no separate nginx/Caddy container, one less process to run on the production server
 - Multi-stage Dockerfile: a Node stage that builds Vite, copied into the backend's final image
+- **Responsive layout** (2026-07-30): the app shell switches from a fixed sidebar to a compact
+  mobile header + bottom tab nav below Tailwind's `md` breakpoint, with safe-area-aware padding on
+  the bottom nav for notched/home-indicator phones. A global "Historique" page (`/history`) was
+  added alongside this, showing a day-grouped feed merging `WateringEvent` and the new `SyncEvent`
+  model (see 7.2/7.5) across every named device, filterable by device and by period.
 
 ### 7.10 Parrot Pot history — final decision: fallback to live polling only
 
