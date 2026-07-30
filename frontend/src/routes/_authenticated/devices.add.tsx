@@ -1,7 +1,7 @@
-import { useMutation, useQueryClient, useSuspenseQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient, useSuspenseQuery } from '@tanstack/react-query';
 import { createFileRoute } from '@tanstack/react-router';
 import { RadioTower } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { DeviceKindIcon } from '@/components/device-kind-icon';
 import { Button } from '@/components/ui/button';
@@ -129,11 +129,27 @@ function AddByAddressForm({ queryClient }: { queryClient: ReturnType<typeof useQ
 
 function AddDevicePage() {
   const queryClient = useQueryClient();
-  const [discoveryActive, setDiscoveryActive] = useState(false);
+  // The id of the session THIS page instance itself started — a ref, not state, because the
+  // unmount cleanup closure below needs to read the LATEST value (set asynchronously once
+  // start's mutation resolves), not the one captured at mount. Stays null if start never
+  // resolved successfully (e.g. CONFLICT from another tab), so this instance's cleanup then has
+  // nothing of its own to stop — see stopDiscoverySession's ownership check on the backend for
+  // why this matters (a page instance must never stop a session it doesn't own).
+  const ownSessionIdRef = useRef<string | null>(null);
+
+  // Polled from the backend's actual session status, following live-mode-section.tsx's exact
+  // precedent for the equivalent problem (a session with a backend-side auto-cutoff that the
+  // frontend must not silently drift out of sync with) — not local state, so the UI correctly
+  // reflects reality even after the 5-minute auto-cutoff fires with nobody around to notice.
+  const { data: status } = useQuery(trpc.discoverySession.status.queryOptions(undefined, { refetchInterval: 5000 }));
+  const discoveryActive = status != null;
 
   const startMutation = useMutation(
     trpc.discoverySession.start.mutationOptions({
-      onSuccess: () => setDiscoveryActive(true),
+      onSuccess: ({ sessionId }) => {
+        ownSessionIdRef.current = sessionId;
+        void queryClient.invalidateQueries({ queryKey: trpc.discoverySession.status.queryKey() });
+      },
       onError: (error) => {
         // CONFLICT (another session already active, e.g. a second browser tab) — not fatal,
         // the page still works for naming already-discovered devices.
@@ -151,7 +167,11 @@ function AddDevicePage() {
   useEffect(() => {
     startMutation.mutate();
     return () => {
-      stopMutation.mutate();
+      // Only stop the session THIS instance actually started — if start hadn't resolved yet, or
+      // failed (CONFLICT), there's nothing of ours to stop, and calling stop with no id would
+      // risk killing whatever session happens to be active, possibly someone else's.
+      const sessionId = ownSessionIdRef.current;
+      if (sessionId) stopMutation.mutate({ sessionId });
     };
   }, []);
 

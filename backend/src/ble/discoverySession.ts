@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { prisma } from '../db/client.js';
 import { log } from '../logger.js';
 import { getMqttState } from '../mqtt/manager.js';
@@ -16,6 +17,7 @@ const SCAN_RESTART_MAX_DELAY_MS = 60_000;
 const SCAN_HEALTHY_UPTIME_MS = 60_000;
 
 interface ActiveSession {
+  id: string;
   controller: AbortController;
   startedAt: number;
   timeoutHandle: ReturnType<typeof setTimeout>;
@@ -52,18 +54,24 @@ async function onDeviceSeen(device: DiscoveredDevice): Promise<void> {
 
 // maxDurationMs defaults to the real 5min cutoff — overridable so a verification script can
 // exercise the auto-cutoff path without actually waiting 5 minutes (see Task 1 Step 2).
-export function startDiscoverySession(provider: DeviceProvider, maxDurationMs = DISCOVERY_SESSION_MAX_DURATION_MS): void {
+// Returns the new session's id — the caller (the discoverySession tRPC router) hands it back to
+// whichever frontend page instance started it, so that instance (and only that instance) can
+// later stop precisely this session (see stopDiscoverySession below): without an id, any caller
+// could stop whatever session happens to be active, including one started by a different tab/page
+// instance after a hard reload skipped this one's own cleanup.
+export function startDiscoverySession(provider: DeviceProvider, maxDurationMs = DISCOVERY_SESSION_MAX_DURATION_MS): string {
   if (activeSession) {
     throw new Error('Une session de découverte est déjà active');
   }
 
+  const id = randomUUID();
   const controller = new AbortController();
 
   const timeoutHandle = setTimeout(() => {
     controller.abort();
   }, maxDurationMs);
 
-  const session: ActiveSession = { controller, startedAt: Date.now(), timeoutHandle };
+  const session: ActiveSession = { id, controller, startedAt: Date.now(), timeoutHandle };
   activeSession = session;
 
   // Mirrors liveSession/manager.ts's .finally() on the tracked async operation: auto-cutoff only
@@ -79,10 +87,18 @@ export function startDiscoverySession(provider: DeviceProvider, maxDurationMs = 
       activeSession = null;
     }
   });
+
+  return id;
 }
 
-export function stopDiscoverySession(): void {
-  if (!activeSession) return;
+// Only actually stops the active session if `sessionId` matches it — a mismatch (the session it
+// thought it owned already ended, or belongs to a different caller entirely, e.g. another
+// browser tab's discovery session) is a no-op, not an error: there's nothing THIS caller is
+// entitled to stop. This is what stops a page instance that never got a session of its own
+// (e.g. it got CONFLICT from start) from being able to kill someone else's active session on
+// unmount.
+export function stopDiscoverySession(sessionId: string): void {
+  if (!activeSession || activeSession.id !== sessionId) return;
   clearTimeout(activeSession.timeoutHandle);
   activeSession.controller.abort();
   activeSession = null;
