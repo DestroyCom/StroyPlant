@@ -77,7 +77,7 @@ returned during warm-up (useful for debugging/testing), only the global status c
 
 For each parameter relevant to the device type:
 
-- **Parrot Pot**: soil moisture, temperature, luminosity, soil conductivity (`soilConductivityEcPorous`).
+- **Parrot Pot**: soil moisture, temperature, luminosity, soil conductivity/fertility index (`soilConductivityUsCm`).
 - **Xiaomi LYWSD03MMC**: temperature, humidity.
 
 *(Soil pH exists in `PlantProfile` but isn't measured by any current device. Reserved for
@@ -153,19 +153,42 @@ pot, while staying sensitive on a pot that's usually very stable.
   infrastructure in the project yet (the scanner runs in a loop but nothing else), and Batch 5
   (auto-watering scheduler) will actually need it for its pump anti-spam logic — adding a
   persistence mechanism now would have been over-engineering for a need that doesn't exist yet.
-- **Soil conductivity scoring — CSV mapping not empirically confirmed.** `Reading` collects two
-  candidate raw values (`soilConductivityEcb`, `soilConductivityEcPorous` — characteristics
-  `39e1fa0d`/`0e`, confirmed by the official Parrot PDF but never read by the official app
-  itself, see `docs/STROYPLANT_SPEC.md` section 8). `soilConductivityEcPorous` is wired into
-  `computeDeviceHealth` (compared against `soilConductivityMinUsCm`/`MaxUsCm` from the CSV) based
-  on soil science research (METER Group, 30MHz): "Ec porous" (pore water EC) is the value the
-  horticultural industry calls "soil conductivity" by default, as opposed to "Ecb" (bulk EC,
-  raw, kept in the database for diagnostics but never used in scoring). **No real data has been
-  collected yet to validate this choice** — only synthetic mock values at the time of this
-  decision. An empirical correlation protocol is planned
-  (`docs/STROYPLANT_SPEC.md` section 7.1) but not yet executed (requires physical access to the
-  devices) — to be revalidated once real readings are available.
 - **No soil pH scoring**: the CSV contains this range but no current device measures it.
+
+## Soil conductivity / fertility index — history (resolved 2026-07-30)
+
+Originally (Batch 4/6) this project read the "calibrated" `39e1fa0d`/`0e` characteristics
+("Ecb"/"Ec porous" — new, undocumented before `docs/PARROT_OFFICIAL_BLE_SPEC.md`, and never read
+by the official Parrot app itself). Confirmed via real production logs (`docker logs stroyplant`,
+24h window, both real Parrot Pots `A0:14:3D:CD:A0:73` and `A0:14:3D:CD:A3:D3`) to be **unreadable
+100% of the time** (`Characteristic not available`) — they simply don't exist on this firmware
+revision's GATT table. DestCom's `todo.md` flagged this as "missing soil fertility index"; the
+initial investigation confirmed the gap but stopped short of a fix pending validation.
+
+**Root cause found by reading WatchFlower's actual Parrot Pot driver**
+(`github.com/emericg/WatchFlower`, `src/devices/device_parrotpot.cpp`,
+`serviceDetailsDiscovered_live()`): the real, shipped driver never reads `fa0d`/`fa0e` at all — it
+reads the RAW `39e1fa02` characteristic (`UUID_LIVE_SOIL_EC`, marked "Certain" in
+`docs/PARROT_BLE_REVERSE_ENGINEERING.md`, part of the same `39e1fa00` sensor service as soil
+moisture/temperature/luminosity) and applies an empirically-tuned linear mapping: clamp the raw
+uint16 to `[1500, 2036]`, then map `2036 → 0` / `1500 → 1000` (higher raw ADC = less conductive
+soil). This directly explains the 100% failure rate — this project was reading characteristics
+that don't exist on real hardware, while a confirmed-present one sat right next to the
+characteristics we already read successfully every poll.
+
+Fixed by switching to `39e1fa02` (`backend/src/ble/parrot/soilConductivity.ts`'s
+`decodeSoilConductivityRaw`, duplicated in `noble-bridge/src/parrot.ts` per that package's own
+duplication convention). The old `soilConductivityEcb`/`soilConductivityEcPorous` `Reading` columns
+are gone, replaced by a single `soilConductivityUsCm` — this is now `computeDeviceHealth`'s
+`soilConductivityUsCm` parameter, compared against the CSV's `soilConductivityMinUsCm`/`MaxUsCm`
+range exactly as before, with no separate unit conversion needed (WatchFlower stores this same
+0-1000-ish mapped value directly against its own CSV column). Label in the frontend:
+"Fertilité du sol" (`frontend/src/lib/format.ts`).
+
+**Not yet re-verified against real hardware** — the fix reasons from WatchFlower's real, shipped
+source code and the official spec's own "Certain" marking for `fa02`, but hasn't been observed
+producing a value on the actual production Parrot Pots yet (needs a redeploy + a poll cycle to
+confirm).
 
 ## API
 

@@ -16,10 +16,9 @@ export interface Reading {
   temperatureC: number | null;
   luminosity: number | null;
   waterTankLevelPercent: number | null;
-  // "Soil conductivity" candidates (39e1fa0d/0e) — collected but not yet used by the Health
-  // Engine, see docs/STROYPLANT_SPEC.md section 8.
-  soilConductivityEcb: number | null;
-  soilConductivityEcPorous: number | null;
+  // Soil conductivity (fertility index), decoded from the raw 39e1fa02 characteristic — see
+  // backend/src/ble/parrot/soilConductivity.ts and docs/HEALTH_ENGINE.md.
+  soilConductivityUsCm: number | null;
   humidityPercent: number | null;
   batteryPercent: number | null;
 }
@@ -44,7 +43,7 @@ export interface PlantProfile {
   lightMaxMmol: number | null;
 }
 
-export type ParameterKey = 'soilMoisturePercent' | 'temperatureC' | 'humidityPercent' | 'luminosity' | 'soilConductivityEcPorous';
+export type ParameterKey = 'soilMoisturePercent' | 'temperatureC' | 'humidityPercent' | 'luminosity' | 'soilConductivityUsCm';
 export type ParameterStatus = 'ok' | 'too_low' | 'too_high' | 'n/a';
 
 export interface ParameterHealth {

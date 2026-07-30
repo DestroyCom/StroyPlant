@@ -314,6 +314,25 @@ production server:
     working end-to-end with the new parameterized topic settings, and the "blank password keeps
     existing" behavior. Health settings verified via the tRPC round trip
     (`getSettings`/`upsertSettings`/`deviceHealth` all consistent).
+- **Poll interval moved to the Settings page too** (2026-07-30) — same move as the entry above,
+  for the last remaining env-var-only tunable (`PARROT_POLL_INTERVAL_MS`): DestCom's `todo.md`
+  request to let users trade off data freshness against BLE/battery load without a redeploy.
+  - **`PollSettings`** (singleton DB row, `pollIntervalMinutes`, default 5) +
+    `backend/src/ble/pollSettings.ts` (`getPollSettings`/`upsertPollSettings`, same
+    get-or-defaults shape as `health/settings.ts`). `ble/namedDevicePoller.ts`'s tick now fetches
+    this fresh on every tick (same pattern `health/scheduler.ts` already uses for
+    `getHealthSettings()`) instead of closing over a value passed once at `startNamedDevicePoller()`
+    call time — a Settings save applies to the very next tick, no restart. The existing per-device
+    exponential backoff on repeated failures (`consecutiveFailures`, capped at 1h) is unaffected —
+    it multiplies whatever this base interval currently is, it doesn't replace it.
+  - New `pollSettings.get`/`pollSettings.upsert` tRPC procedures + a "Synchronisation" card in
+    `/settings` (`frontend/src/components/poll-settings-section.tsx`), same
+    read-then-edit-then-save shape as `HealthEngineSettingsSection`. `env.parrotPollIntervalMs` and
+    the `PARROT_POLL_INTERVAL_MS` env var are gone — `startNamedDevicePoller()` no longer takes a
+    poll-interval parameter at all.
+  - **Verified** via a scratch copy of `dev.db`: `getPollSettings()` returns the default (5) with no
+    row yet, `upsertPollSettings()` persists a new value, and a re-read reflects it — the same
+    round trip the tick reads on every iteration.
 - **First real production incident** (2026-07-29) — the first real `node-ble` prod deployment
   crash-looped (`docker inspect`'s `RestartCount=60`), then — after a fix — silently stopped
   syncing entirely for 12h+ while staying up (not crash-looping), with the web UI also unable to
@@ -765,10 +784,11 @@ Dockerfile, docker-entrypoint.sh, docker-compose.prod.yml, docker-compose.test.y
 - **Parrot Pot**: mandatory activation (write `1` to `39e1fa06`) before reading `39e1fa09/0a/0b`
   (float32 LE, already-calibrated VWC/temp/luminosity), otherwise readings silently freeze. Write
   `0` at the end of the session. Watering trigger: write `[0x08,0x00]` to `39e1f906`,
-  write-with-response. Also best-effort reads `39e1fa0d`/`0e` (soil conductivity candidates,
-  `Reading.soilConductivityEcb`/`soilConductivityEcPorous`) — never used by the official app.
-  `soilConductivityEcPorous` is wired into the Health Engine (see `docs/HEALTH_ENGINE.md` for the
-  reasoning and the limitation: mapping unconfirmed on real data). **Event-driven advertisement
+  write-with-response. Also best-effort reads `39e1fa02` (soil conductivity/fertility index,
+  `Reading.soilConductivityUsCm`, `ble/parrot/soilConductivity.ts`) — decoded the same way
+  WatchFlower's own real Parrot Pot driver does, see `docs/HEALTH_ENGINE.md` for the full history
+  (this replaced an earlier attempt at reading `39e1fa0d`/`0e`, confirmed unreadable on real
+  hardware). Wired into the Health Engine. **Event-driven advertisement
   flags: Parrot company ID (`0x0043`) confirmed via real capture on both production-server Parrot Pots
   (2026-07-28), but the payload is 3 bytes (not 1 as assumed) and their exact meaning isn't
   determined** — an active correlation protocol is defined but not executed (requires physical
@@ -791,6 +811,7 @@ Dockerfile, docker-entrypoint.sh, docker-compose.prod.yml, docker-compose.test.y
   `liveSession` (`status`, `start`, `stop`, `onSample` — real-time GATT sampling, see Project status),
   `discoverySession` (`status`, `start`, `stop` — session-scoped new-device BLE discovery while
   `/devices/add` is open, see the scoped-BLE-discovery Project status entry),
+  `pollSettings` (`get`, `upsert` — named-device poll interval, DB-backed, see Project status),
   `history` (`list` — the global History page's merged `WateringEvent`/`SyncEvent` feed, see Project
   status) and `readings`
   (`onReading`, a subscription) into `appRouter`; its type (`AppRouter`) is the single source of

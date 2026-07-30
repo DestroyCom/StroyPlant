@@ -3,6 +3,7 @@ import { Bell, Bot, PlusCircle } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { HealthEngineSettingsSection } from '@/components/health-engine-settings-section';
 import { MqttSettingsSection } from '@/components/mqtt-settings-section';
+import { PollSettingsSection } from '@/components/poll-settings-section';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -80,6 +81,7 @@ function SettingsPage() {
             </CardDescription>
           </CardHeader>
         </Card>
+        <PollSettingsSection />
         <MqttSettingsSection />
         <HealthEngineSettingsSection />
         <ComingSoonSection

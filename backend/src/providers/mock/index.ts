@@ -17,8 +17,7 @@ interface MockPotState {
   temperatureC: number;
   luminosity: number;
   waterTankLevelPercent: number;
-  soilConductivityEcb: number;
-  soilConductivityEcPorous: number;
+  soilConductivityUsCm: number;
   declinePerMinute: number;
   lastUpdate: number;
   plantDr: PlantDrCalibration;
@@ -53,12 +52,10 @@ function createInitialPots(): MockPotState[] {
       // to be set to (leftover from before that unit was confirmed, looked like lux instead).
       luminosity: 5,
       waterTankLevelPercent: 90,
-      // Synthetic values (no real data collected) — Ec porous > Ecb, consistent with the
-      // derivation that removes the soil/air diluting effect (docs/HEALTH_ENGINE.md), used for
-      // scoring. Magnitude aligned with the typical "Soil conductivity" CSV range (hundreds-thousands
-      // µS/cm), to be corrected if real values observed on a real device turn out different.
-      soilConductivityEcb: 600,
-      soilConductivityEcPorous: 900,
+      // Synthetic value (no real data collected yet against this new field) — magnitude aligned
+      // with the typical "Soil conductivity" CSV range (hundreds-thousands µS/cm), to be corrected
+      // if real values observed on a real device turn out different.
+      soilConductivityUsCm: 900,
       declinePerMinute: 0.05,
       lastUpdate: now,
       plantDr: defaultPlantDrCalibration(),
@@ -70,8 +67,7 @@ function createInitialPots(): MockPotState[] {
       temperatureC: 22,
       luminosity: 3,
       waterTankLevelPercent: 0, // empty reservoir from the start — any triggerAction('water') must fail
-      soilConductivityEcb: 550,
-      soilConductivityEcPorous: 850,
+      soilConductivityUsCm: 850,
       declinePerMinute: 1.2, // drops noticeably faster than MOCK-POT-NORMAL
       lastUpdate: now,
       plantDr: defaultPlantDrCalibration(),
@@ -91,8 +87,7 @@ function applyPotDecay(state: MockPotState): void {
   state.soilMoisturePercent = Math.max(0, state.soilMoisturePercent - state.declinePerMinute * elapsedMinutes);
   state.temperatureC += (Math.random() - 0.5) * 0.3;
   state.luminosity = Math.max(0, state.luminosity + (Math.random() - 0.5) * 0.3);
-  state.soilConductivityEcb = Math.max(0, state.soilConductivityEcb + (Math.random() - 0.5) * 10);
-  state.soilConductivityEcPorous = Math.max(0, state.soilConductivityEcPorous + (Math.random() - 0.5) * 15);
+  state.soilConductivityUsCm = Math.max(0, state.soilConductivityUsCm + (Math.random() - 0.5) * 15);
   state.lastUpdate = Date.now();
 }
 
@@ -183,8 +178,7 @@ export function createMockProvider(): DeviceProvider {
           temperatureC: pot.temperatureC,
           luminosity: pot.luminosity,
           waterTankLevelPercent: pot.waterTankLevelPercent,
-          soilConductivityEcb: pot.soilConductivityEcb,
-          soilConductivityEcPorous: pot.soilConductivityEcPorous,
+          soilConductivityUsCm: pot.soilConductivityUsCm,
           isDrySoil: statusFlags.isDrySoil,
           isWetSoil: statusFlags.isWetSoil,
           isEmptyTank: statusFlags.isEmptyTank,

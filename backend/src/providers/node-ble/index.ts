@@ -5,6 +5,7 @@ import { createBluetooth } from 'node-ble';
 import { extractParrotManufacturerPayload } from '../../ble/parrot/advertisement.js';
 import { decodePlantDrStatusFlags, type PlantDrCalibration, type PlantDrWriteValues } from '../../ble/parrot/plantDr.js';
 import { CONNECT_TIMEOUT_MS, GATT_133_BACKOFF_MS, withGattRetry, withTimeout } from '../../ble/parrot/retry.js';
+import { decodeSoilConductivityRaw } from '../../ble/parrot/soilConductivity.js';
 import {
   PARROT_POT_NAME_PREFIX,
   PLANT_DR_SERVICE_UUID,
@@ -414,27 +415,25 @@ export function createNodeBleProvider(): DeviceProvider {
               });
             }
 
-            // Conductivity candidates (39e1fa0d/0e) — never used by the official Parrot Pot app,
-            // firmware behavior not guaranteed. Read best-effort: a failure here must never
-            // fail the main sensor reading (docs/STROYPLANT_SPEC.md section 8).
-            let soilConductivityEcb: number | undefined;
-            let soilConductivityEcPorous: number | undefined;
+            // Soil conductivity (fertility index) — RAW characteristic (39e1fa02), confirmed
+            // readable on real hardware and decoded the same way WatchFlower's own Parrot Pot
+            // driver does (see ble/parrot/soilConductivity.ts). Still read best-effort: a failure
+            // here must never fail the main sensor reading (docs/STROYPLANT_SPEC.md section 8).
+            let soilConductivityUsCm: number | undefined;
             try {
-              const ecbChar = await trackedCharacteristic(sensorService, UUIDS.live.soilConductivityEcb, characteristics);
-              soilConductivityEcb = (await ecbChar.readValue()).readFloatLE(0);
-              const ecPorousChar = await trackedCharacteristic(sensorService, UUIDS.live.soilConductivityEcPorous, characteristics);
-              soilConductivityEcPorous = (await ecPorousChar.readValue()).readFloatLE(0);
+              const conductivityChar = await trackedCharacteristic(sensorService, UUIDS.live.soilConductivityRaw, characteristics);
+              soilConductivityUsCm = decodeSoilConductivityRaw(await conductivityChar.readValue());
               log({
                 direction: 'READ',
-                label: 'Soil conductivity (Ecb/Ec porous) read',
+                label: 'Soil conductivity read',
                 deviceId,
                 result: 'OK',
-                detail: `ecb=${soilConductivityEcb} ecPorous=${soilConductivityEcPorous}`,
+                detail: `${soilConductivityUsCm} µS/cm`,
               });
             } catch (error) {
               log({
                 direction: 'INFO',
-                label: 'Soil conductivity (Ecb/Ec porous) indisponible',
+                label: 'Soil conductivity indisponible',
                 deviceId,
                 result: 'ERROR',
                 detail: error instanceof Error ? error.message : String(error),
@@ -474,8 +473,7 @@ export function createNodeBleProvider(): DeviceProvider {
                 temperatureC: temperature.readFloatLE(0),
                 luminosity: luminosity.readFloatLE(0),
                 waterTankLevelPercent,
-                soilConductivityEcb,
-                soilConductivityEcPorous,
+                soilConductivityUsCm,
                 isDrySoil: statusFlags?.isDrySoil,
                 isWetSoil: statusFlags?.isWetSoil,
                 isEmptyTank: statusFlags?.isEmptyTank,

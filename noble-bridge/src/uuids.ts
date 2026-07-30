@@ -8,11 +8,11 @@ export const UUIDS = {
     soilMoisturePercent: '39e1fa09-84a8-11e2-afba-0002a5d5c51b',
     temperatureC: '39e1fa0a-84a8-11e2-afba-0002a5d5c51b',
     luminosity: '39e1fa0b-84a8-11e2-afba-0002a5d5c51b',
-    // "Soil conductivity" candidates (docs/STROYPLANT_SPEC.md section 8) — never used by the
-    // official Parrot Pot app, read best-effort to determine empirically which one corresponds
-    // to the "Soil conductivity" CSV column.
-    soilConductivityEcb: '39e1fa0d-84a8-11e2-afba-0002a5d5c51b',
-    soilConductivityEcPorous: '39e1fa0e-84a8-11e2-afba-0002a5d5c51b',
+    // Soil conductivity (fertility index) — RAW characteristic, same one WatchFlower's own Parrot
+    // Pot driver reads (github.com/emericg/WatchFlower, device_parrotpot.cpp). See
+    // backend/src/ble/parrot/soilConductivity.ts for the decode formula (duplicated in parrot.ts
+    // below, same reasoning as this file's own header comment on duplication).
+    soilConductivityRaw: '39e1fa02-84a8-11e2-afba-0002a5d5c51b',
   },
   watering: {
     trigger: '39e1f906-84a8-11e2-afba-0002a5d5c51b',

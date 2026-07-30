@@ -7,12 +7,11 @@ export interface ParrotPotReading {
   temperatureC: number;
   luminosity: number;
   waterTankLevelPercent?: number;
-  // Two raw candidates for "Soil conductivity" (WatchFlower CSV) — see
-  // docs/STROYPLANT_SPEC.md section 8 and ble/parrot/uuids.ts. Optional: the reading can fail
-  // silently without failing the whole read (the official app never uses them,
-  // their actual behavior on the Parrot Pot firmware isn't guaranteed).
-  soilConductivityEcb?: number;
-  soilConductivityEcPorous?: number;
+  // "Soil conductivity" (WatchFlower CSV) / fertility index — see ble/parrot/soilConductivity.ts
+  // for the decode formula and ble/parrot/uuids.ts for the characteristic. Optional: the read can
+  // fail silently without failing the whole sensor read (best-effort, same convention as the
+  // Plant Dr fields below).
+  soilConductivityUsCm?: number;
   // Plant Dr STATUS_FLAGS (Batch 6, docs/STROYPLANT_SPEC.md section 7.11) — firmware-computed
   // soil/reservoir/probe state. Best-effort like the conductivity fields above (never used by the
   // official app's live mode, behavior not guaranteed on every firmware revision).

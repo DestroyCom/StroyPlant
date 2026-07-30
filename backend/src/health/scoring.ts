@@ -1,6 +1,6 @@
 import type { Device, PlantProfile, Reading } from '@prisma/client';
 
-export type ParameterKey = 'soilMoisturePercent' | 'temperatureC' | 'humidityPercent' | 'luminosity' | 'soilConductivityEcPorous';
+export type ParameterKey = 'soilMoisturePercent' | 'temperatureC' | 'humidityPercent' | 'luminosity' | 'soilConductivityUsCm';
 
 export type ParameterStatus = 'ok' | 'too_low' | 'too_high' | 'n/a';
 
@@ -27,17 +27,12 @@ const TREND_RECENT_DAYS = 3;
 // Parameters compared against the species profile, per device type. Soil pH isn't measured by any
 // current device (extension to other sensors = Batch 9).
 //
-// Soil conductivity: two raw candidates exist (soilConductivityEcb/EcPorous, 39e1fa0d/0e —
-// see docs/STROYPLANT_SPEC.md section 8), never read by the official Parrot Pot app itself.
-// "Ec porous" (pore water EC) is chosen for scoring — soil science research (METER Group,
-// 30MHz): it's the derived value that the horticultural industry calls "soil conductivity" by
-// default, unlike "Ecb" (bulk EC) which is the raw soil+water+air measurement, not interpretable
-// as-is. **Mapping not confirmed empirically on a real Parrot Pot** (no real data
-// collected at the time of this decision, only synthetic mock values) — to be revalidated once
-// real readings are available (Ec porous must be structurally > Ecb, the derivation
-// removing the diluting effect of solid particles/air).
+// Soil conductivity (fertility index) — decoded from the raw 39e1fa02 characteristic, the same
+// one WatchFlower's own Parrot Pot driver reads (see ble/parrot/soilConductivity.ts). Replaces the
+// earlier soilConductivityEcb/EcPorous candidates (39e1fa0d/0e), confirmed via real production
+// logs (2026-07-30) to be unreadable on real Parrot Pot firmware.
 const PARAMETERS_BY_KIND: Record<Device['kind'], ParameterKey[]> = {
-  PARROT_POT: ['soilMoisturePercent', 'temperatureC', 'luminosity', 'soilConductivityEcPorous'],
+  PARROT_POT: ['soilMoisturePercent', 'temperatureC', 'luminosity', 'soilConductivityUsCm'],
   XIAOMI_LYWSD03MMC: ['temperatureC', 'humidityPercent'],
 };
 
@@ -72,7 +67,7 @@ function speciesRangeFor(key: ParameterKey, profile: PlantProfile): [number, num
       return rangeOrNull(profile.humidityMinPercent, profile.humidityMaxPercent);
     case 'luminosity':
       return rangeOrNull(profile.lightMinMmol, profile.lightMaxMmol);
-    case 'soilConductivityEcPorous':
+    case 'soilConductivityUsCm':
       return rangeOrNull(profile.soilConductivityMinUsCm, profile.soilConductivityMaxUsCm);
   }
 }

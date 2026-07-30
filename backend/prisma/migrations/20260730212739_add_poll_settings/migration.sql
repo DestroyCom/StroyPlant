@@ -1,0 +1,6 @@
+-- CreateTable
+CREATE TABLE "PollSettings" (
+    "id" INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT DEFAULT 1,
+    "pollIntervalMinutes" INTEGER NOT NULL DEFAULT 5,
+    "updatedAt" DATETIME NOT NULL
+);

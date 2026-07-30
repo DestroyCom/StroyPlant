@@ -23,14 +23,14 @@ export const UUIDS = {
     soilMoisturePercent: '39e1fa09-84a8-11e2-afba-0002a5d5c51b',
     temperatureC: '39e1fa0a-84a8-11e2-afba-0002a5d5c51b',
     luminosity: '39e1fa0b-84a8-11e2-afba-0002a5d5c51b',
-    // "Calibrated Ecb"/"Calibrated Ec porous" — two candidates for soil conductivity, never
-    // documented before PARROT_OFFICIAL_BLE_SPEC.md (official Parrot spec). The decompiled official
-    // Parrot Pot app never subscribes to them live (docs/STROYPLANT_SPEC.md section 8) — we read
-    // them anyway to accumulate real data and empirically determine which one corresponds
-    // to the WatchFlower CSV's "Soil conductivity" (the official spec itself doesn't settle it).
-    // Neither one is used by the Health Engine yet until this is confirmed.
-    soilConductivityEcb: '39e1fa0d-84a8-11e2-afba-0002a5d5c51b',
-    soilConductivityEcPorous: '39e1fa0e-84a8-11e2-afba-0002a5d5c51b',
+    // Soil conductivity (fertility index) — RAW characteristic, confirmed "Certain" in
+    // docs/PARROT_BLE_REVERSE_ENGINEERING.md. This project originally tried the "calibrated"
+    // fa0d/fa0e characteristics instead (see git history) — confirmed via real production logs
+    // (2026-07-30) to simply not exist on real Parrot Pot firmware ("Characteristic not
+    // available", 100% of polls, both real units). fa02 is what WatchFlower's own real Parrot Pot
+    // driver reads (github.com/emericg/WatchFlower, device_parrotpot.cpp) — see
+    // ble/parrot/soilConductivity.ts for the decode formula.
+    soilConductivityRaw: '39e1fa02-84a8-11e2-afba-0002a5d5c51b',
   },
   watering: {
     trigger: '39e1f906-84a8-11e2-afba-0002a5d5c51b', // write [0x08, 0x00] (uint16 LE), write-with-response

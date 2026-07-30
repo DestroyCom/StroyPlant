@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient, useSuspenseQuery } from '@tanstack/react-query';
 import { createFileRoute, Link, notFound } from '@tanstack/react-router';
-import { ArrowLeft, BatteryMedium, Check, ChevronDown, Droplets, Info, Pencil, RefreshCw, Sun, Thermometer, X } from 'lucide-react';
+import { ArrowLeft, BatteryMedium, Check, ChevronDown, Droplets, Info, Pencil, RefreshCw, Sprout, Sun, Thermometer, X } from 'lucide-react';
 import { useState } from 'react';
 import { toast } from 'sonner';
 import { AutoWateringSection } from '@/components/auto-watering-section';
@@ -147,6 +147,13 @@ function DeviceDetailPage() {
             // Converted mmol -> mol to stay in the same unit as the displayed raw value (see
             // scoring.ts, the species range is stored in mmol).
             referenceLines: referenceLinesFor(health?.parameters.luminosity, 1000),
+          },
+          {
+            key: 'soilConductivityUsCm',
+            label: 'Fertilité du sol',
+            unit: ' µS/cm',
+            getValue: (r) => r.soilConductivityUsCm,
+            referenceLines: referenceLinesFor(health?.parameters.soilConductivityUsCm),
           },
         ]
       : [
@@ -364,6 +371,17 @@ function DeviceDetailPage() {
                       tone={toneFor(health?.parameters.luminosity, 'accent')}
                       icon={<Sun size={16} />}
                       hint={rangeHint(health?.parameters.luminosity, ' mol/m²/j', 1000)}
+                    />
+                  )}
+                  {reading.soilConductivityUsCm != null && (
+                    <SensorGauge
+                      label="Fertilité du sol"
+                      value={reading.soilConductivityUsCm}
+                      max={1000}
+                      unit=" µS/cm"
+                      tone={toneFor(health?.parameters.soilConductivityUsCm, 'primary')}
+                      icon={<Sprout size={16} />}
+                      hint={rangeHint(health?.parameters.soilConductivityUsCm, ' µS/cm')}
                     />
                   )}
                 </>

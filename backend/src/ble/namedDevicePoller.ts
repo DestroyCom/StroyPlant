@@ -4,10 +4,13 @@ import { log } from '../logger.js';
 import type { DeviceProvider } from '../providers/types.js';
 import { persistReading, persistSyncFailure } from '../readings.js';
 import type { ConnectionQueue } from './connectionQueue.js';
+import { getPollSettings } from './pollSettings.js';
 
-// How often each named device gets read — same default and env override
-// (PARROT_POLL_INTERVAL_MS) the old scanner.ts used, just moved here since this module is now the
-// only thing that polls known devices (docs/superpowers/specs/2026-07-30-scoped-ble-discovery-design.md).
+// How often each named device gets read — used as the fallback default by getPollSettings() when
+// no PollSettings row exists yet. Editable live from the Settings page (replacing the old
+// PARROT_POLL_INTERVAL_MS env var, DestCom's explicit request) — see pollSettings.ts. Read fresh
+// every tick below rather than once at startup, same pattern health/scheduler.ts already uses for
+// getHealthSettings().
 export const DEFAULT_POLL_INTERVAL_MS = 5 * 60_000;
 
 // How often the poller wakes up to check which devices are due — separate from the per-device
@@ -57,13 +60,11 @@ async function pollDevice(deviceId: string, kind: DeviceKind, provider: DevicePr
   });
 }
 
-export function startNamedDevicePoller(
-  provider: DeviceProvider,
-  connectionQueue: ConnectionQueue,
-  pollIntervalMs = DEFAULT_POLL_INTERVAL_MS,
-): void {
+export function startNamedDevicePoller(provider: DeviceProvider, connectionQueue: ConnectionQueue): void {
   setInterval(async () => {
     try {
+      const { pollIntervalMinutes } = await getPollSettings();
+      const pollIntervalMs = pollIntervalMinutes * 60_000;
       const devices = await prisma.device.findMany({ where: { name: { not: null } } });
       for (const device of devices) {
         const last = lastPolled.get(device.id) ?? 0;

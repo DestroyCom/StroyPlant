@@ -7,8 +7,7 @@ export interface ParrotSensorReading {
   temperatureC: number;
   luminosity: number;
   waterTankLevelPercent?: number;
-  soilConductivityEcb?: number;
-  soilConductivityEcPorous?: number;
+  soilConductivityUsCm?: number;
   isDrySoil?: boolean;
   isWetSoil?: boolean;
   isEmptyTank?: boolean;
@@ -25,6 +24,14 @@ function decodePlantDrStatusFlags(byte: number) {
     isEmptyTank: (byte & 0x04) !== 0,
     isInAir: (byte & 0x08) !== 0,
   };
+}
+
+// Duplicated from backend/src/ble/parrot/soilConductivity.ts (same reasoning as
+// decodePlantDrStatusFlags above — no module sharing with the backend). See that file for the
+// full rationale/source citation (WatchFlower's real Parrot Pot driver).
+function decodeSoilConductivityRaw(buf: Buffer): number {
+  const raw = Math.min(2036, Math.max(1500, buf.readUInt16LE(0)));
+  return ((2036 - raw) / (2036 - 1500)) * 1000;
 }
 
 // Mandatory activation prerequisite (docs/STROYPLANT_SPEC.md section 8): without this write, the
@@ -52,20 +59,17 @@ export async function readParrotSensors(logicalId: string): Promise<ParrotSensor
       });
     }
 
-    // "Soil conductivity" candidates (docs/STROYPLANT_SPEC.md section 8) — never used by the
-    // official Parrot Pot app, firmware behavior not guaranteed. Best-effort: a failure here must
-    // never fail the reading of the main sensors.
-    let soilConductivityEcb: number | undefined;
-    let soilConductivityEcPorous: number | undefined;
+    // Soil conductivity (fertility index) — RAW characteristic, confirmed readable and decoded the
+    // same way WatchFlower's own Parrot Pot driver does (see uuids.ts and decodeSoilConductivityRaw
+    // above). Still best-effort: a failure here must never fail the reading of the main sensors.
+    let soilConductivityUsCm: number | undefined;
     try {
-      const ecb = await readCharacteristic(pot, UUIDS.live.soilConductivityEcb, 'Soil conductivity (Ecb)', logicalId);
-      const ecPorous = await readCharacteristic(pot, UUIDS.live.soilConductivityEcPorous, 'Soil conductivity (Ec porous)', logicalId);
-      soilConductivityEcb = ecb.readFloatLE(0);
-      soilConductivityEcPorous = ecPorous.readFloatLE(0);
+      const raw = await readCharacteristic(pot, UUIDS.live.soilConductivityRaw, 'Soil conductivity', logicalId);
+      soilConductivityUsCm = decodeSoilConductivityRaw(raw);
     } catch (error) {
       log({
         direction: 'INFO',
-        label: 'Soil conductivity (Ecb/Ec porous) indisponible',
+        label: 'Soil conductivity indisponible',
         deviceId: logicalId,
         result: 'ERROR',
         detail: error instanceof Error ? error.message : String(error),
@@ -99,8 +103,7 @@ export async function readParrotSensors(logicalId: string): Promise<ParrotSensor
       temperatureC: temperature.readFloatLE(0),
       luminosity: luminosity.readFloatLE(0),
       waterTankLevelPercent,
-      soilConductivityEcb,
-      soilConductivityEcPorous,
+      soilConductivityUsCm,
       isDrySoil: statusFlags?.isDrySoil,
       isWetSoil: statusFlags?.isWetSoil,
       isEmptyTank: statusFlags?.isEmptyTank,

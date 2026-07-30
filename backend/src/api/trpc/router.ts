@@ -5,6 +5,7 @@ import { historyRouter } from './routers/history.js';
 import { liveSessionRouter } from './routers/liveSession.js';
 import { mqttRouter } from './routers/mqtt.js';
 import { plantDrRouter } from './routers/plantDr.js';
+import { pollSettingsRouter } from './routers/pollSettings.js';
 import { readingsRouter } from './routers/readings.js';
 import { scheduleRouter } from './routers/schedule.js';
 import { router } from './trpc.js';
@@ -17,6 +18,7 @@ export const appRouter = router({
   liveSession: liveSessionRouter,
   mqtt: mqttRouter,
   plantDr: plantDrRouter,
+  pollSettings: pollSettingsRouter,
   readings: readingsRouter,
   schedule: scheduleRouter,
 });

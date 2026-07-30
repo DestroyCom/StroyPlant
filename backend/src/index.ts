@@ -21,8 +21,9 @@ async function main() {
   // Polls every already-named device on its own timer, independent of BLE discovery — see
   // docs/superpowers/specs/2026-07-30-scoped-ble-discovery-design.md. Discovery of NEW devices
   // only happens during an explicit discoverySession (started/stopped via tRPC from the
-  // "Ajouter un appareil" page), never unconditionally at startup.
-  startNamedDevicePoller(provider, connectionQueue, env.parrotPollIntervalMs);
+  // "Ajouter un appareil" page), never unconditionally at startup. The poll interval itself is
+  // read live from PollSettings on every tick (see ble/pollSettings.ts), not passed in here.
+  startNamedDevicePoller(provider, connectionQueue);
 
   startScheduler(provider, connectionQueue);
 

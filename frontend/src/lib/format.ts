@@ -40,8 +40,7 @@ const PARAMETER_LABEL: Record<ParameterKey, string> = {
   temperatureC: 'Température',
   humidityPercent: 'Humidité',
   luminosity: 'Luminosité',
-  // CSV mapping not confirmed empirically on a real device, see docs/HEALTH_ENGINE.md.
-  soilConductivityEcPorous: 'Conductivité du sol',
+  soilConductivityUsCm: 'Fertilité du sol',
 };
 
 // Judgment derived from the Health Engine (Batch 4) — null if nothing to report (no species assigned, or

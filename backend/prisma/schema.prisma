@@ -85,6 +85,17 @@ model HealthSettings {
   updatedAt          DateTime @updatedAt
 }
 
+// Named-device poll interval (ble/namedDevicePoller.ts) — same singleton-row-editable-from-
+// Settings pattern as MqttSettings/HealthSettings above, replacing the old PARROT_POLL_INTERVAL_MS
+// env var (DestCom's explicit request: let users trade off data freshness against BLE/battery load
+// from the Settings page, no restart needed). Per-device exponential backoff on repeated failures
+// still applies on top of this base interval (namedDevicePoller.ts's own consecutiveFailures map).
+model PollSettings {
+  id                  Int      @id @default(1)
+  pollIntervalMinutes Int      @default(5)
+  updatedAt           DateTime @updatedAt
+}
+
 // Imported from assets/plants/watchflower_plantdb.csv (emericg/WatchFlower repo, GPLv3) — see
 // backend/src/health/importSpeciesProfiles.ts. A MIN/MAX pair set to `null;null` means the
 // parameter doesn't apply to this species in the source CSV (encoded `0;0`), not a real zero.
@@ -127,12 +138,11 @@ model Reading {
   temperatureC             Float?
   luminosity               Float?
   waterTankLevelPercent    Float?
-  // Two raw candidates for soil conductivity (39e1fa0d/0e) — collected since 2026-07-28 to
-  // empirically determine which one maps to the WatchFlower CSV's "Soil conductivity", see
-  // docs/STROYPLANT_SPEC.md section 8. `soilConductivityEcPorous` is wired into the Health Engine
-  // scoring (see docs/HEALTH_ENGINE.md); `soilConductivityEcb` stays diagnostic-only for now.
-  soilConductivityEcb      Float?
-  soilConductivityEcPorous Float?
+  // Soil conductivity (fertility index), decoded from the raw 39e1fa02 characteristic — see
+  // backend/src/ble/parrot/soilConductivity.ts and docs/HEALTH_ENGINE.md. Replaces the earlier
+  // soilConductivityEcb/EcPorous fields (39e1fa0d/0e), confirmed via real production logs
+  // (2026-07-30) to be unreadable on real Parrot Pot firmware.
+  soilConductivityUsCm Float?
   // Plant Dr STATUS_FLAGS (39e1FD86, Batch 6) — firmware-computed soil/reservoir/probe state, see
   // docs/STROYPLANT_SPEC.md section 7.11. `isInAir` readings are excluded from the Health Engine's
   // rolling-baseline calculations (section 7.3) — a probe out of the soil isn't a plant state.
