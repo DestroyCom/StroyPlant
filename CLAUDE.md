@@ -579,6 +579,42 @@ production server:
     (own-id-null → no stop call; id-mismatch → no-op) rather than a live multi-tab browser test.
     **Not verified**: `connectDevice`'s discovery on/off bookkeeping against real BlueZ (see above)
     — the mock provider has no discovery state to observe.
+- **Onboarding stepper** ✅ (2026-07-30) — replaces the old "type a name, done" add-device flow.
+  Naming a device (via `devices.rename` on a discovered device, or `devices.addByAddress` by MAC)
+  now redirects into a new dedicated page,
+  `frontend/src/routes/_authenticated/devices.add_.$deviceId.onboarding.tsx` (URL
+  `/devices/add/$deviceId/onboarding` — the `add_` filename segment un-nests it from
+  `devices.add.tsx`, same escape hatch as the earlier `devices.$deviceId_.calibration.tsx` fix),
+  walking through up to 3 further steps, each independently skippable and each backed by the
+  same procedure the device detail page already uses on its own:
+  - **Emplacement** (`devices.updateDetails` — location + indoor/outdoor, storage only, see the
+    device location/environment entry above).
+  - **Espèce** (`health.assignPlantProfile`) — the search-and-assign UI was extracted out of
+    `SpeciesPickerDialog` into a shared `frontend/src/components/species-search.tsx`
+    (`SpeciesSearch`) so the dialog (device detail page) and the wizard step share the exact same
+    behavior; the dialog keeps its own "Retirer l'espèce actuelle" button and closes on assign,
+    the wizard step doesn't.
+  - **Arrosage automatique** — only appears if the device is a Parrot Pot AND a species was just
+    assigned (recomputed live off wizard state, mirroring `AutoWateringSection`'s own
+    `hasSpeciesAssigned` gating). Reuses `AutoWateringSection` verbatim, unmodified — no
+    duplicated scheduling logic.
+  - **Design decisions, confirmed with DestCom before implementation**: a dedicated full page
+    (not a modal) over `/devices/add`'s pre-existing list, chosen for consistency with
+    `/devices/$deviceId/calibration` already being its own route rather than a dialog; and this
+    stepper **replaces** the old one-shot naming flow entirely rather than being an opt-in
+    "guided setup" alongside it.
+  - **Abandon-safe by construction**: naming the device (the one non-skippable step) already
+    happens before this page loads — leaving the wizard at any point (closing the tab, refreshing)
+    never leaves a broken device, only one with unset location/species/auto-watering, exactly as
+    if the user had never opened this page and configured everything later from the device detail
+    page instead.
+  - **Verified manually** (DestCom, against the mock provider — no BLE hardware needed since none
+    of the 3 steps touch BLE): full add-by-address → 3-step wizard → dashboard/detail-page
+    handoff, including both "Passer" and "Suivant" on different steps and the species search
+    against the real seeded WatchFlower CSV data (3404 profiles).
+  - **Permanent local dev admin account**: `admin@admin.com` / `admin` (seeded via
+    `pnpm seed:admin`) — reused across dev-only manual verifications instead of throwaway
+    accounts per session, since this is local `dev.db`, never a shared/production database.
 - **Next batch**: Batch 10 (extension to other devices — Flower Power, Flower Care).
 - **`noble-bridge` validated with real hardware** ✅ (2026-07-27) — a real Parrot Pot
   (`PARROT-A073`) connected and read end-to-end (scan → connect → activate → read
@@ -793,7 +829,8 @@ Dockerfile, docker-entrypoint.sh, docker-compose.prod.yml, docker-compose.test.y
   toggle + allowed-hours window + cooldown, via `AutoWateringSection`, and a "Calibration Plant Dr"
   link — Batch 6, to its own page), "Add device" (claims a scanner-discovered, not-yet-named device
   by giving it a name — see the Project status section for why this differs from the prototype's
-  literal manual-pairing concept), "Settings" (account section functional, auto-watering now links
+  literal manual-pairing concept — then redirects into the onboarding stepper, see the Project
+  status entry of the same name), "Settings" (account section functional, auto-watering now links
   to the per-device page instead of "coming soon", notifications/MCP still shown as disabled
   "coming soon" cards pending Batches 7/8), "Calibration" (`/devices/$deviceId/calibration`, Batch
   6 — shows the device's current Plant Dr dry/wet thresholds live and a "capture wet point" action,

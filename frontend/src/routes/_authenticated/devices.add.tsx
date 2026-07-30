@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient, useSuspenseQuery } from '@tanstack/react-query';
-import { createFileRoute } from '@tanstack/react-router';
+import { createFileRoute, useNavigate } from '@tanstack/react-router';
 import { RadioTower } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
@@ -19,13 +19,15 @@ export const Route = createFileRoute('/_authenticated/devices/add')({
 function UnnamedDeviceRow({ device }: { device: Device }) {
   const [name, setName] = useState('');
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
 
   const renameMutation = useMutation(
     trpc.devices.rename.mutationOptions({
-      onSuccess: () => {
+      onSuccess: (renamed) => {
         void queryClient.invalidateQueries({ queryKey: trpc.devices.list.queryKey() });
         void queryClient.invalidateQueries({ queryKey: trpc.devices.listUnnamed.queryKey() });
-        toast.success('Appareil ajouté au tableau de bord');
+        toast.success('Appareil ajouté, configurons-le');
+        void navigate({ to: '/devices/add/$deviceId/onboarding', params: { deviceId: renamed.id } });
       },
       onError: (error) => {
         toast.error("Échec de l'ajout", { description: error.message });
@@ -71,14 +73,16 @@ function AddByAddressForm({ queryClient }: { queryClient: ReturnType<typeof useQ
   const [macAddress, setMacAddress] = useState('');
   const [kind, setKind] = useState<'PARROT_POT' | 'XIAOMI_LYWSD03MMC'>('PARROT_POT');
   const [name, setName] = useState('');
+  const navigate = useNavigate();
 
   const addMutation = useMutation(
     trpc.devices.addByAddress.mutationOptions({
-      onSuccess: () => {
+      onSuccess: (created) => {
         void queryClient.invalidateQueries({ queryKey: trpc.devices.list.queryKey() });
-        toast.success('Appareil ajouté');
+        toast.success('Appareil ajouté, configurons-le');
         setMacAddress('');
         setName('');
+        void navigate({ to: '/devices/add/$deviceId/onboarding', params: { deviceId: created.id } });
       },
       onError: (error) => {
         toast.error("Échec de l'ajout", { description: error.message });
