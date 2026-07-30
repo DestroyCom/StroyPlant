@@ -1,4 +1,4 @@
-import type { ReadingSource } from '@prisma/client';
+import type { ReadingSource, SyncSource } from '@prisma/client';
 import { emitReading } from './api/trpc/readingsEmitter.js';
 import { serializeReading } from './api/trpc/serialize.js';
 import { prisma } from './db/client.js';
@@ -44,4 +44,12 @@ export async function persistReading(deviceId: string, kind: DeviceKind, reading
   }
 
   return created;
+}
+
+// Additive to the existing console `log(...)` call at each of its 3 call sites (scanner.ts's
+// pollDeviceNow, devices.ts's sync/forceSyncAll) — never a replacement for it (docs/STROYPLANT_SPEC.md
+// section 7.1). A successful sync is never recorded here: the resulting Reading row already proves
+// it happened, so only failures are persisted.
+export async function persistSyncFailure(deviceId: string, source: SyncSource, errorDetail: string) {
+  await prisma.syncEvent.create({ data: { deviceId, source, errorDetail } });
 }

@@ -1,5 +1,6 @@
 import { log } from '../logger.js';
 import type { DeviceKind, DeviceProvider, DiscoveredDevice, SensorReading } from '../providers/types.js';
+import { persistSyncFailure } from '../readings.js';
 import type { ConnectionQueue } from './connectionQueue.js';
 
 export interface ScannerCallbacks {
@@ -41,13 +42,23 @@ export function startScanner(
         const reading = await provider.readSensors(deviceId, kind);
         await callbacks.onReading(deviceId, kind, reading);
       } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
         // Never swallow an error silently (docs/STROYPLANT_SPEC.md section 7.1).
         log({
           direction: 'READ',
           label: 'Poll readSensors failed',
           deviceId,
           result: 'ERROR',
-          detail: error instanceof Error ? error.message : String(error),
+          detail,
+        });
+        await persistSyncFailure(deviceId, 'POLL', detail).catch((persistError) => {
+          log({
+            direction: 'INFO',
+            label: 'persistSyncFailure failed',
+            deviceId,
+            result: 'ERROR',
+            detail: persistError instanceof Error ? persistError.message : String(persistError),
+          });
         });
       }
     });

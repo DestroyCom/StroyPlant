@@ -5,7 +5,7 @@ import { prisma } from '../../../db/client.js';
 import { log } from '../../../logger.js';
 import { getMqttState } from '../../../mqtt/manager.js';
 import { publishDiscovery } from '../../../mqtt/publisher.js';
-import { persistReading } from '../../../readings.js';
+import { persistReading, persistSyncFailure } from '../../../readings.js';
 import { triggerWatering } from '../../../watering.js';
 import { serializeDate, serializeReading, serializeWateringEvent } from '../serialize.js';
 import { protectedProcedure, router } from '../trpc.js';
@@ -138,7 +138,9 @@ export const devicesRouter = router({
     try {
       reading = await ctx.connectionQueue.run(() => ctx.provider.readSensors(device.id, device.kind));
     } catch (error) {
-      throw new TRPCError({ code: 'BAD_GATEWAY', message: error instanceof Error ? error.message : String(error) });
+      const detail = error instanceof Error ? error.message : String(error);
+      await persistSyncFailure(device.id, 'MANUAL', detail);
+      throw new TRPCError({ code: 'BAD_GATEWAY', message: detail });
     }
 
     await persistReading(device.id, device.kind, reading, 'POLL');
@@ -162,13 +164,15 @@ export const devicesRouter = router({
         .run(() => ctx.provider.readSensors(device.id, device.kind))
         .then((reading) => persistReading(device.id, device.kind, reading, 'POLL'))
         .catch((error) => {
+          const detail = error instanceof Error ? error.message : String(error);
           log({
             direction: 'READ',
             label: 'Forced sync readSensors failed',
             deviceId: device.id,
             result: 'ERROR',
-            detail: error instanceof Error ? error.message : String(error),
+            detail,
           });
+          void persistSyncFailure(device.id, 'MANUAL', detail);
         });
     }
     return { triggered: devices.length };
