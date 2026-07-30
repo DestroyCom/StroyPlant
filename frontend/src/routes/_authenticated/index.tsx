@@ -67,7 +67,7 @@ function DashboardPage() {
 
       {devices.length === 0 ? (
         <p className="text-sm text-muted-foreground">
-          Aucun appareil détecté pour l'instant. Ils apparaissent automatiquement dès que le scanner BLE les découvre à proximité.
+          Aucun appareil détecté pour l'instant. Ils apparaissent dans « Ajouter un appareil » pendant que cette page est ouverte.
         </p>
       ) : (
         <div className="grid grid-cols-[repeat(auto-fill,minmax(260px,1fr))] gap-5">

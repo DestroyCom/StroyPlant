@@ -54,7 +54,9 @@ function SettingsPage() {
             <div className="flex items-center justify-between gap-3">
               <div>
                 <CardTitle>Ajouter un appareil</CardTitle>
-                <CardDescription>Réclamer un capteur détecté par le scanner BLE.</CardDescription>
+                <CardDescription>
+                  Nommer un capteur détecté pendant que cette page est ouverte, ou l'ajouter directement par adresse.
+                </CardDescription>
               </div>
               <Link to="/devices/add">
                 <Button variant="outline" size="sm">
