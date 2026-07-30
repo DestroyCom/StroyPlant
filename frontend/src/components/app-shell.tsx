@@ -1,6 +1,6 @@
 import { useQueryClient } from '@tanstack/react-query';
 import { Link, useNavigate } from '@tanstack/react-router';
-import { Home, LogOut, PlusCircle, Settings } from 'lucide-react';
+import { Clock, Home, LogOut, PlusCircle, Settings } from 'lucide-react';
 import type { ReactNode } from 'react';
 import logo from '@/assets/logo.svg';
 import { authClient } from '@/lib/auth-client';
@@ -18,8 +18,13 @@ export function AppShell({ children }: { children: ReactNode }) {
   }
 
   return (
-    <div className="flex h-svh overflow-hidden">
-      <aside className="flex w-54 shrink-0 flex-col gap-7 overflow-y-auto border-r border-sidebar-border bg-sidebar px-4 py-6 text-sidebar-foreground">
+    <div className="flex h-svh flex-col overflow-hidden md:flex-row">
+      <header className="flex shrink-0 items-center gap-2.5 border-b border-sidebar-border bg-sidebar px-4 py-3 text-sidebar-foreground md:hidden">
+        <img src={logo} alt="" className="h-6.5 w-6.5" />
+        <span className="text-[17px] font-black tracking-tight">StroyPlant</span>
+      </header>
+
+      <aside className="hidden w-54 shrink-0 flex-col gap-7 overflow-y-auto border-r border-sidebar-border bg-sidebar px-4 py-6 text-sidebar-foreground md:flex">
         <div className="flex items-center gap-2.5 px-2">
           <img src={logo} alt="" className="h-6.5 w-6.5" />
           <span className="text-[17px] font-black tracking-tight">StroyPlant</span>
@@ -35,6 +40,16 @@ export function AppShell({ children }: { children: ReactNode }) {
           >
             <Home size={18} />
             Tableau de bord
+          </Link>
+          <Link
+            to="/history"
+            className={cn(
+              'flex items-center gap-2.5 rounded-md px-3 py-2.5 text-sm font-medium text-sidebar-foreground/70 hover:bg-sidebar-accent',
+              'data-[status=active]:font-bold data-[status=active]:text-sidebar-foreground [&[data-status=active]_svg]:text-sidebar-accent-foreground',
+            )}
+          >
+            <Clock size={18} />
+            Historique
           </Link>
           <Link
             to="/devices/add"
@@ -69,7 +84,42 @@ export function AppShell({ children }: { children: ReactNode }) {
           Se déconnecter
         </button>
       </aside>
-      <main className="flex-1 overflow-y-auto bg-background p-10">{children}</main>
+
+      <main className="flex-1 overflow-y-auto bg-background p-4 pb-20 md:p-10 md:pb-10">{children}</main>
+
+      <nav className="fixed inset-x-0 bottom-0 z-40 flex items-center justify-around border-t border-sidebar-border bg-sidebar py-2 md:hidden">
+        <Link
+          to="/"
+          activeOptions={{ exact: true }}
+          className={cn(
+            'flex flex-col items-center gap-0.5 px-3 py-1 text-[11px] font-medium text-sidebar-foreground/70',
+            'data-[status=active]:font-bold data-[status=active]:text-sidebar-accent-foreground',
+          )}
+        >
+          <Home size={20} />
+          Plantes
+        </Link>
+        <Link
+          to="/history"
+          className={cn(
+            'flex flex-col items-center gap-0.5 px-3 py-1 text-[11px] font-medium text-sidebar-foreground/70',
+            'data-[status=active]:font-bold data-[status=active]:text-sidebar-accent-foreground',
+          )}
+        >
+          <Clock size={20} />
+          Historique
+        </Link>
+        <Link
+          to="/settings"
+          className={cn(
+            'flex flex-col items-center gap-0.5 px-3 py-1 text-[11px] font-medium text-sidebar-foreground/70',
+            'data-[status=active]:font-bold data-[status=active]:text-sidebar-accent-foreground',
+          )}
+        >
+          <Settings size={20} />
+          Réglages
+        </Link>
+      </nav>
     </div>
   );
 }
