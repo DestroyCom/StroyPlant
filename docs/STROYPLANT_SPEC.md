@@ -91,7 +91,12 @@ Notes:
 
 ### 7.1 BLE Layer
 
-- Continuous scanner (discovery), with throttling to avoid saturating the dongle
+- Continuous scanner (discovery), with throttling to avoid saturating the dongle. **Narrowed
+  2026-07-30**: discovery of _new_ devices only runs while the "Ajouter un appareil" page is open
+  (`backend/src/ble/discoverySession.ts`, session-scoped, mirrors `liveSession`'s one-global-session
+  pattern); periodic polling of already-claimed devices moved to its own always-on timer
+  (`backend/src/ble/namedDevicePoller.ts`, connects directly by known MAC address, no discovery
+  involved) — see the CLAUDE.md Project status entry for the full rationale.
 - Sequential connection queue for the Parrot Pot (only one GATT connection at a time)
 - One driver per device, behind the common `DeviceProvider` interface: `scan()`, `readSensors()`, `triggerAction()`
 - Exhaustive logging of every BLE operation (timestamp, direction, UUID, hex payload, detailed result) — **never swallow an error silently**, unlike WatchFlower, which has a "fire-and-forget" watering write with no verification (bug identified and documented during initial Parrot Pot debugging)
@@ -108,7 +113,8 @@ Notes:
 `docs/PARROT_OFFICIAL_BLE_SPEC.md` confirms that the official Parrot app only connects to the device
 under 3 precise conditions ("unread entries" or "move detected" flag in the advertisement, or an
 explicit user action) — never through blind periodic polling. StroyPlant nonetheless keeps its
-current periodic polling (`ble/scanner.ts`, `PARROT_POLL_INTERVAL_MS`) **as is**: the Health
+current periodic polling (`ble/namedDevicePoller.ts` since 2026-07-30, formerly `ble/scanner.ts`;
+`PARROT_POLL_INTERVAL_MS`) **as is**: the Health
 Engine needs regular sampling for its rolling baseline/trend detection (section 7.3), a need the
 original device (occasional cloud sync) didn't have — switching to pure event-driven mode would
 break this data continuity. Decision: **add advertisement flag parsing on top of polling** (immediate
@@ -289,7 +295,7 @@ procedure list and the Date-serialization note. Current procedures:
   by a Node `EventEmitter` server-side, consumed via `@trpc/tanstack-react-query`'s
   `useSubscription` client-side)
 - `history.list` — global History page (2026-07-30): merges `WateringEvent` and `SyncEvent` rows,
-  optionally filtered to one device (defaults to every *named* device, never unclaimed ones) and/or
+  optionally filtered to one device (defaults to every _named_ device, never unclaimed ones) and/or
   a time window, capped at 200 rows, most recent first
 
 ### 7.6 Auth
@@ -603,18 +609,18 @@ divergence.
 
 ## 11. Breakdown into batches (roadmap)
 
-| Batch        | Content                                                                                                                                                                                                                                                                           |
-| ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Batch 0**  | Working Docker + Bluetooth setup on the production server (TP-Link UB500 Plus dongle). **Ask first whether working directly over SSH is wanted (section 6).**                                                                                                                    |
-| **Batch 1**  | Xiaomi scanner (passive) + Parrot Pot driver (GATT), with the 3 interchangeable BLE providers (`mock`, `noble-bridge`, `node-ble`) + SQLite/Prisma + minimal API — includes the `39e1fa06` activation prerequisite (section 8) and the retry/reconnection pattern (section 7.1)   |
-| **Batch 2**  | Auth (BetterAuth, credentials only, OIDC hooks ready)                                                                                                                                                                                                                             |
-| **Batch 3**  | Frontend Vite + React + TanStack Query/Router + Tailwind + shadcn/ui (protected by Batch 2's auth)                                                                                                                                                                                |
-| **Batch 4**  | Plant DB CSV import + Health Engine (scoring, profiles, trends)                                                                                                                                                                                                                   |
-| **Batch 5**  | ✅ Auto-watering scheduler (wired to the Health Engine) — see section 7.4                                                                                                                                                                                                         |
-| **Batch 6**  | ✅ Plant Dr integration (device-side dry/wet calibration + STATUS_FLAGS), complement to the Health Engine, see section 7.11. `ALGORITHM_STATUS` real-hardware test still pending (follow-up)                                                                                      |
-| **Batch 7**  | ✅ MQTT client + Home Assistant auto-discovery, see section 7.7. No production Mosquitto/HA instance to validate against yet (follow-up)                                                                                                                                          |
-| **Batch 8**  | ✅ MCP server (tools listed in 7.8), protected by auth. Not yet validated against a real MCP client (follow-up)                                                                                                                                                                  |
-| **Batch 9**  | ✅ Docker environment (see section 14): Dockerfile, prod/test compose, GHCR GitHub Action. Not yet validated against real Bluetooth hardware (follow-up)                                                                                                                          |
+| Batch        | Content                                                                                                                                                                                                                                                                                         |
+| ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Batch 0**  | Working Docker + Bluetooth setup on the production server (TP-Link UB500 Plus dongle). **Ask first whether working directly over SSH is wanted (section 6).**                                                                                                                                   |
+| **Batch 1**  | Xiaomi scanner (passive) + Parrot Pot driver (GATT), with the 3 interchangeable BLE providers (`mock`, `noble-bridge`, `node-ble`) + SQLite/Prisma + minimal API — includes the `39e1fa06` activation prerequisite (section 8) and the retry/reconnection pattern (section 7.1)                 |
+| **Batch 2**  | Auth (BetterAuth, credentials only, OIDC hooks ready)                                                                                                                                                                                                                                           |
+| **Batch 3**  | Frontend Vite + React + TanStack Query/Router + Tailwind + shadcn/ui (protected by Batch 2's auth)                                                                                                                                                                                              |
+| **Batch 4**  | Plant DB CSV import + Health Engine (scoring, profiles, trends)                                                                                                                                                                                                                                 |
+| **Batch 5**  | ✅ Auto-watering scheduler (wired to the Health Engine) — see section 7.4                                                                                                                                                                                                                       |
+| **Batch 6**  | ✅ Plant Dr integration (device-side dry/wet calibration + STATUS_FLAGS), complement to the Health Engine, see section 7.11. `ALGORITHM_STATUS` real-hardware test still pending (follow-up)                                                                                                    |
+| **Batch 7**  | ✅ MQTT client + Home Assistant auto-discovery, see section 7.7. No production Mosquitto/HA instance to validate against yet (follow-up)                                                                                                                                                        |
+| **Batch 8**  | ✅ MCP server (tools listed in 7.8), protected by auth. Not yet validated against a real MCP client (follow-up)                                                                                                                                                                                 |
+| **Batch 9**  | ✅ Docker environment (see section 14): Dockerfile, prod/test compose, GHCR GitHub Action. Not yet validated against real Bluetooth hardware (follow-up)                                                                                                                                        |
 | **Batch 10** | Extension to other devices (Flower Power, Flower Care). Also includes an optional empirical exploration: testing raw EC reading on the Parrot Pot (`39e1fa02`) on the real device via the production server, with no guarantee of a usable result — the official app doesn't use it (section 8) |
 
 _(The old historical "Batch 2" removed: final decision in section 7.10 — fallback to live polling only, already covered by Batch 1, no dedicated development needed.)_

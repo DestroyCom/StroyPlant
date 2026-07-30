@@ -61,7 +61,9 @@ production server:
   present by default on the production server). Full detail in `infra/lot0/CHECKLIST.md`.
 - **Batch 1** ✅ — Fastify + Prisma/SQLite backend, 3 interchangeable BLE providers, scanner +
   sequential connectionQueue, tRPC router + WS subscription (migrated from hand-written REST/raw
-  WebSocket, see the tRPC migration entry below). See technical detail below.
+  WebSocket, see the tRPC migration entry below). See technical detail below. (The single
+  always-on `scanner.ts` this batch introduced was later split into `discoverySession.ts` +
+  `namedDevicePoller.ts`, 2026-07-30 — see the "Scoped BLE discovery" entry further down.)
 - **Batch 2** ✅ — BetterAuth (credentials, single-admin, `disableSignUp: true`), all `/api/*`
   routes and the WS protected by session.
 - **Batch 3** ✅ (complete) — Vite + React + TanStack Query/Router + Tailwind v4 + shadcn/ui
@@ -403,7 +405,8 @@ production server:
     the page; ending a session (auto-cutoff / manual stop / leaving the page) immediately frees the queue
     for everything else.
   - **`Reading.source` tagging** (`POLL`/`LIVE`): persisted on every sample (written as `'POLL'` by
-    `ble/scanner.ts` and the manual sync mutations `devices.sync`/`forceSyncAll`, as `'LIVE'` by a live
+    `ble/scanner.ts` (renamed `ble/namedDevicePoller.ts` 2026-07-30, see below) and the manual sync
+    mutations `devices.sync`/`forceSyncAll`, as `'LIVE'` by a live
     session). 4 read sites filter to `where: { ..., source: 'POLL' }` so a live session can never skew them:
     `health/scheduler.ts`'s `evaluateDevice`, `api/trpc/routers/health.ts`'s `deviceHealth`,
     `api/trpc/routers/devices.ts`'s `history`, and `mqtt/publisher.ts`'s `publishHealthState`.
@@ -462,7 +465,8 @@ production server:
   `WateringEvent` and the new `SyncEvent` model (backend/src/api/trpc/routers/history.ts's `list`
   procedure), filterable by device and by period (all/7d/30d).
   - **`SyncEvent`** (new Prisma model, see the Business models entry above): persists sync/BLE read
-    failures that used to only be logged to the console (`ble/scanner.ts`'s `pollDeviceNow`,
+    failures that used to only be logged to the console (`ble/scanner.ts`'s `pollDeviceNow`, since
+    2026-07-30 `ble/namedDevicePoller.ts`'s `pollDevice`,
     `devices.ts`'s `sync`/`forceSyncAll`) — additive to that existing `log(...)` call, never a
     replacement (docs/STROYPLANT_SPEC.md section 7.1). **Only failures are persisted, never
     successes** — a successful sync already produces a `Reading` row proving it happened, so a
@@ -480,7 +484,8 @@ production server:
     near-identical `SyncEvent` row every ~5min forever. `persistSyncFailure`
     (`backend/src/readings.ts`) now skips the insert if the most recent `SyncEvent` for that device
     has the same `errorDetail` and landed within the last poll interval (`DEFAULT_POLL_INTERVAL_MS`,
-    now exported from `ble/scanner.ts` and imported here rather than duplicated as a second constant
+    exported from `ble/scanner.ts` at the time — since 2026-07-30, `ble/namedDevicePoller.ts` — and
+    imported here rather than duplicated as a second constant
     — a genuine module cycle between the two files, confirmed harmless empirically since the value is
     only read inside a function body called at runtime, never at module-evaluation time). **Broader
     `SyncEvent` retention/pruning policy (e.g. a cap or a TTL) is a deliberate, explicit open
@@ -495,6 +500,74 @@ production server:
     layout); and `devices.ts`'s `sync` mutation now catches a `persistSyncFailure` failure the same
     way `forceSyncAll` already did, so a secondary DB error can never mask the real BLE error as the
     thing surfaced to the caller.
+- **Scoped BLE discovery + direct MAC add** ✅ (2026-07-30) — `ble/scanner.ts`'s single
+  always-on loop (continuous discovery of new devices AND periodic polling of claimed ones, mixed
+  together since Batch 1) is split into two independent modules and deleted. Full design rationale
+  in `docs/superpowers/specs/2026-07-30-scoped-ble-discovery-design.md`. Key decisions:
+  - **`ble/discoverySession.ts`** — session-scoped discovery of *new* devices, structurally
+    mirroring `liveSession/manager.ts` (module-level singleton, `AbortController`, 5-minute
+    auto-cutoff). Only runs while `/devices/add` is open, started/stopped via the new
+    `discoverySession` tRPC router (`status`/`start`/`stop`) rather than growing `devices.ts`
+    further — a deliberate naming deviation from the approved design spec (which had proposed
+    `devices.startDiscovery`/etc.), matching the already-established one-manager-module-plus-its-own-
+    thin-router-file pattern this codebase uses for the equivalent `liveSession` feature.
+  - **`ble/namedDevicePoller.ts`** — always-on timer (started unconditionally at backend startup,
+    matching `health/scheduler.ts`'s pattern) polling only already-named devices directly by MAC
+    address, entirely independent of whether a discovery session is running. `lastSeenAt` fix
+    (design spec's central correctness requirement): since discovery no longer runs continuously,
+    a successful poll now updates `Device.lastSeenAt` itself (previously only `onDeviceSeen` did) —
+    otherwise a perfectly healthy, actively-polled device would start showing "hors ligne" after 10
+    minutes. `devices.sync`/`forceSyncAll` (manual sync mutations) updated the same way for
+    consistency, in the same fix wave (a manual sync succeeding is equally strong evidence of
+    "online").
+  - **`devices.addByAddress`** (new tRPC mutation) — registers a device directly by its known MAC
+    address (zod-validated `AA:BB:CC:DD:EE:FF` format), named immediately, no discovery session
+    needed. A wrong/unreachable address surfaces through the existing `SyncEvent`/history feed like
+    any other poll failure — no special-cased validation beyond the format check. Frontend: a small
+    form on `/devices/add` alongside the auto-discovered list.
+  - **Final-review fix (critical) — `connectDevice()`'s own discovery-on-forever leak**: pre-existing
+    code (since Batch 1, harmless at the time because the old `scanner.ts` already kept discovery on
+    forever anyway) turned BlueZ discovery on before `waitDevice()` but never turned it back off.
+    Once discovery was scoped to only run during an explicit session, this silently defeated the
+    entire point of this branch on real `node-ble` hardware: the very first `namedDevicePoller` read
+    would turn discovery on and it would never turn off again. Fixed with a module-level
+    `scanSessionActive` flag (set for the duration of `scan()`'s loop, in a `try/finally`) so
+    `connectDevice()` only stops discovery if IT turned it on for this call AND no `scan()` session
+    currently depends on it staying on. **Not fully provable against the mock provider** (it doesn't
+    model real BlueZ discovery state) — real-hardware verification (`bluetoothctl show`'s
+    `Discovering:` flag staying off across multiple poll cycles with no session active) is a
+    follow-up requiring production SSH access.
+  - **Final-review fix (important) — discovery-session ownership**: `stopDiscoverySession()` had no
+    way to tell whose session it was stopping — any caller (e.g. a page instance that never
+    successfully started its own session after a hard reload skipped its cleanup) could stop
+    whatever session happened to be active, including a different, legitimate one (another tab's).
+    Fixed by having `startDiscoverySession` generate and return a session id (`node:crypto`'s
+    `randomUUID()`); `stopDiscoverySession(sessionId)` is now a no-op unless the id matches the
+    currently active session. The frontend tracks the id it was given in a `useRef` (not `useState`
+    — the unmount cleanup closure needs the latest value) and only ever stops that specific session.
+  - **Final-review fix (important) — frontend never observed the 5-minute auto-cutoff**:
+    `/devices/add`'s "Recherche en cours…" state was local, never synced with backend reality, so it
+    kept showing active (and kept refetching `listUnnamed`) forever past the backend's own
+    auto-cutoff. Fixed by deriving it from a polled `discoverySession.status` query
+    (`refetchInterval: 5000`), following `live-mode-section.tsx`'s exact precedent for the same
+    class of problem on `liveSession`.
+  - **Final-review fix — progressive backoff for a permanently-failing device** (DestCom's explicit
+    request, found while reviewing `addByAddress`'s failure path): a typo'd/unreachable MAC address
+    used to get retried at the normal ~5min interval forever, each attempt costing up to ~55s on the
+    shared `connectionQueue` (node-ble's retry/timeout policy) that blocks manual watering, sync,
+    live sessions, and the auto-watering scheduler in the meantime. Fixed with a per-device
+    consecutive-failure counter in `namedDevicePoller.ts`; the effective poll interval scales as
+    `pollIntervalMs * 2^failures`, capped at 1 hour, reset to the normal interval on any success — a
+    healthy device (0 consecutive failures) is completely unaffected.
+  - Stale UI copy referencing the old always-scanning behavior (dashboard empty state, `/settings`'s
+    "Ajouter un appareil" card description) reworded to describe the new session-scoped reality.
+  - **Verified against the mock provider**: `backend`/`frontend` build and typecheck cleanly;
+    `discoverySession`'s start/reject-second-session/stop/auto-cutoff lifecycle and
+    `namedDevicePoller`'s independence from any discovery session were already proven per-task
+    before this final pass; this pass additionally traced the session-id ownership logic by hand
+    (own-id-null → no stop call; id-mismatch → no-op) rather than a live multi-tab browser test.
+    **Not verified**: `connectDevice`'s discovery on/off bookkeeping against real BlueZ (see above)
+    — the mock provider has no discovery state to observe.
 - **Next batch**: Batch 10 (extension to other devices — Flower Power, Flower Care).
 - **`noble-bridge` validated with real hardware** ✅ (2026-07-27) — a real Parrot Pot
   (`PARROT-A073`) connected and read end-to-end (scan → connect → activate → read
@@ -523,7 +596,10 @@ production server:
 backend/         API + business logic (Fastify, Prisma/SQLite, auth, BLE) — runs in Docker in prod
   src/api/         tRPC router (api/trpc/: context, procedures, readings subscription) mounted on Fastify
   src/auth/        BetterAuth (instance, session/middleware, admin seed)
-  src/ble/         scanner, connectionQueue, Parrot protocol logic (ble/parrot/) and Xiaomi (ble/xiaomi/)
+  src/ble/         discoverySession.ts (session-scoped new-device discovery, on/off via tRPC while
+                   "Ajouter un appareil" is open), namedDevicePoller.ts (always-on timer polling
+                   already-claimed devices by MAC, independent of discovery), connectionQueue,
+                   Parrot protocol logic (ble/parrot/) and Xiaomi (ble/xiaomi/)
   src/providers/   DeviceProvider implementations (mock, noble-bridge, node-ble) + factory
   src/health/      Health Engine (Batch 4): plant_profiles CSV import + scoring engine + settings.ts
                    (HealthSettings, DB-backed baseline/warm-up config, see Project status)
@@ -614,7 +690,8 @@ Dockerfile, docker-entrypoint.sh, docker-compose.prod.yml, docker-compose.test.y
   `(voltage-2.1)*100` clamped 0-100. Formula confirmed by WatchFlower AND re-validated empirically
   on a real device.
 - **tRPC (`src/api/trpc/`)**: `router.ts` combines `devices` (`list`, `listUnnamed`, `rename`,
-  `updateDetails` — location/indoor-outdoor, storage only for now, see the device location/
+  `addByAddress` — register a device directly by MAC address, see the scoped-BLE-discovery Project
+  status entry —, `updateDetails` — location/indoor-outdoor, storage only for now, see the device location/
   environment entry below —, `history`, `wateringEvents`, `water`, `sync`/`forceSyncAll` — manual
   per-device/global sensor sync, see the production incident entry above), `health` (`plantProfiles`, `assignPlantProfile`,
   `deviceHealth`, `getSettings`/`upsertSettings` — Health Engine baseline/warm-up config, DB-backed,
@@ -622,6 +699,8 @@ Dockerfile, docker-entrypoint.sh, docker-compose.prod.yml, docker-compose.test.y
   `schedule` (`get`, `upsert` — Batch 5 auto-watering config, see Project status),
   `plantDr` (`getCalibration`, `calibrateWet` — Batch 6 device-side calibration, see Project status),
   `liveSession` (`status`, `start`, `stop`, `onSample` — real-time GATT sampling, see Project status),
+  `discoverySession` (`status`, `start`, `stop` — session-scoped new-device BLE discovery while
+  `/devices/add` is open, see the scoped-BLE-discovery Project status entry),
   `history` (`list` — the global History page's merged `WateringEvent`/`SyncEvent` feed, see Project
   status) and `readings`
   (`onReading`, a subscription) into `appRouter`; its type (`AppRouter`) is the single source of
