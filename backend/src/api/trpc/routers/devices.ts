@@ -184,6 +184,11 @@ export const devicesRouter = router({
     }
 
     await persistReading(device.id, device.kind, reading, 'POLL');
+    // Mirrors namedDevicePoller.ts's pollDevice: a successful read is at least as strong evidence
+    // the device is online as overhearing its advertisement, and now that discovery no longer runs
+    // continuously, a manual sync succeeding is equally strong evidence of "online" too (design
+    // spec's Part 2, "lastSeenAt fix").
+    await prisma.device.update({ where: { id: device.id }, data: { lastSeenAt: new Date() } });
 
     const updated = await prisma.device.findUniqueOrThrow({ where: { id: device.id }, include: { plantProfile: true } });
     return withLastReading(updated);
@@ -202,7 +207,12 @@ export const devicesRouter = router({
     for (const device of devices) {
       void ctx.connectionQueue
         .run(() => ctx.provider.readSensors(device.id, device.kind))
-        .then((reading) => persistReading(device.id, device.kind, reading, 'POLL'))
+        .then(async (reading) => {
+          await persistReading(device.id, device.kind, reading, 'POLL');
+          // Same lastSeenAt fix as `sync` above — a successful forced sync is equally strong
+          // evidence of "online" as the automatic poller's own successful read.
+          await prisma.device.update({ where: { id: device.id }, data: { lastSeenAt: new Date() } });
+        })
         .catch((error) => {
           const detail = error instanceof Error ? error.message : String(error);
           log({
