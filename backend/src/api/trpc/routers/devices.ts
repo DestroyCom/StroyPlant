@@ -172,7 +172,15 @@ export const devicesRouter = router({
             result: 'ERROR',
             detail,
           });
-          void persistSyncFailure(device.id, 'MANUAL', detail);
+          void persistSyncFailure(device.id, 'MANUAL', detail).catch((persistError) => {
+            log({
+              direction: 'INFO',
+              label: 'persistSyncFailure failed',
+              deviceId: device.id,
+              result: 'ERROR',
+              detail: persistError instanceof Error ? persistError.message : String(persistError),
+            });
+          });
         });
     }
     return { triggered: devices.length };
