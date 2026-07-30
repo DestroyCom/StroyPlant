@@ -27,7 +27,11 @@ export function mergeAndSortHistoryEntries(entries: HistoryEntry[]): HistoryEntr
 export const historyRouter = router({
   list: protectedProcedure.input(z.object({ deviceId: z.string().optional(), days: z.number().optional() })).query(async ({ input }) => {
     const since = input.days != null ? new Date(Date.now() - input.days * 24 * 60 * 60 * 1000) : undefined;
-    const deviceFilter = input.deviceId ? { deviceId: input.deviceId } : {};
+    // No deviceId = every named device, matching devices.list's own `name IS NOT NULL` filter — an
+    // unclaimed/unnamed device (e.g. a neighbour's Xiaomi the scanner discovers but nobody claimed)
+    // must never flood the feed with its failed reads, potentially pushing real watering events out
+    // of the HISTORY_LIMIT cap (docs/superpowers/specs/2026-07-30-responsive-and-global-history-design.md).
+    const deviceFilter = input.deviceId ? { deviceId: input.deviceId } : { device: { name: { not: null } } };
     const timeFilter = since ? { timestamp: { gte: since } } : {};
 
     const [wateringEvents, syncEvents] = await Promise.all([

@@ -87,7 +87,7 @@ export function AppShell({ children }: { children: ReactNode }) {
 
       <main className="flex-1 overflow-y-auto bg-background p-4 pb-20 md:p-10 md:pb-10">{children}</main>
 
-      <nav className="fixed inset-x-0 bottom-0 z-40 flex items-center justify-around border-t border-sidebar-border bg-sidebar py-2 md:hidden">
+      <nav className="fixed inset-x-0 bottom-0 z-40 flex items-center justify-around border-t border-sidebar-border bg-sidebar pt-2 pb-[calc(0.5rem+env(safe-area-inset-bottom))] md:hidden">
         <Link
           to="/"
           activeOptions={{ exact: true }}

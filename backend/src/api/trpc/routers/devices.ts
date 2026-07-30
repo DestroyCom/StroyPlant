@@ -139,7 +139,17 @@ export const devicesRouter = router({
       reading = await ctx.connectionQueue.run(() => ctx.provider.readSensors(device.id, device.kind));
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
-      await persistSyncFailure(device.id, 'MANUAL', detail);
+      // Never let a secondary persistSyncFailure failure mask the real BLE error above — same
+      // catch-and-log pattern as forceSyncAll below and the scanner's own pollDeviceNow.
+      await persistSyncFailure(device.id, 'MANUAL', detail).catch((persistError) => {
+        log({
+          direction: 'INFO',
+          label: 'persistSyncFailure failed',
+          deviceId: device.id,
+          result: 'ERROR',
+          detail: persistError instanceof Error ? persistError.message : String(persistError),
+        });
+      });
       throw new TRPCError({ code: 'BAD_GATEWAY', message: detail });
     }
 

@@ -1,6 +1,7 @@
 import type { ReadingSource, SyncSource } from '@prisma/client';
 import { emitReading } from './api/trpc/readingsEmitter.js';
 import { serializeReading } from './api/trpc/serialize.js';
+import { DEFAULT_POLL_INTERVAL_MS } from './ble/scanner.js';
 import { prisma } from './db/client.js';
 import { getMqttState } from './mqtt/manager.js';
 import { publishHealthState, publishReadingState } from './mqtt/publisher.js';
@@ -50,6 +51,18 @@ export async function persistReading(deviceId: string, kind: DeviceKind, reading
 // pollDeviceNow, devices.ts's sync/forceSyncAll) — never a replacement for it (docs/STROYPLANT_SPEC.md
 // section 7.1). A successful sync is never recorded here: the resulting Reading row already proves
 // it happened, so only failures are persisted.
+//
+// Dedup mitigation (2026-07-30, DestCom's explicit choice): a persistently unreachable device would
+// otherwise write a near-identical row every ~5min forever, with no retention/purge policy in place
+// yet (that broader policy is deliberately deferred to a later, production-data-informed decision —
+// not decided here). As a cheap, non-destructive safeguard, skip the insert if the most recent
+// SyncEvent for this device has the SAME errorDetail and landed within the last poll interval.
 export async function persistSyncFailure(deviceId: string, source: SyncSource, errorDetail: string) {
+  const recent = await prisma.syncEvent.findFirst({
+    where: { deviceId, timestamp: { gte: new Date(Date.now() - DEFAULT_POLL_INTERVAL_MS) } },
+    orderBy: { timestamp: 'desc' },
+  });
+  if (recent && recent.errorDetail === errorDetail) return;
+
   await prisma.syncEvent.create({ data: { deviceId, source, errorDetail } });
 }

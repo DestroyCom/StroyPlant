@@ -12,7 +12,7 @@ export interface ScannerCallbacks {
 // mandated by the spec for Batch 1 (which only covers reading capture — scoring/alerting cadence
 // is a Health Engine concern, Batch 4) — 5 minutes is a reasonable default, adjustable via
 // PARROT_POLL_INTERVAL_MS.
-const DEFAULT_POLL_INTERVAL_MS = 5 * 60_000;
+export const DEFAULT_POLL_INTERVAL_MS = 5 * 60_000;
 
 // Backoff for restarting provider.scan() after it throws (2026-07-29 production incident: a
 // single transient "Resource Not Ready" — BlueZ mid-power-cycle, see restartAdapter() in

@@ -70,7 +70,12 @@ function HistoryPage() {
   const { data: devices } = useSuspenseQuery(trpc.devices.list.queryOptions());
   const [deviceId, setDeviceId] = useState('');
   const [period, setPeriod] = useState<Period>('all');
-  const { data: entries } = useQuery(trpc.history.list.queryOptions({ deviceId: deviceId || undefined, days: PERIOD_DAYS[period] }));
+  const {
+    data: entries,
+    isPending,
+    isError,
+    error,
+  } = useQuery(trpc.history.list.queryOptions({ deviceId: deviceId || undefined, days: PERIOD_DAYS[period] }));
   const groups = entries ? groupByDay(entries) : [];
 
   return (
@@ -84,6 +89,7 @@ function HistoryPage() {
           <select
             value={deviceId}
             onChange={(event) => setDeviceId(event.target.value)}
+            aria-label="Filtrer par plante"
             className="h-9 w-full appearance-none rounded-lg border border-input bg-transparent px-3 pr-8 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
           >
             <option value="">Toutes les plantes</option>
@@ -105,7 +111,11 @@ function HistoryPage() {
         </Tabs>
       </div>
 
-      {groups.length === 0 ? (
+      {isPending ? (
+        <p className="text-sm text-muted-foreground">Chargement…</p>
+      ) : isError ? (
+        <p className="text-sm text-destructive">Impossible de charger l'historique : {error.message}</p>
+      ) : groups.length === 0 ? (
         <p className="text-sm text-muted-foreground">Aucun événement pour cette période.</p>
       ) : (
         <div className="flex flex-col gap-6">
