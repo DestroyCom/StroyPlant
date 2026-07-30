@@ -62,7 +62,6 @@ open-source libraries — see [`CREDITS.md`](CREDITS.md).
 
 ## License
 
-[PolyForm Noncommercial License 1.0.0](LICENSE) — free to use, study, modify, and share for any
-noncommercial purpose. Not an OSI-approved "open source" license in the strict sense (it
-excludes commercial use, which the Open Source Definition doesn't permit), but source-available
-under the same free/share-alike spirit.
+[GNU General Public License v3.0](LICENSE) (or, at your option, any later version) — free to
+use, study, modify, and share, including commercially, as long as derivative works stay under
+the same license and their source stays available.
