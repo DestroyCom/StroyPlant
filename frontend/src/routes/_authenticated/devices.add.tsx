@@ -1,6 +1,7 @@
 import { useMutation, useQueryClient, useSuspenseQuery } from '@tanstack/react-query';
 import { createFileRoute } from '@tanstack/react-router';
-import { useState } from 'react';
+import { RadioTower } from 'lucide-react';
+import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
 import { DeviceKindIcon } from '@/components/device-kind-icon';
 import { Button } from '@/components/ui/button';
@@ -66,21 +67,63 @@ function UnnamedDeviceRow({ device }: { device: Device }) {
 }
 
 function AddDevicePage() {
-  const { data: devices } = useSuspenseQuery(trpc.devices.listUnnamed.queryOptions());
+  const [discoveryActive, setDiscoveryActive] = useState(false);
+
+  const startMutation = useMutation(
+    trpc.discoverySession.start.mutationOptions({
+      onSuccess: () => setDiscoveryActive(true),
+      onError: (error) => {
+        // CONFLICT (another session already active, e.g. a second browser tab) — not fatal,
+        // the page still works for naming already-discovered devices.
+        toast.error('Recherche déjà en cours ailleurs', { description: error.message });
+      },
+    }),
+  );
+  const stopMutation = useMutation(trpc.discoverySession.stop.mutationOptions());
+
+  // Start a discovery session when this page mounts, stop it when leaving — same lifecycle
+  // pattern live-mode-section.tsx already uses for live sessions. Runs once per mount, not
+  // per-render (empty dependency array is deliberate: startMutation/stopMutation are stable
+  // across renders, and this must fire exactly once on mount/unmount).
+  // biome-ignore lint/correctness/useExhaustiveDependencies: only run this once on mount/unmount, not on every startMutation/stopMutation identity change
+  useEffect(() => {
+    startMutation.mutate();
+    return () => {
+      stopMutation.mutate();
+    };
+  }, []);
+
+  // Refetch on a short interval only while a session is actually active — a discovery session
+  // finding a device is the only thing that can change this list, and a plain interval is enough
+  // for a screen the user is actively watching (no need for a push subscription). Passed directly
+  // into the same suspense query rather than a second observer on the same key, so there's only
+  // ever one source of truth for this list's refetch behavior.
+  const { data: devices } = useSuspenseQuery({
+    ...trpc.devices.listUnnamed.queryOptions(),
+    refetchInterval: discoveryActive ? 3000 : false,
+  });
 
   return (
     <div>
-      <div className="mb-8">
-        <h1 className="text-[30px] leading-tight font-black tracking-tight text-foreground">Ajouter un appareil</h1>
-        <p className="mt-1.5 text-sm text-muted-foreground">
-          Les appareils détectés par le scanner BLE apparaissent ici avant d'être ajoutés au tableau de bord. Donne un nom à celui que tu
-          veux suivre.
-        </p>
+      <div className="mb-8 flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-[30px] leading-tight font-black tracking-tight text-foreground">Ajouter un appareil</h1>
+          <p className="mt-1.5 text-sm text-muted-foreground">
+            Les appareils détectés apparaissent ici pendant que cette page est ouverte. Donne un nom à celui que tu veux suivre, ou
+            ajoute-le directement par son adresse si tu la connais déjà.
+          </p>
+        </div>
+        {discoveryActive && (
+          <div className="mt-1 flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
+            <RadioTower size={14} className="animate-pulse text-teal-500" />
+            Recherche en cours…
+          </div>
+        )}
       </div>
 
       {devices.length === 0 ? (
         <p className="text-sm text-muted-foreground">
-          Aucun nouvel appareil en attente. Ils apparaîtront ici dès que le scanner BLE en détecte un à proximité.
+          Aucun nouvel appareil en attente. Ils apparaîtront ici dès que la recherche en détecte un à proximité.
         </p>
       ) : (
         <div className="flex flex-col gap-3">
