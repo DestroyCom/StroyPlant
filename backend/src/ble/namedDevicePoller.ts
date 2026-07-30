@@ -50,11 +50,24 @@ export function startNamedDevicePoller(
   pollIntervalMs = DEFAULT_POLL_INTERVAL_MS,
 ): void {
   setInterval(async () => {
-    const devices = await prisma.device.findMany({ where: { name: { not: null } } });
-    for (const device of devices) {
-      const last = lastPolled.get(device.id) ?? 0;
-      if (Date.now() - last < pollIntervalMs) continue;
-      void pollDevice(device.id, device.kind, provider, connectionQueue);
+    try {
+      const devices = await prisma.device.findMany({ where: { name: { not: null } } });
+      for (const device of devices) {
+        const last = lastPolled.get(device.id) ?? 0;
+        if (Date.now() - last < pollIntervalMs) continue;
+        void pollDevice(device.id, device.kind, provider, connectionQueue);
+      }
+    } catch (error) {
+      // Never let a transient failure here (e.g. SQLite lock contention) become an unhandled
+      // rejection — setInterval doesn't await/catch its callback's promise, and Node crashes the
+      // whole process on an unhandled rejection by default (the same class of incident this
+      // project's history in CLAUDE.md already had to fix elsewhere). Log and let the next tick retry.
+      log({
+        direction: 'READ',
+        label: 'namedDevicePoller tick failed',
+        result: 'ERROR',
+        detail: error instanceof Error ? error.message : String(error),
+      });
     }
   }, TICK_INTERVAL_MS);
 }
