@@ -93,3 +93,14 @@ export function statusDetail(device: Device): string {
   if (reading.batteryPercent != null) parts.push(`Batterie : ${Math.round(reading.batteryPercent)}%`);
   return parts.join(' · ') || "Aucune lecture pour l'instant.";
 }
+
+// Calendar-day grouping heading for the history page ("Aujourd'hui" / "Hier" / "Il y a N jours") —
+// distinct from formatRelativeTime above, which measures elapsed hours/days from now rather than
+// calendar-day boundaries, so it can't tell "yesterday at 23:59" from "today at 00:01".
+export function dayBucketLabel(iso: string): string {
+  const startOfDay = (date: Date) => new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+  const diffDays = Math.round((startOfDay(new Date()) - startOfDay(new Date(iso))) / (24 * 60 * 60 * 1000));
+  if (diffDays <= 0) return "Aujourd'hui";
+  if (diffDays === 1) return 'Hier';
+  return `Il y a ${diffDays} jours`;
+}

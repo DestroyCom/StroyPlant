@@ -83,3 +83,14 @@ export interface WateringEvent {
   success: boolean;
   errorDetail: string | null;
 }
+
+export interface HistoryEntry {
+  id: string;
+  type: 'WATERING' | 'SYNC';
+  deviceId: string;
+  deviceName: string;
+  timestamp: string;
+  success: boolean;
+  triggerLabel: 'MANUAL' | 'CRON' | 'POLL';
+  errorDetail: string | null;
+}
