@@ -537,6 +537,17 @@ production server:
     model real BlueZ discovery state) — real-hardware verification (`bluetoothctl show`'s
     `Discovering:` flag staying off across multiple poll cycles with no session active) is a
     follow-up requiring production SSH access.
+    - **Known minor gap, found during the fix-wave's own re-review, not yet fixed**: the
+      `scanSessionActive` flag and `connectDevice()`'s discovery-stop aren't a real lock — a narrow
+      TOCTOU race exists where `connectDevice()` reads no session is active and starts
+      `stopDiscovery()`, and *during that D-Bus round-trip* a new discovery session starts and reads
+      `isDiscovering()` as still (stale-)true, so it skips its own `startDiscovery()` call; when
+      `connectDevice()`'s stop then actually lands, discovery is off for up to one `scan()` cycle
+      (≤ ~1 min) even though a session believes it's active. Self-heals at that session's next cycle
+      (`scan()` re-checks `isDiscovering()` every iteration) — never a permanent stuck-off state, just
+      a missed scan window. Not fixed now (a boolean flag can't fully close this, would need a real
+      mutex/generation-counter); fold into the same production-server verification pass as the
+      critical fix above rather than treating as a separate task.
   - **Final-review fix (important) — discovery-session ownership**: `stopDiscoverySession()` had no
     way to tell whose session it was stopping — any caller (e.g. a page instance that never
     successfully started its own session after a hard reload skipped its cleanup) could stop
