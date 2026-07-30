@@ -37,6 +37,7 @@ model Device {
 
   readings       Reading[]
   wateringEvents WateringEvent[]
+  syncEvents     SyncEvent[]
   schedule       Schedule?
 }
 
@@ -165,6 +166,27 @@ model WateringEvent {
   triggerSource TriggerSource
   success       Boolean
   errorDetail   String?
+
+  @@index([deviceId, timestamp])
+}
+
+// A sync/read failure that today is only ever logged to the console (backend/src/ble/scanner.ts,
+// backend/src/api/trpc/routers/devices.ts) — persisted so the global history page
+// (docs/superpowers/specs/2026-07-30-responsive-and-global-history-design.md) can show them.
+// Only failures are ever inserted: a successful sync already has a Reading row proving it
+// happened, so persisting every success too would just duplicate that with no new information.
+enum SyncSource {
+  POLL // scanner's own throttled polling loop (ble/scanner.ts's pollDeviceNow)
+  MANUAL // devices.sync / devices.forceSyncAll (user-triggered)
+}
+
+model SyncEvent {
+  id          Int        @id @default(autoincrement())
+  deviceId    String
+  device      Device     @relation(fields: [deviceId], references: [id])
+  timestamp   DateTime   @default(now())
+  source      SyncSource
+  errorDetail String
 
   @@index([deviceId, timestamp])
 }
