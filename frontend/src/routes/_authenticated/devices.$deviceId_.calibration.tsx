@@ -5,7 +5,7 @@ import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { trpc } from '@/lib/trpc';
 
-export const Route = createFileRoute('/_authenticated/devices/$deviceId/calibration')({
+export const Route = createFileRoute('/_authenticated/devices/$deviceId_/calibration')({
   loader: async ({ context, params }) => {
     const devices = await context.queryClient.ensureQueryData(trpc.devices.list.queryOptions());
     if (!devices.some((device) => device.id === params.deviceId)) throw notFound();
