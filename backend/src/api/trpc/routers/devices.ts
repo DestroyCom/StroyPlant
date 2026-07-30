@@ -124,12 +124,12 @@ export const devicesRouter = router({
     return { ok: true as const };
   }),
 
-  // Manual "sync now" — reads the device immediately instead of waiting for the scanner's next
-  // ~5min poll (backend/src/ble/scanner.ts). Goes through the same connectionQueue as every other
-  // GATT operation (only one connection at a time, shared with the scanner/scheduler) and persists
-  // through the exact same persistReading() the automatic poll cycle uses (backend/src/readings.ts)
-  // — a manual sync is not a separate, parallel code path, matching how devices.water already
-  // shares triggerWatering() with the auto-watering scheduler.
+  // Manual "sync now" — reads the device immediately instead of waiting for the named-device
+  // poller's next ~5min poll (backend/src/ble/namedDevicePoller.ts). Goes through the same
+  // connectionQueue as every other GATT operation (only one connection at a time, shared with the
+  // poller/scheduler) and persists through the exact same persistReading() the automatic poll
+  // cycle uses (backend/src/readings.ts) — a manual sync is not a separate, parallel code path,
+  // matching how devices.water already shares triggerWatering() with the auto-watering scheduler.
   sync: protectedProcedure.input(z.object({ deviceId: z.string() })).mutation(async ({ ctx, input }) => {
     const device = await prisma.device.findUnique({ where: { id: input.deviceId } });
     if (!device) throw new TRPCError({ code: 'NOT_FOUND', message: 'Device not found' });

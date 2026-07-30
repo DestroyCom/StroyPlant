@@ -1,14 +1,11 @@
 import { buildServer } from './api/server.js';
 import { ConnectionQueue } from './ble/connectionQueue.js';
-import { startScanner } from './ble/scanner.js';
-import { prisma } from './db/client.js';
+import { startNamedDevicePoller } from './ble/namedDevicePoller.js';
 import { env } from './env.js';
 import { startScheduler } from './health/scheduler.js';
 import { log } from './logger.js';
-import { getMqttState, initMqttManager } from './mqtt/manager.js';
-import { publishDiscovery } from './mqtt/publisher.js';
+import { initMqttManager } from './mqtt/manager.js';
 import { createDeviceProvider } from './providers/factory.js';
-import { persistReading } from './readings.js';
 
 async function main() {
   const provider = createDeviceProvider();
@@ -21,33 +18,11 @@ async function main() {
   // happen again automatically on every `reloadMqttClient()` call too (mqttSettings.upsert, tRPC).
   await initMqttManager(provider, connectionQueue);
 
-  startScanner(
-    provider,
-    {
-      async onDeviceSeen(device) {
-        const previous = await prisma.device.findUnique({ where: { id: device.id } });
-        const upserted = await prisma.device.upsert({
-          where: { id: device.id },
-          create: { id: device.id, kind: device.kind, name: device.name, lastSeenAt: new Date() },
-          update: { name: device.name, lastSeenAt: new Date() },
-        });
-
-        // Real BLE providers never populate `device.name` (only `devices.rename`, hooked
-        // separately, claims a device) — this only fires for the mock provider's pre-named
-        // devices, so their MQTT discovery still gets published once without waiting on a rename
-        // that will never happen in that case.
-        const mqttState = getMqttState();
-        if (mqttState && upserted.name != null && previous?.name == null) {
-          publishDiscovery(mqttState.client, upserted, mqttState);
-        }
-      },
-      async onReading(deviceId, kind, reading) {
-        await persistReading(deviceId, kind, reading, 'POLL');
-      },
-    },
-    connectionQueue,
-    env.parrotPollIntervalMs,
-  );
+  // Polls every already-named device on its own timer, independent of BLE discovery — see
+  // docs/superpowers/specs/2026-07-30-scoped-ble-discovery-design.md. Discovery of NEW devices
+  // only happens during an explicit discoverySession (started/stopped via tRPC from the
+  // "Ajouter un appareil" page), never unconditionally at startup.
+  startNamedDevicePoller(provider, connectionQueue, env.parrotPollIntervalMs);
 
   startScheduler(provider, connectionQueue);
 

@@ -1,14 +1,14 @@
 import type { ReadingSource, SyncSource } from '@prisma/client';
 import { emitReading } from './api/trpc/readingsEmitter.js';
 import { serializeReading } from './api/trpc/serialize.js';
-import { DEFAULT_POLL_INTERVAL_MS } from './ble/scanner.js';
+import { DEFAULT_POLL_INTERVAL_MS } from './ble/namedDevicePoller.js';
 import { prisma } from './db/client.js';
 import { getMqttState } from './mqtt/manager.js';
 import { publishHealthState, publishReadingState } from './mqtt/publisher.js';
 import type { DeviceKind, SensorReading } from './providers/types.js';
 
-// Shared by the scanner's automatic poll cycle (ble/scanner.ts, via index.ts's onReading
-// callback), the manual "sync now"/"forcer la synchro" tRPC mutations (devices.sync/forceSyncAll),
+// Shared by the named-device poller's automatic poll cycle (ble/namedDevicePoller.ts), the manual
+// "sync now"/"forcer la synchro" tRPC mutations (devices.sync/forceSyncAll),
 // and the live-mode session manager (liveSession/manager.ts) — every producer of a Reading row
 // goes through this one function so persistence/broadcast never diverges between them. `source` is
 // required (no default) so every call site is explicit about which one it is — POLL rows feed the

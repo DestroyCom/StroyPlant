@@ -113,7 +113,7 @@ async function waitForFirstNotification(characteristic: GattCharacteristic, time
 
 // Scan cycle (docs/STROYPLANT_SPEC.md section 7.1): ~10s of scanning then a pause (1 min in normal
 // use), filtered by a minimum RSSI of -90. The "seen for 3 cycles before being declared lost"
-// notion is handled at the orchestrating scanner level (backend/src/ble/scanner.ts), not here —
+// notion is handled at the orchestrating level (backend/src/ble/discoverySession.ts), not here —
 // this provider only surfaces raw discovery events.
 const SCAN_WINDOW_MS = 10_000;
 const SCAN_PAUSE_MS = 60_000;
@@ -188,8 +188,9 @@ export function createNodeBleProvider(): DeviceProvider {
         // with no coordination with this loop, so an adapter method call landing mid-power-cycle
         // throws a transient "Resource Not Ready"/"Not Ready" D-Bus error here. That single error
         // used to propagate out of scan() and kill discovery forever (2026-07-29 incident — the
-        // caller, backend/src/ble/scanner.ts, never relaunched it). Now: log, back off briefly,
-        // and retry the cycle instead of letting the whole function die on a transient condition.
+        // caller at the time never relaunched it; that caller has since been replaced by
+        // backend/src/ble/discoverySession.ts). Now: log, back off briefly, and retry the cycle
+        // instead of letting the whole function die on a transient condition.
         try {
           if (!(await adapter.isDiscovering())) await adapter.startDiscovery();
 

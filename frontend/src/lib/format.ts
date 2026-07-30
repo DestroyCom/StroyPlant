@@ -16,8 +16,9 @@ export function formatDeviceKind(kind: 'PARROT_POT' | 'XIAOMI_LYWSD03MMC'): stri
   return kind === 'PARROT_POT' ? 'Parrot Pot' : 'Capteur Xiaomi';
 }
 
-// The scanner republishes each device every ~5 min by default (backend/src/ble/scanner.ts,
-// DEFAULT_POLL_INTERVAL_MS) — 2x this interval absorbs a missed cycle without flickering "offline".
+// The named-device poller re-reads each device every ~5 min by default
+// (backend/src/ble/namedDevicePoller.ts, DEFAULT_POLL_INTERVAL_MS), updating lastSeenAt on every
+// successful read — 2x this interval absorbs a missed cycle without flickering "offline".
 const OFFLINE_THRESHOLD_MS = 10 * 60_000;
 const LOW_TANK_THRESHOLD = 20;
 
