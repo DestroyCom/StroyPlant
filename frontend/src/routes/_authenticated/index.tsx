@@ -48,10 +48,10 @@ function DashboardPage() {
 
   return (
     <div>
-      <div className="mb-8 flex items-start justify-between gap-4">
+      <div className="mb-8 flex flex-col items-start gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <div className="mb-1.5 text-sm font-medium text-muted-foreground">Bonjour !</div>
-          <h1 className="text-[30px] leading-tight font-black tracking-tight text-foreground">{summarySentence(devices)}</h1>
+          <h1 className="text-[22px] leading-tight font-black tracking-tight text-foreground sm:text-[30px]">{summarySentence(devices)}</h1>
         </div>
         <Button
           variant="outline"

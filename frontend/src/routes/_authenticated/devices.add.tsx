@@ -38,20 +38,29 @@ function UnnamedDeviceRow({ device }: { device: Device }) {
   }
 
   return (
-    <form onSubmit={handleSubmit} className="flex items-center gap-4 rounded-lg border border-border bg-card p-4">
-      <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-muted">
-        <DeviceKindIcon kind={device.kind} size={20} className="text-muted-foreground" />
-      </div>
-      <div className="min-w-0 flex-1">
-        <div className="truncate font-mono text-sm font-medium text-foreground">{device.id}</div>
-        <div className="text-xs text-muted-foreground">
-          {formatDeviceKind(device.kind)} · vu {formatRelativeTime(device.lastSeenAt)}
+    <form onSubmit={handleSubmit} className="flex flex-col gap-3 rounded-lg border border-border bg-card p-4 sm:flex-row sm:items-center">
+      <div className="flex items-center gap-4">
+        <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-muted">
+          <DeviceKindIcon kind={device.kind} size={20} className="text-muted-foreground" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="truncate font-mono text-sm font-medium text-foreground">{device.id}</div>
+          <div className="text-xs text-muted-foreground">
+            {formatDeviceKind(device.kind)} · vu {formatRelativeTime(device.lastSeenAt)}
+          </div>
         </div>
       </div>
-      <Input value={name} onChange={(event) => setName(event.target.value)} placeholder="Nom de la plante" className="w-48" />
-      <Button type="submit" disabled={!name.trim() || renameMutation.isPending}>
-        Ajouter
-      </Button>
+      <div className="flex gap-3 sm:contents">
+        <Input
+          value={name}
+          onChange={(event) => setName(event.target.value)}
+          placeholder="Nom de la plante"
+          className="min-w-0 flex-1 sm:w-48 sm:flex-none"
+        />
+        <Button type="submit" disabled={!name.trim() || renameMutation.isPending}>
+          Ajouter
+        </Button>
+      </div>
     </form>
   );
 }

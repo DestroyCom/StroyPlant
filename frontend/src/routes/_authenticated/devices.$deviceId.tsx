@@ -194,7 +194,9 @@ function DeviceDetailPage() {
             <Pencil size={13} />
           </button>
         </div>
-        <h1 className="max-w-lg text-[32px] leading-tight font-black tracking-tight text-foreground">{statusHeadline(device, health)}</h1>
+        <h1 className="max-w-lg text-[24px] leading-tight font-black tracking-tight text-foreground sm:text-[32px]">
+          {statusHeadline(device, health)}
+        </h1>
         <p className="mt-3.5 max-w-md text-base text-muted-foreground">{statusDetail(device)}</p>
         <div className="mt-5.5 flex items-center gap-2.5">
           <Button

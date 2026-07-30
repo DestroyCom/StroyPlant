@@ -48,7 +48,7 @@ function CalibrationPage() {
         {device.name ?? device.id}
       </Link>
 
-      <h1 className="text-[30px] leading-tight font-black tracking-tight text-foreground">Calibration Plant Dr</h1>
+      <h1 className="text-[22px] leading-tight font-black tracking-tight text-foreground md:text-[30px]">Calibration Plant Dr</h1>
       <p className="mt-1.5 text-sm text-muted-foreground">
         Configure l'algorithme d'arrosage embarqué directement sur le pot — un filet de sécurité qui continue à arroser au minimum même si
         StroyPlant est hors ligne ou hors de portée BLE. Ça s'ajoute à la programmation automatique côté serveur, ça ne la remplace pas.

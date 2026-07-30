@@ -1,9 +1,10 @@
 import { createFileRoute, Link } from '@tanstack/react-router';
-import { Bell, Bot } from 'lucide-react';
+import { Bell, Bot, PlusCircle } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { HealthEngineSettingsSection } from '@/components/health-engine-settings-section';
 import { MqttSettingsSection } from '@/components/mqtt-settings-section';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { Card, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { authClient } from '@/lib/auth-client';
 
@@ -45,6 +46,23 @@ function SettingsPage() {
           <CardHeader>
             <CardTitle>Compte</CardTitle>
             <CardDescription>{session?.user.email}</CardDescription>
+          </CardHeader>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <CardTitle>Ajouter un appareil</CardTitle>
+                <CardDescription>Réclamer un capteur détecté par le scanner BLE.</CardDescription>
+              </div>
+              <Link to="/devices/add">
+                <Button variant="outline" size="sm">
+                  <PlusCircle size={14} />
+                  Ajouter
+                </Button>
+              </Link>
+            </div>
           </CardHeader>
         </Card>
 
