@@ -182,9 +182,21 @@ export function createNodeBleProvider(): DeviceProvider {
       try {
         await withTimeout(device.connect(), CONNECT_TIMEOUT_MS, 'connect');
       } catch (error) {
+        // Bugfix (2026-07-30, found via real production logs): `withTimeout` only stops US from
+        // waiting on `device.connect()` — it does NOT cancel the underlying BlueZ Connect() D-Bus
+        // call, which keeps running server-side after our client-side timeout fires. The very next
+        // retry attempt (withGattRetry, 500ms later) calls connectDevice() again and issues a FRESH
+        // Connect() for the same device, while BlueZ still considers the previous one in flight —
+        // BlueZ immediately rejects that with org.bluez.Error.InProgress ("Operation already in
+        // progress"), which isn't recognized by isGattError133 so it never triggers an adapter
+        // restart either, just repeats until the original Connect() eventually resolves on its own.
+        // Calling disconnect() here tells BlueZ to cancel the pending/stuck connection attempt
+        // before we give up, so the next retry starts from a clean state instead of racing it.
         // device.connect() itself registers a PropertiesChanged listener before calling BlueZ's
         // Connect() (node-ble's Device.connect()) — on failure this Device is never returned to a
-        // caller's try/finally, so disconnect() (the only public path that releases it) never runs.
+        // caller's try/finally, so disconnect() (the only public path that releases it) never runs
+        // on its own, which is why this is also the first place doing so explicitly.
+        await withTimeout(device.disconnect(), CONNECT_TIMEOUT_MS, 'disconnect-after-failed-connect').catch(() => {});
         releaseDbusListeners(device);
         throw error;
       }
@@ -194,6 +206,25 @@ export function createNodeBleProvider(): DeviceProvider {
         await adapter.stopDiscovery().catch(() => {});
       }
     }
+  }
+
+  // subscribeLive (below) deliberately never retries the live-notify loop itself once
+  // streaming has started (restarting a multi-minute session from scratch after it already
+  // streamed real samples would be wrong) — but its one-shot initial connectDevice() call is a
+  // plain connection attempt like any other, and was the one BLE operation in this file with zero
+  // retry at all. Confirmed against real production logs (2026-07-30): a live session that never
+  // got past connectDevice() (no "Activate live measure period (live session)" log line at all)
+  // died on a single transient `le-connection-abort-by-local`, the same everyday connect hiccup
+  // that readSensors/triggerAction/PlantDr calibration already recover from via withGattRetry.
+  // Same retry policy here, applied to the connect step only.
+  function connectDeviceWithRetry(deviceId: string, label: string) {
+    return withGattRetry({
+      label,
+      deviceId,
+      isGattError133,
+      restartAdapter,
+      attempt: () => connectDevice(deviceId),
+    });
   }
 
   return {
@@ -469,8 +500,9 @@ export function createNodeBleProvider(): DeviceProvider {
     // Deliberately does NOT wrap the whole session in withGattRetry like readSensors does — that
     // helper's retry semantics assume a quick one-shot operation; retrying a multi-minute live
     // session from scratch after it already streamed real samples would be wrong. Only the
-    // initial connectDevice() call can fail outright (surfaced as a thrown error, no retry) — a
-    // mid-session disconnect ends the function the same way.
+    // initial connection (via connectDeviceWithRetry, see connectDevice's own comment above) gets
+    // the standard 3-attempt/backoff/adapter-restart retry policy — a mid-session disconnect after
+    // that still ends the function outright, with no retry.
     async subscribeLive(deviceId: string, kind, onSample, signal): Promise<void> {
       // A signal that's already aborted before this method is even called must return
       // immediately — an `addEventListener('abort', ...)` added afterward never fires for an
@@ -491,7 +523,7 @@ export function createNodeBleProvider(): DeviceProvider {
       // connectionQueue serializes to a single shared GATT connection, that alone could
       // permanently starve every other Parrot/Xiaomi operation in the app.
       if (kind === 'XIAOMI_LYWSD03MMC') {
-        const device = await connectDevice(deviceId);
+        const device = await connectDeviceWithRetry(deviceId, 'subscribeLive:xiaomi');
         try {
           if (signal.aborted) return;
 
@@ -557,7 +589,7 @@ export function createNodeBleProvider(): DeviceProvider {
         return;
       }
 
-      const device = await connectDevice(deviceId);
+      const device = await connectDeviceWithRetry(deviceId, 'subscribeLive');
       const characteristics: GattCharacteristic[] = [];
       try {
         if (signal.aborted) return;

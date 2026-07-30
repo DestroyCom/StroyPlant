@@ -35,12 +35,20 @@ export function getActiveDiscoverySession(): { startedAt: string } | null {
 // Upsert-any-recognized-device behavior is unchanged from the old scanner.ts: named or not, any
 // Parrot Pot/Xiaomi seen gets a Device row. Only WHEN this runs changes (session-scoped, not
 // forever from boot).
+//
+// Bugfix (2026-07-30): `device.name` here is always the raw BLE-advertised name (real providers
+// never populate anything else, see providers/types.ts's DiscoveredDevice) — it must never
+// overwrite a name the user already set via devices.rename/addByAddress. The `update` branch used
+// to unconditionally write `name: device.name`, so re-seeing an already-claimed device during any
+// later discovery session (i.e. every time /devices/add is reopened) silently reverted its custom
+// name back to the raw advertised one. Only the `create` branch (a genuinely new, unclaimed
+// device) should ever set `name` from the advertisement.
 async function onDeviceSeen(device: DiscoveredDevice): Promise<void> {
   const previous = await prisma.device.findUnique({ where: { id: device.id } });
   const upserted = await prisma.device.upsert({
     where: { id: device.id },
     create: { id: device.id, kind: device.kind, name: device.name, lastSeenAt: new Date() },
-    update: { name: device.name, lastSeenAt: new Date() },
+    update: { lastSeenAt: new Date() },
   });
 
   // Real BLE providers never populate `device.name` (only devices.rename claims a device) — this

@@ -579,6 +579,9 @@ production server:
     (own-id-null → no stop call; id-mismatch → no-op) rather than a live multi-tab browser test.
     **Not verified**: `connectDevice`'s discovery on/off bookkeeping against real BlueZ (see above)
     — the mock provider has no discovery state to observe.
+  - **Regression found and fixed post-deploy (2026-07-30)**: `onDeviceSeen`'s `upsert` (this file)
+    was silently reverting user-given device names back to the raw BLE name — see the "Second
+    production incident round" entry further down for the full detail and fix.
 - **Onboarding stepper** ✅ (2026-07-30) — replaces the old "type a name, done" add-device flow.
   Naming a device (via `devices.rename` on a discovered device, or `devices.addByAddress` by MAC)
   now redirects into a new dedicated page,
@@ -615,6 +618,46 @@ production server:
   - **Permanent local dev admin account**: `admin@admin.com` / `admin` (seeded via
     `pnpm seed:admin`) — reused across dev-only manual verifications instead of throwaway
     accounts per session, since this is local `dev.db`, never a shared/production database.
+- **Second production incident round — connect-failure resilience** (2026-07-30) — DestCom reported
+  3 separate symptoms after the scoped-BLE-discovery deploy; root-caused against real
+  `docker logs stroyplant` on the production server (`ssh omv`), not guessed:
+  - **Custom device names silently reverting to the raw BLE name**: `discoverySession.ts`'s
+    `onDeviceSeen` (see the scoped-BLE-discovery entry above) unconditionally wrote
+    `name: device.name` on its `upsert`'s `update` branch — `device.name` is always the raw
+    BLE-advertised name (real providers never populate anything else, `providers/types.ts`'s
+    `DiscoveredDevice`), so re-seeing an already-claimed device during any later discovery session
+    (i.e. every time `/devices/add` was reopened) silently reverted its user-given name. Fixed by
+    dropping `name` from the `update` branch entirely — only `create` (a genuinely new, unclaimed
+    device) sets it from the advertisement. Verified against a scratch copy of `dev.db`: claim →
+    re-discover → name unchanged.
+  - **History page flooded with "Operation already in progress"**: confirmed via
+    `docker logs --since 6h` — every occurrence followed the exact same pattern, a `TIMEOUT: connect
+    (18000ms)` on attempt 1 immediately followed by "Operation already in progress" on attempts 2
+    and 3 (308 occurrences in 6h, mostly against a weak-signal/likely-neighbour Xiaomi and
+    occasionally the 2nd Parrot Pot). Root cause: `connectDevice()`'s `withTimeout(device.connect(),
+    ...)` only stops the backend from *waiting* on a timed-out connect — it never cancels the
+    underlying BlueZ `Connect()` D-Bus call, which keeps running server-side. The very next retry
+    (500ms later) issues a *second* `Connect()` for the same device while BlueZ still considers the
+    first one in flight, and BlueZ immediately rejects that with `org.bluez.Error.InProgress`
+    ("Operation already in progress") — a message `isGattError133` doesn't recognize, so it never
+    triggers an adapter restart either, it just repeats every poll cycle. Fixed by calling
+    `device.disconnect()` (best-effort, timeout-wrapped) in `connectDevice()`'s catch branch when
+    `connect()` itself fails, telling BlueZ to cancel the stuck attempt before the next retry.
+  - **Live mode dying on `le-connection-abort-by-local`**: confirmed via the same logs — the one
+    real live-session attempt in the window never reached "Activate live measure period (live
+    session)" at all, meaning it died inside `connectDevice()` itself, with zero retry.
+    `subscribeLive` deliberately never retries the streaming loop once started (documented reason:
+    restarting a multi-minute session from scratch after it already streamed real samples would be
+    wrong) — but its one-shot initial connection had also never been given the standard
+    3-attempt/backoff/adapter-restart retry every other BLE operation in this file already gets,
+    unlike what the original comment implied. Confirmed with DestCom before changing this
+    (a previously deliberate design decision) — added `connectDeviceWithRetry()`, wrapping only the
+    initial `connectDevice()` call in both `subscribeLive` branches (Xiaomi and Parrot Pot) with the
+    same `withGattRetry` policy; the no-retry-once-streaming behavior is untouched.
+  - **Not yet re-verified against real hardware** (all 3 fixes reason from evidence in the actual
+    production logs, but the fixes themselves haven't been redeployed/observed yet) — next deploy
+    should confirm the "already in progress" flood stops and a fresh live-mode attempt survives a
+    transient connect failure.
 - **Next batch**: Batch 10 (extension to other devices — Flower Power, Flower Care).
 - **`noble-bridge` validated with real hardware** ✅ (2026-07-27) — a real Parrot Pot
   (`PARROT-A073`) connected and read end-to-end (scan → connect → activate → read
