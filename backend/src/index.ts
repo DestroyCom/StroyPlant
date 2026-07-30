@@ -1,3 +1,6 @@
+import './instrument.js'; // must stay first — see instrument.ts
+
+import * as Sentry from '@sentry/node';
 import { buildServer } from './api/server.js';
 import { ConnectionQueue } from './ble/connectionQueue.js';
 import { startNamedDevicePoller } from './ble/namedDevicePoller.js';
@@ -32,7 +35,10 @@ async function main() {
   log({ direction: 'INFO', label: `API listening on port ${env.port}`, result: 'OK' });
 }
 
-main().catch((error) => {
+main().catch(async (error) => {
   log({ direction: 'INFO', label: 'Fatal startup error', result: 'ERROR', detail: error instanceof Error ? error.message : String(error) });
+  Sentry.captureException(error);
+  // process.exit below would otherwise race the async network send above.
+  await Sentry.flush(2000);
   process.exit(1);
 });

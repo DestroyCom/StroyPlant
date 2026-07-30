@@ -26,4 +26,11 @@ export const env = {
   // interval: the scheduler only reads already-collected Reading rows, it never triggers its own
   // BLE read cycle (only a watering write, when it decides to act).
   schedulerTickIntervalMs: Number(process.env.SCHEDULER_TICK_INTERVAL_MS ?? 15 * 60_000),
+  // GlitchTip (self-hosted, Sentry-compatible) error monitoring. Optional — unset disables it
+  // entirely (see instrument.ts). Deliberately a runtime env var, not baked into the Docker image
+  // at build time: the frontend never gets this value in its bundle either, it fetches it live
+  // from GET /api/public-config (api/server.ts) — this repo's Docker image is published publicly
+  // (.github/workflows/docker-publish.yml), so this instance's DSN/domain must never end up
+  // embedded in that published artifact.
+  sentryDsn: process.env.SENTRY_DSN,
 };

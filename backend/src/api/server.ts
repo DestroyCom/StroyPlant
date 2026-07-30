@@ -1,8 +1,10 @@
 import websocketPlugin from '@fastify/websocket';
+import * as Sentry from '@sentry/node';
 import { fastifyTRPCPlugin } from '@trpc/server/adapters/fastify';
 import Fastify from 'fastify';
 import { auth } from '../auth/auth.js';
 import type { ConnectionQueue } from '../ble/connectionQueue.js';
+import { env } from '../env.js';
 import { registerMcpRoutes } from '../mcp/routes.js';
 import type { DeviceProvider } from '../providers/types.js';
 import { registerStaticFrontend } from './staticFrontend.js';
@@ -14,6 +16,17 @@ export async function buildServer(provider: DeviceProvider, connectionQueue: Con
   const app = Fastify({ logger: false });
   await app.register(websocketPlugin);
   registerRawBodyParser(app);
+
+  // Must be registered before routes (unlike Express) — captures unhandled route/handler errors
+  // into GlitchTip (see instrument.ts). A no-op if SENTRY_DSN isn't set.
+  Sentry.setupFastifyErrorHandler(app);
+
+  // Unauthenticated on purpose — read before login even happens, and it's not a secret (a
+  // GlitchTip DSN is meant to be public in a client bundle). Deliberately never baked into the
+  // frontend's build output though: this repo's Docker image is published publicly, and baking it
+  // in would embed this deployment's error-tracking domain in that public artifact permanently.
+  // Fetched live instead by frontend/src/instrument.ts on boot.
+  app.get('/api/public-config', async () => ({ sentryDsn: env.sentryDsn ?? null }));
 
   // BetterAuth handler (login/logout/session/...) — never behind requireAuth, it manages
   // its own access logic (official pattern, see docs/integrations/fastify).

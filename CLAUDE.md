@@ -677,6 +677,54 @@ production server:
     production logs, but the fixes themselves haven't been redeployed/observed yet) — next deploy
     should confirm the "already in progress" flood stops and a fresh live-mode attempt survives a
     transient connect failure.
+- **GlitchTip error monitoring** ✅ (2026-07-31) — self-hosted, Sentry-compatible (`@sentry/node` +
+  `@sentry/react`, both v10), wired into backend and frontend. Optional and off by default
+  (`SENTRY_DSN` unset → `Sentry.init()` never called, both sides). Key decisions:
+  - **DSN is a runtime-only value, never a build-time one** — DestCom's explicit requirement,
+    since this repo's Docker image is published publicly
+    (`.github/workflows/docker-publish.yml`); a Vite `VITE_SENTRY_DSN` env var would have baked
+    this deployment's GlitchTip domain into the public image's bundled JS forever. Instead: the
+    backend reads `SENTRY_DSN` from its container env (same pattern as every other backend env
+    var, `env.ts`) and serves it through a new unauthenticated `GET /api/public-config`
+    (`api/server.ts`) — deliberately unauthenticated since it must be reachable before login and a
+    DSN isn't a secret by Sentry's own convention, just not something to leave sitting in a public
+    artifact. `frontend/src/instrument.ts` fetches it and calls `Sentry.init()` before the app
+    renders (`main.tsx` awaits `initSentry()` ahead of `createRoot(...).render(...)`); on fetch
+    failure it silently no-ops rather than blocking boot.
+  - **Backend**: `backend/src/instrument.ts` must be the literal first import in `index.ts` (before
+    `fastify`/`node-ble`/etc. load) for the SDK's auto-instrumentation to patch them correctly —
+    no `--import`/preload flag used (would need separate dev/prod script and Docker `CMD` changes
+    for marginal benefit given this app's simple Fastify setup); a plain first-import is
+    sufficient since ES module imports evaluate in the order listed. `Sentry.setupFastifyErrorHandler(app)`
+    registered before any route (Fastify requires this ordering, unlike Express). The fatal
+    `main().catch(...)` startup handler (`index.ts`) now also calls `Sentry.captureException()` +
+    `await Sentry.flush(2000)` before `process.exit(1)` — previously only logged to console, never
+    reported anywhere off-box.
+  - **Frontend**: React 19 — both `Sentry.reactErrorHandler()` on all three `createRoot` options
+    and a top-level `Sentry.ErrorBoundary` (French fallback UI, "Recharger la page" button) are
+    wired, per the SDK's own React-19 guidance (belt and suspenders — the hooks catch what escapes
+    a boundary, the boundary gives a real fallback UI for a caught render error).
+  - **Deliberately NOT wired**: automatic forwarding of every existing `log({result: 'ERROR' |
+    'TIMEOUT'})` call (`logger.ts`, ~29 call sites across BLE retry/scan/watering/mqtt code) into
+    Sentry. Most of those are expected, self-healing, already-retried transient BLE conditions
+    (see the "Second production incident round" entry above) — piping all of them through would
+    flood GlitchTip with retry noise and defeat the point of crash alerting. What's wired instead
+    is the SDK's own baseline (uncaught exceptions, unhandled rejections, Fastify route errors,
+    React render crashes) plus the one true "the process is dying" case
+    (`main().catch()` above). Flagged as a deliberate scope call, not an oversight — DestCom can
+    ask for specific catch sites (e.g. `triggerWatering()`'s failure path) to also report to
+    Sentry if the baseline proves insufficient.
+  - **Tracing**: low `tracesSampleRate` (0.01 prod / 1.0 dev) on both sides, matching GlitchTip's
+    own setup doc — secondary to error monitoring, not the goal. No session replay, logging, or
+    profiling signals wired (not requested, and GlitchTip's feature support for those is limited
+    or nonexistent — session tracking specifically isn't supported at all, per GlitchTip's docs).
+  - **Verified locally** (mock provider, scratch DB copy): `/api/public-config` returns the real
+    DSN when `SENTRY_DSN` is set and `null` when unset; a built frontend bundle was grepped to
+    confirm no DSN string appears anywhere in it, only the runtime `fetch('/api/public-config')`
+    call; both packages typecheck and build cleanly. **Not verified**: an actual event landing in
+    GlitchTip (would require sending a real test error to DestCom's live instance, not done
+    without asking) — next step is DestCom setting a real `SENTRY_DSN` and triggering a manual
+    test error to confirm end-to-end delivery.
 - **Next batch**: Batch 10 (extension to other devices — Flower Power, Flower Care).
 - **`noble-bridge` validated with real hardware** ✅ (2026-07-27) — a real Parrot Pot
   (`PARROT-A073`) connected and read end-to-end (scan → connect → activate → read
@@ -719,6 +767,8 @@ backend/         API + business logic (Fastify, Prisma/SQLite, auth, BLE) — ru
                    (server.ts), Fastify routes for /mcp + OAuth discovery metadata (routes.ts)
   src/api/trpc/routers/history.ts  global History page's tRPC router (merged WateringEvent/SyncEvent
                    feed, see Project status)
+  src/instrument.ts  GlitchTip/Sentry init (optional, SENTRY_DSN-gated) — must stay the first
+                   import in index.ts, see Project status
   src/db/          Prisma client
   prisma/          schema.prisma + migrations
 frontend/        Vite + React SPA + TanStack Router/Query + Tailwind v4 + shadcn/ui (Batch 3)
@@ -728,6 +778,8 @@ frontend/        Vite + React SPA + TanStack Router/Query + Tailwind v4 + shadcn
                    HistoryChart, shadcn components in ui/
   src/lib/         auth-client (BetterAuth), trpc.ts (tRPC client + TanStack Query options proxy),
                    use-live-readings (readings.onReading subscription)
+  src/instrument.ts  GlitchTip/Sentry init, DSN fetched at runtime from GET /api/public-config
+                   (never build-time — see Project status), awaited in main.tsx before first render
 noble-bridge/    Native macOS process (outside Docker), exposes the Mac's Bluetooth over HTTP/WS —
                  used by the backend's `noble-bridge` provider for dev without a Linux dongle
 infra/lot0/      Docker+Bluetooth setup scripts/checklist on the production server
