@@ -7,7 +7,7 @@ algorithm actually implemented and the choices made during implementation.
 ## The problem to solve
 
 A sensor returns raw numbers (soil moisture at 22%, temperature at 24°C...). The Health
-Engine turns this into a useful judgment: *is this good for this plant, right now?*
+Engine turns this into a useful judgment: _is this good for this plant, right now?_
 
 Two difficulties make this non-trivial:
 
@@ -80,8 +80,8 @@ For each parameter relevant to the device type:
 - **Parrot Pot**: soil moisture, temperature, luminosity, soil conductivity/fertility index (`soilConductivityUsCm`).
 - **Xiaomi LYWSD03MMC**: temperature, humidity.
 
-*(Soil pH exists in `PlantProfile` but isn't measured by any current device. Reserved for
-possible future device types, Batch 9.)*
+_(Soil pH exists in `PlantProfile` but isn't measured by any current device. Reserved for
+possible future device types, Batch 9.)_
 
 ### 1. Short rolling average, not just the instantaneous value
 
@@ -125,7 +125,7 @@ If `recentMean` has dropped by more than one standard deviation compared to `old
 there isn't enough data on either side of the 3-day threshold — the typical case right after
 warm-up, when all the history is too recent.)
 
-*Why a standard deviation as the threshold and not a fixed percentage?* Because normal
+_Why a standard deviation as the threshold and not a fixed percentage?_ Because normal
 variability differs from one device to another (a pot with regular automatic watering has a more
 stable baseline than a pot watered manually and irregularly) — a threshold relative to the
 device's own past variability avoids triggering a trend alert on normal noise for THAT particular
@@ -185,10 +185,39 @@ range exactly as before, with no separate unit conversion needed (WatchFlower st
 0-1000-ish mapped value directly against its own CSV column). Label in the frontend:
 "Fertilité du sol" (`frontend/src/lib/format.ts`).
 
-**Not yet re-verified against real hardware** — the fix reasons from WatchFlower's real, shipped
-source code and the official spec's own "Certain" marking for `fa02`, but hasn't been observed
-producing a value on the actual production Parrot Pots yet (needs a redeploy + a poll cycle to
-confirm).
+**Cross-check against the official app's own decompiled source** (DestCom's own
+`parrot-pot-debug/analyse/decoded_jadx`, not just this project's summarized docs) — worth doing
+before trusting a third-party (WatchFlower) driver, since `CLAUDE.md` section 9's source hierarchy
+puts our own decompilation above WatchFlower for exactly this kind of question.
+`HawaiiUUID.java` confirms `UUID_LIVE_SOIL_EC` (`fa02`) is a named constant with a
+`CHARACTERISTIC_TYPES` entry, but it's absent from `CHARACTERISTICS_LIVE_SERVICE` (the set the
+official app actually subscribes to) for both the Flower Power and Parrot Pot device types — and a
+repo-wide grep found `SOIL_EC` referenced nowhere else in the app's logic. This isn't a _contrary_
+signal to WatchFlower (the official app doesn't touch it either way, positive or negative) — just
+confirmation the official app itself gives zero empirical evidence on whether real Pot hardware
+implements this characteristic. Also compared WatchFlower's Flower Power driver
+(`device_flowerpower.cpp`): same `fa02` UUID, but a **different** formula (`raw / 1.771`, plain
+linear) than the Parrot Pot driver's clamp+inverted-map — confirms WatchFlower calibrates
+per-device-model rather than reusing one formula, so using the Pot-specific file/formula (not
+Flower Power's) was the right choice.
+
+**Empirically confirmed on real hardware (2026-07-30)**: briefly stopped the production
+`stroyplant` container, ran a disposable one-off container from the same image (`docker run
+--entrypoint node`, same D-Bus/network mounts) against the real Parrot Pots.
+Result: `fa02`**does respond** — raw uint16 LE =`757`(alongside a successful sanity-check read
+of the already-known-good`fa09`/VMC characteristic, 30.96%, plausible). This settles the "does it
+even exist on real Pot firmware" question the official app's silence couldn't answer.
+
+**New open question, distinct from the existence question above**: `757` falls _below_
+WatchFlower's assumed calibration window (`[1500, 2036]`) — with the current clamp+map formula,
+this reading clamps to the very top of the 0-1000 output scale. This doesn't invalidate the fix
+(the characteristic genuinely exists and returns a real ADC value), but suggests WatchFlower's
+community-tuned constants (from their own tested units) may not transfer exactly to this specific
+hardware/soil. **Not corrected from this single data point** — one reading isn't enough to derive a
+new calibration curve, and guessing new constants from n=1 would repeat the same mistake this whole
+investigation was trying to avoid. Needs the same kind of longitudinal empirical protocol already
+used elsewhere in this project (e.g. readings before/after a known fertilizer event, across both
+real pots over time) before touching `ble/parrot/soilConductivity.ts`'s constants.
 
 ## API
 

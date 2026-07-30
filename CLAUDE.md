@@ -786,9 +786,13 @@ Dockerfile, docker-entrypoint.sh, docker-compose.prod.yml, docker-compose.test.y
   `0` at the end of the session. Watering trigger: write `[0x08,0x00]` to `39e1f906`,
   write-with-response. Also best-effort reads `39e1fa02` (soil conductivity/fertility index,
   `Reading.soilConductivityUsCm`, `ble/parrot/soilConductivity.ts`) — decoded the same way
-  WatchFlower's own real Parrot Pot driver does, see `docs/HEALTH_ENGINE.md` for the full history
-  (this replaced an earlier attempt at reading `39e1fa0d`/`0e`, confirmed unreadable on real
-  hardware). Wired into the Health Engine. **Event-driven advertisement
+  WatchFlower's own real Parrot Pot driver does, **confirmed responding on real hardware**
+  (2026-07-30, direct GATT read against `A0:14:3D:CD:A0:73`, raw uint16=757), see
+  `docs/HEALTH_ENGINE.md` for the full history (this replaced an earlier attempt at reading
+  `39e1fa0d`/`0e`, confirmed unreadable on real hardware). **Calibration constants (borrowed from
+  WatchFlower) not yet confirmed accurate for this specific hardware** — 757 falls outside their
+  assumed range, clamping to the top of the output scale; needs more real readings over time before
+  adjusting. Wired into the Health Engine. **Event-driven advertisement
   flags: Parrot company ID (`0x0043`) confirmed via real capture on both production-server Parrot Pots
   (2026-07-28), but the payload is 3 bytes (not 1 as assumed) and their exact meaning isn't
   determined** — an active correlation protocol is defined but not executed (requires physical
