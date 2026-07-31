@@ -5,8 +5,9 @@ import { createBluetooth } from 'node-ble';
 import { extractParrotManufacturerPayload } from '../../ble/parrot/advertisement.js';
 import { decodePlantDrStatusFlags, type PlantDrCalibration, type PlantDrWriteValues } from '../../ble/parrot/plantDr.js';
 import { CONNECT_TIMEOUT_MS, GATT_133_BACKOFF_MS, withGattRetry, withTimeout } from '../../ble/parrot/retry.js';
-import { decodeSoilConductivityRaw } from '../../ble/parrot/soilConductivity.js';
+import { readSoilConductivityRawValue } from '../../ble/parrot/soilConductivity.js';
 import {
+  CALIBRATION_SERVICE_UUID,
   PARROT_POT_NAME_PREFIX,
   PLANT_DR_SERVICE_UUID,
   SENSOR_SERVICE_UUID,
@@ -61,6 +62,38 @@ async function trackedCharacteristic(service: GattService, uuid: string, tracked
   tracked.push(characteristic);
   return characteristic;
 }
+
+// Generic best-effort characteristic read for the raw sensor debug log — every one of these must
+// never fail the rest of the poll (spec 7.1), so failures are caught and logged individually here
+// rather than repeating the same try/catch at every call site.
+async function readRawBestEffort<T>(
+  service: GattService,
+  uuid: string,
+  characteristics: GattCharacteristic[],
+  deviceId: string,
+  label: string,
+  decode: (buf: Buffer) => T,
+): Promise<T | undefined> {
+  try {
+    const characteristic = await trackedCharacteristic(service, uuid, characteristics);
+    const value = decode(await characteristic.readValue());
+    log({ direction: 'READ', label, deviceId, result: 'OK', detail: String(value) });
+    return value;
+  } catch (error) {
+    log({
+      direction: 'INFO',
+      label: `${label} indisponible`,
+      deviceId,
+      result: 'ERROR',
+      detail: error instanceof Error ? error.message : String(error),
+    });
+    return undefined;
+  }
+}
+
+const readU16 = (buf: Buffer) => buf.readUInt16LE(0);
+const readU8 = (buf: Buffer) => buf.readUInt8(0);
+const readU32 = (buf: Buffer) => buf.readUInt32LE(0);
 
 // Raw payload only — NO bit-level interpretation as long as the correlation protocol
 // (docs/STROYPLANT_SPEC.md section 7.1) hasn't produced a reproducible result (requires physical
@@ -415,21 +448,11 @@ export function createNodeBleProvider(): DeviceProvider {
               });
             }
 
-            // Soil conductivity (fertility index) — RAW characteristic (39e1fa02), confirmed
-            // readable on real hardware and decoded the same way WatchFlower's own Parrot Pot
-            // driver does (see ble/parrot/soilConductivity.ts). Still read best-effort: a failure
-            // here must never fail the main sensor reading (docs/STROYPLANT_SPEC.md section 8).
-            let soilConductivityUsCm: number | undefined;
+            let soilConductivityRaw: number | undefined;
             try {
               const conductivityChar = await trackedCharacteristic(sensorService, UUIDS.live.soilConductivityRaw, characteristics);
-              soilConductivityUsCm = decodeSoilConductivityRaw(await conductivityChar.readValue());
-              log({
-                direction: 'READ',
-                label: 'Soil conductivity read',
-                deviceId,
-                result: 'OK',
-                detail: `${soilConductivityUsCm} µS/cm`,
-              });
+              soilConductivityRaw = readSoilConductivityRawValue(await conductivityChar.readValue());
+              log({ direction: 'READ', label: 'Soil conductivity raw read', deviceId, result: 'OK', detail: `raw=${soilConductivityRaw}` });
             } catch (error) {
               log({
                 direction: 'INFO',
@@ -466,6 +489,294 @@ export function createNodeBleProvider(): DeviceProvider {
               });
             }
 
+            // Raw sensor debug log — every field here is best-effort, logged individually, never
+            // failing the rest of the poll (docs/superpowers/specs/2026-07-31-soil-conductivity-
+            // self-calibration-and-raw-sensor-log-design.md).
+            const lightRaw = await readRawBestEffort(sensorService, UUIDS.live.lightRaw, characteristics, deviceId, 'Light raw', readU16);
+            const soilTempRaw = await readRawBestEffort(
+              sensorService,
+              UUIDS.live.soilTempRaw,
+              characteristics,
+              deviceId,
+              'Soil temp raw',
+              readU16,
+            );
+            const airTempRaw = await readRawBestEffort(
+              sensorService,
+              UUIDS.live.airTempRaw,
+              characteristics,
+              deviceId,
+              'Air temp raw',
+              readU16,
+            );
+            const soilMoistureRaw = await readRawBestEffort(
+              sensorService,
+              UUIDS.live.soilMoistureRaw,
+              characteristics,
+              deviceId,
+              'Soil moisture raw',
+              readU16,
+            );
+            const eaRaw = await readRawBestEffort(sensorService, UUIDS.live.eaCal, characteristics, deviceId, 'Ea raw', (b) =>
+              b.readFloatLE(0),
+            );
+            const ecbRaw = await readRawBestEffort(sensorService, UUIDS.live.ecbCal, characteristics, deviceId, 'Ecb raw', (b) =>
+              b.readFloatLE(0),
+            );
+            const ecPorousRaw = await readRawBestEffort(
+              sensorService,
+              UUIDS.live.ecPorousCal,
+              characteristics,
+              deviceId,
+              'EcPorous raw',
+              (b) => b.readFloatLE(0),
+            );
+
+            let watVwcIrr: number | undefined;
+            let watVwcCmd: number | undefined;
+            let watNIrr: number | undefined;
+            let watPumpDutyCycle: number | undefined;
+            let watVwcIrrEco: number | undefined;
+            let watVwcCmdEco: number | undefined;
+            let watNIrrEco: number | undefined;
+            let watMode: number | undefined;
+            let watTimeSlotStart: number | undefined;
+            let watTimeSlotDurr: number | undefined;
+            let watVacationStart: number | undefined;
+            let watVacationEnd: number | undefined;
+            let algorithmStatus: number | undefined;
+            try {
+              const wateringServiceForRaw = await gatt.getPrimaryService(WATERING_SERVICE_UUID);
+              watVwcIrr = await readRawBestEffort(
+                wateringServiceForRaw,
+                UUIDS.watering.vwcIrr,
+                characteristics,
+                deviceId,
+                'wat_vwc_irr',
+                readU16,
+              );
+              watVwcCmd = await readRawBestEffort(
+                wateringServiceForRaw,
+                UUIDS.watering.vwcCmd,
+                characteristics,
+                deviceId,
+                'wat_vwc_cmd',
+                readU16,
+              );
+              watNIrr = await readRawBestEffort(
+                wateringServiceForRaw,
+                UUIDS.watering.nIrr,
+                characteristics,
+                deviceId,
+                'wat_n_irr',
+                readU16,
+              );
+              watPumpDutyCycle = await readRawBestEffort(
+                wateringServiceForRaw,
+                UUIDS.watering.pumpDutyCycle,
+                characteristics,
+                deviceId,
+                'wat_pump_duty_cycle',
+                readU8,
+              );
+              watVwcIrrEco = await readRawBestEffort(
+                wateringServiceForRaw,
+                UUIDS.watering.vwcIrrEco,
+                characteristics,
+                deviceId,
+                'wat_vwc_irr_eco',
+                readU16,
+              );
+              watVwcCmdEco = await readRawBestEffort(
+                wateringServiceForRaw,
+                UUIDS.watering.vwcCmdEco,
+                characteristics,
+                deviceId,
+                'wat_vwc_cmd_eco',
+                readU16,
+              );
+              watNIrrEco = await readRawBestEffort(
+                wateringServiceForRaw,
+                UUIDS.watering.nIrrEco,
+                characteristics,
+                deviceId,
+                'wat_n_irr_eco',
+                readU16,
+              );
+              watMode = await readRawBestEffort(wateringServiceForRaw, UUIDS.watering.mode, characteristics, deviceId, 'wat_mode', readU8);
+              watTimeSlotStart = await readRawBestEffort(
+                wateringServiceForRaw,
+                UUIDS.watering.timeSlotStart,
+                characteristics,
+                deviceId,
+                'wat_time_slot_start',
+                readU16,
+              );
+              watTimeSlotDurr = await readRawBestEffort(
+                wateringServiceForRaw,
+                UUIDS.watering.timeSlotDurr,
+                characteristics,
+                deviceId,
+                'wat_time_slot_durr',
+                readU16,
+              );
+              watVacationStart = await readRawBestEffort(
+                wateringServiceForRaw,
+                UUIDS.watering.vacationStart,
+                characteristics,
+                deviceId,
+                'wat_vacation_start',
+                readU32,
+              );
+              watVacationEnd = await readRawBestEffort(
+                wateringServiceForRaw,
+                UUIDS.watering.vacationEnd,
+                characteristics,
+                deviceId,
+                'wat_vacation_end',
+                readU32,
+              );
+              algorithmStatus = await readRawBestEffort(
+                wateringServiceForRaw,
+                UUIDS.watering.algorithmStatus,
+                characteristics,
+                deviceId,
+                'algorithm_status',
+                readU8,
+              );
+            } catch (error) {
+              log({
+                direction: 'INFO',
+                label: 'Watering config service indisponible',
+                deviceId,
+                result: 'ERROR',
+                detail: error instanceof Error ? error.message : String(error),
+              });
+            }
+
+            let plantDrStatusFlagsRaw: number | undefined;
+            let plantDrDryN: number | undefined;
+            let plantDrDryVwcRaw: number | undefined;
+            let plantDrWetN: number | undefined;
+            let plantDrWetVwcRaw: number | undefined;
+            let plantDrConfigId: number | undefined;
+            let plantDrNextWateringDate: number | undefined;
+            let plantDrNextEmptyTankDate: number | undefined;
+            let plantDrFullTankAutonomy: number | undefined;
+            try {
+              const plantDrServiceForRaw = await gatt.getPrimaryService(PLANT_DR_SERVICE_UUID);
+              plantDrStatusFlagsRaw = await readRawBestEffort(
+                plantDrServiceForRaw,
+                UUIDS.plantDr.statusFlags,
+                characteristics,
+                deviceId,
+                'plantDr status raw',
+                readU8,
+              );
+              plantDrDryN = await readRawBestEffort(
+                plantDrServiceForRaw,
+                UUIDS.plantDr.dryN,
+                characteristics,
+                deviceId,
+                'plantDr dryN',
+                readU16,
+              );
+              plantDrDryVwcRaw = await readRawBestEffort(
+                plantDrServiceForRaw,
+                UUIDS.plantDr.dryVwc,
+                characteristics,
+                deviceId,
+                'plantDr dryVwc',
+                readU16,
+              );
+              plantDrWetN = await readRawBestEffort(
+                plantDrServiceForRaw,
+                UUIDS.plantDr.wetN,
+                characteristics,
+                deviceId,
+                'plantDr wetN',
+                readU16,
+              );
+              plantDrWetVwcRaw = await readRawBestEffort(
+                plantDrServiceForRaw,
+                UUIDS.plantDr.wetVwc,
+                characteristics,
+                deviceId,
+                'plantDr wetVwc',
+                readU16,
+              );
+              plantDrConfigId = await readRawBestEffort(
+                plantDrServiceForRaw,
+                UUIDS.plantDr.configId,
+                characteristics,
+                deviceId,
+                'plantDr configId',
+                readU16,
+              );
+              plantDrNextWateringDate = await readRawBestEffort(
+                plantDrServiceForRaw,
+                UUIDS.plantDr.nextWateringDate,
+                characteristics,
+                deviceId,
+                'plantDr nextWateringDate',
+                readU32,
+              );
+              plantDrNextEmptyTankDate = await readRawBestEffort(
+                plantDrServiceForRaw,
+                UUIDS.plantDr.nextEmptyTankDate,
+                characteristics,
+                deviceId,
+                'plantDr nextEmptyTankDate',
+                readU32,
+              );
+              plantDrFullTankAutonomy = await readRawBestEffort(
+                plantDrServiceForRaw,
+                UUIDS.plantDr.fullTankAutonomy,
+                characteristics,
+                deviceId,
+                'plantDr fullTankAutonomy',
+                readU32,
+              );
+            } catch (error) {
+              log({
+                direction: 'INFO',
+                label: 'Plant Dr extra fields indisponibles',
+                deviceId,
+                result: 'ERROR',
+                detail: error instanceof Error ? error.message : String(error),
+              });
+            }
+
+            let calibrationDataBlobHex: string | undefined;
+            let colorRaw: number | undefined;
+            try {
+              const calibrationService = await gatt.getPrimaryService(CALIBRATION_SERVICE_UUID);
+              calibrationDataBlobHex = await readRawBestEffort(
+                calibrationService,
+                UUIDS.calibration.dataBlob,
+                characteristics,
+                deviceId,
+                'calibration blob',
+                (b) => b.toString('hex'),
+              );
+              colorRaw = await readRawBestEffort(
+                calibrationService,
+                UUIDS.calibration.color,
+                characteristics,
+                deviceId,
+                'color raw',
+                readU16,
+              );
+            } catch (error) {
+              log({
+                direction: 'INFO',
+                label: 'Calibration service indisponible',
+                deviceId,
+                result: 'ERROR',
+                detail: error instanceof Error ? error.message : String(error),
+              });
+            }
+
             const reading: SensorReading = {
               kind: 'PARROT_POT',
               data: {
@@ -473,11 +784,42 @@ export function createNodeBleProvider(): DeviceProvider {
                 temperatureC: temperature.readFloatLE(0),
                 luminosity: luminosity.readFloatLE(0),
                 waterTankLevelPercent,
-                soilConductivityUsCm,
                 isDrySoil: statusFlags?.isDrySoil,
                 isWetSoil: statusFlags?.isWetSoil,
                 isEmptyTank: statusFlags?.isEmptyTank,
                 isInAir: statusFlags?.isInAir,
+                lightRaw,
+                soilConductivityRaw,
+                soilTempRaw,
+                airTempRaw,
+                soilMoistureRaw,
+                eaRaw,
+                ecbRaw,
+                ecPorousRaw,
+                watVwcIrr,
+                watVwcCmd,
+                watNIrr,
+                watPumpDutyCycle,
+                watVwcIrrEco,
+                watVwcCmdEco,
+                watNIrrEco,
+                watMode,
+                watTimeSlotStart,
+                watTimeSlotDurr,
+                watVacationStart,
+                watVacationEnd,
+                algorithmStatus,
+                plantDrStatusFlagsRaw,
+                plantDrDryN,
+                plantDrDryVwcRaw,
+                plantDrWetN,
+                plantDrWetVwcRaw,
+                plantDrConfigId,
+                plantDrNextWateringDate,
+                plantDrNextEmptyTankDate,
+                plantDrFullTankAutonomy,
+                calibrationDataBlobHex,
+                colorRaw,
               },
             };
             return reading;
