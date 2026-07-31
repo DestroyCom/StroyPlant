@@ -144,7 +144,17 @@ export function computeDeviceHealth(
     if (speciesRange) {
       const [min, max] = speciesRange;
       status = recentValue < min ? 'too_low' : recentValue > max ? 'too_high' : 'ok';
-      if (status !== 'ok') hasOutOfRange = true;
+      // Deliberately excluded from hasOutOfRange (2026-07-31, final-review follow-up): the
+      // per-device conductivity calibration is a RELATIVE percentile within this device's own
+      // observed raw range (always stretched to fill 0-1000, by construction), compared here
+      // against ABSOLUTE µS/cm species thresholds — a scale mismatch already flagged as unresolved
+      // even in WatchFlower's own reference app (ble/parrot/soilConductivity.ts's header comment).
+      // A device with genuinely stable conductivity but ordinary sensor noise can clear the
+      // MIN_CALIBRATION_RAW_RANGE gate and then have that noise amplified across the full output
+      // scale, risking a persistent false 'warning' badge. Until the scale question is actually
+      // resolved empirically, this parameter's status/value/speciesRange are still computed and
+      // shown on the gauge (tone, hint) for information, but never flip the device's overall status.
+      if (status !== 'ok' && key !== 'soilConductivityUsCm') hasOutOfRange = true;
     }
 
     parameters[key] = { value: recentValue, status, speciesRange };
