@@ -66,7 +66,14 @@ export function createNobleBridgeProvider(): DeviceProvider {
       if (kind === 'XIAOMI_LYWSD03MMC') {
         return {
           kind: 'XIAOMI_LYWSD03MMC',
-          data: { temperatureC: body.temperatureC, humidityPercent: body.humidityPercent, batteryPercent: body.batteryPercent },
+          data: {
+            temperatureC: body.temperatureC,
+            humidityPercent: body.humidityPercent,
+            batteryPercent: body.batteryPercent,
+            tempRaw: body.tempRaw,
+            humidityRaw: body.humidityRaw,
+            voltageRawMv: body.voltageRawMv,
+          },
         };
       }
       return {

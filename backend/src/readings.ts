@@ -1,8 +1,9 @@
-import type { ReadingSource, SyncSource } from '@prisma/client';
+import type { RawSensorLog, ReadingSource, SyncSource } from '@prisma/client';
 import { emitReading } from './api/trpc/readingsEmitter.js';
 import { serializeReading } from './api/trpc/serialize.js';
 import { DEFAULT_POLL_INTERVAL_MS } from './ble/namedDevicePoller.js';
 import { prisma } from './db/client.js';
+import { getCalibration, resolveConductivityValue } from './health/soilConductivityCalibration.js';
 import { getMqttState } from './mqtt/manager.js';
 import { publishHealthState, publishReadingState } from './mqtt/publisher.js';
 import type { DeviceKind, SensorReading } from './providers/types.js';
@@ -88,7 +89,21 @@ export async function persistReading(deviceId: string, kind: DeviceKind, reading
     await tx.rawSensorLog.create({ data: { readingId: row.id, ...rawData } });
     return row;
   });
-  emitReading({ deviceId, kind, reading: serializeReading(created) });
+
+  // `created` is the bare Reading row just inserted — its soilConductivityUsCm is always null,
+  // providers no longer write it (Part 1 of the design spec). The real "fertility" value is
+  // derived at read time from RawSensorLog + the device's current calibration, exactly like
+  // devices.ts's withLastReading/history already do. Without resolving it here too, this WS push
+  // would broadcast a null value that silently overwrites an already-correctly-resolved cached
+  // reading on the frontend at every subsequent poll (final whole-branch review, finding 1).
+  const calibration = await getCalibration(deviceId);
+  const soilConductivityRaw = reading.kind === 'PARROT_POT' ? (reading.data.soilConductivityRaw ?? null) : null;
+  const resolvedSoilConductivityUsCm = resolveConductivityValue(
+    { ...created, rawSensorLog: { soilConductivityRaw } as RawSensorLog },
+    calibration,
+  );
+  const emittedReading = { ...created, soilConductivityUsCm: resolvedSoilConductivityUsCm };
+  emitReading({ deviceId, kind, reading: serializeReading(emittedReading) });
 
   const mqttState = getMqttState();
   if (mqttState) {

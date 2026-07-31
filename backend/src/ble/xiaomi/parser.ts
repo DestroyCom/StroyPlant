@@ -8,9 +8,12 @@ export function parseTempHumidityPayload(buf: Buffer): XiaomiReading {
   if (buf.length !== 5) {
     throw new Error(`Payload temp/humidity Xiaomi de taille inattendue: ${buf.length} octet(s) (5 attendus)`);
   }
-  const temperatureC = buf.readInt16LE(0) / 100;
-  const humidityPercent = buf.readUInt8(2);
-  const voltage = buf.readInt16LE(3) / 1000;
+  const tempRaw = buf.readInt16LE(0);
+  const humidityRaw = buf.readUInt8(2);
+  const voltageRawMv = buf.readInt16LE(3);
+  const temperatureC = tempRaw / 100;
+  const humidityPercent = humidityRaw;
+  const voltage = voltageRawMv / 1000;
   const batteryPercent = Math.min(100, Math.max(0, Math.round((voltage - 2.1) * 100)));
-  return { temperatureC, humidityPercent, batteryPercent };
+  return { temperatureC, humidityPercent, batteryPercent, tempRaw, humidityRaw, voltageRawMv };
 }

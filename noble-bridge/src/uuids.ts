@@ -9,9 +9,11 @@ export const UUIDS = {
     temperatureC: '39e1fa0a-84a8-11e2-afba-0002a5d5c51b',
     luminosity: '39e1fa0b-84a8-11e2-afba-0002a5d5c51b',
     // Soil conductivity (fertility index) — RAW characteristic, same one WatchFlower's own Parrot
-    // Pot driver reads (github.com/emericg/WatchFlower, device_parrotpot.cpp). See
-    // backend/src/ble/parrot/soilConductivity.ts for the decode formula (duplicated in parrot.ts
-    // below, same reasoning as this file's own header comment on duplication).
+    // Pot driver reads (github.com/emericg/WatchFlower, device_parrotpot.cpp). parrot.ts only reads
+    // and forwards this raw uint16 (no decode formula here anymore) — interpretation now happens at
+    // read time in the backend, per device calibration (backend/src/health/
+    // soilConductivityCalibration.ts, docs/superpowers/specs/2026-07-31-soil-conductivity-self-
+    // calibration-and-raw-sensor-log-design.md).
     soilConductivityRaw: '39e1fa02-84a8-11e2-afba-0002a5d5c51b',
     lightRaw: '39e1fa01-84a8-11e2-afba-0002a5d5c51b',
     soilTempRaw: '39e1fa03-84a8-11e2-afba-0002a5d5c51b',

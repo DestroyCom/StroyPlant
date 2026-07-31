@@ -11,7 +11,15 @@ export type SerializedWateringEvent = Omit<WateringEvent, 'timestamp'> & { times
 export function serializeReading(reading: Reading): SerializedReading;
 export function serializeReading(reading: Reading | null): SerializedReading | null;
 export function serializeReading(reading: Reading | null): SerializedReading | null {
-  return reading && { ...reading, timestamp: reading.timestamp.toISOString() };
+  if (!reading) return null;
+  // Callers (devices.ts's withLastReading/history) often pass a reading fetched with
+  // `include: { rawSensorLog: true }` attached — a plain object spread does NOT strip excess
+  // properties at runtime even though SerializedReading's declared type doesn't include
+  // rawSensorLog, so without this explicit destructure the entire ~40-column debug/audit row would
+  // leak into every JSON response (final whole-branch review, finding 2). RawSensorLog is
+  // debug/audit only (design spec), never UI-facing.
+  const { rawSensorLog: _rawSensorLog, ...rest } = reading as Reading & { rawSensorLog?: unknown };
+  return { ...rest, timestamp: reading.timestamp.toISOString() };
 }
 
 export function serializeWateringEvent(event: WateringEvent): SerializedWateringEvent {
