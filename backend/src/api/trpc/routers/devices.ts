@@ -2,6 +2,7 @@ import type { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { z } from 'zod';
 import { prisma } from '../../../db/client.js';
+import { getCalibration, resolveConductivityValue } from '../../../health/soilConductivityCalibration.js';
 import { log } from '../../../logger.js';
 import { getMqttState } from '../../../mqtt/manager.js';
 import { publishDiscovery } from '../../../mqtt/publisher.js';
@@ -18,7 +19,12 @@ async function withLastReading(device: DeviceWithPlantProfile) {
   const lastReading = await prisma.reading.findFirst({
     where: { deviceId: device.id },
     orderBy: { timestamp: 'desc' },
+    include: { rawSensorLog: true },
   });
+  if (lastReading) {
+    const calibration = await getCalibration(device.id);
+    lastReading.soilConductivityUsCm = resolveConductivityValue(lastReading, calibration);
+  }
   return { ...device, lastSeenAt: serializeDate(device.lastSeenAt), lastReading: serializeReading(lastReading) };
 }
 
@@ -129,7 +135,12 @@ export const devicesRouter = router({
     const readings = await prisma.reading.findMany({
       where: { deviceId: device.id, timestamp: { gte: since }, source: 'POLL' },
       orderBy: { timestamp: 'asc' },
+      include: { rawSensorLog: true },
     });
+    const calibration = await getCalibration(device.id);
+    for (const reading of readings) {
+      reading.soilConductivityUsCm = resolveConductivityValue(reading, calibration);
+    }
     return readings.map((reading) => serializeReading(reading));
   }),
 
