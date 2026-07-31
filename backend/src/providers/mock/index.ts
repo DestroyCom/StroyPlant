@@ -17,7 +17,7 @@ interface MockPotState {
   temperatureC: number;
   luminosity: number;
   waterTankLevelPercent: number;
-  soilConductivityUsCm: number;
+  soilConductivityRaw: number;
   declinePerMinute: number;
   lastUpdate: number;
   plantDr: PlantDrCalibration;
@@ -52,10 +52,12 @@ function createInitialPots(): MockPotState[] {
       // to be set to (leftover from before that unit was confirmed, looked like lux instead).
       luminosity: 5,
       waterTankLevelPercent: 90,
-      // Synthetic value (no real data collected yet against this new field) — magnitude aligned
-      // with the typical "Soil conductivity" CSV range (hundreds-thousands µS/cm), to be corrected
-      // if real values observed on a real device turn out different.
-      soilConductivityUsCm: 900,
+      // Raw fa02-equivalent ADC value (not a "fertility" number — that's derived at read time from
+      // accumulated calibration, docs/superpowers/specs/2026-07-31-soil-conductivity-self-
+      // calibration-and-raw-sensor-log-design.md). Chosen mid-range so applyPotDecay's noise below
+      // naturally produces enough spread over time for a scratch-DB test to observe the calibration
+      // gate flip to `calibrated`.
+      soilConductivityRaw: 1700,
       declinePerMinute: 0.05,
       lastUpdate: now,
       plantDr: defaultPlantDrCalibration(),
@@ -67,7 +69,7 @@ function createInitialPots(): MockPotState[] {
       temperatureC: 22,
       luminosity: 3,
       waterTankLevelPercent: 0, // empty reservoir from the start — any triggerAction('water') must fail
-      soilConductivityUsCm: 850,
+      soilConductivityRaw: 1600,
       declinePerMinute: 1.2, // drops noticeably faster than MOCK-POT-NORMAL
       lastUpdate: now,
       plantDr: defaultPlantDrCalibration(),
@@ -87,7 +89,10 @@ function applyPotDecay(state: MockPotState): void {
   state.soilMoisturePercent = Math.max(0, state.soilMoisturePercent - state.declinePerMinute * elapsedMinutes);
   state.temperatureC += (Math.random() - 0.5) * 0.3;
   state.luminosity = Math.max(0, state.luminosity + (Math.random() - 0.5) * 0.3);
-  state.soilConductivityUsCm = Math.max(0, state.soilConductivityUsCm + (Math.random() - 0.5) * 15);
+  // Wider per-tick variance than the old µS/cm-scale noise (±15) — raw ADC counts are a bigger
+  // number range (~0-2047), and enough spread here lets a scratch-DB test with backdated readings
+  // observe MIN_CALIBRATION_RAW_RANGE being satisfied within a realistic simulated timespan.
+  state.soilConductivityRaw = Math.max(0, Math.min(2047, state.soilConductivityRaw + (Math.random() - 0.5) * 60));
   state.lastUpdate = Date.now();
 }
 
@@ -156,7 +161,14 @@ export function createMockProvider(): DeviceProvider {
         });
         return {
           kind: 'XIAOMI_LYWSD03MMC',
-          data: { temperatureC: sensor.temperatureC, humidityPercent: sensor.humidityPercent, batteryPercent: sensor.batteryPercent },
+          data: {
+            temperatureC: sensor.temperatureC,
+            humidityPercent: sensor.humidityPercent,
+            batteryPercent: sensor.batteryPercent,
+            tempRaw: Math.round(sensor.temperatureC * 100),
+            humidityRaw: Math.round(sensor.humidityPercent),
+            voltageRawMv: 3000,
+          },
         };
       }
 
@@ -178,7 +190,31 @@ export function createMockProvider(): DeviceProvider {
           temperatureC: pot.temperatureC,
           luminosity: pot.luminosity,
           waterTankLevelPercent: pot.waterTankLevelPercent,
-          soilConductivityUsCm: pot.soilConductivityUsCm,
+          soilConductivityRaw: Math.round(pot.soilConductivityRaw),
+          // Simulated values for the other raw fields — plausible but not meant to be realistic,
+          // this provider exists for dev/testing, not hardware validation (docs/STROYPLANT_SPEC.md
+          // section 6).
+          lightRaw: 0,
+          soilTempRaw: 780,
+          airTempRaw: 787,
+          soilMoistureRaw: Math.round(pot.soilMoisturePercent * 5),
+          watVwcIrr: 175,
+          watVwcCmd: 225,
+          watNIrr: 0,
+          watPumpDutyCycle: 70,
+          watVwcIrrEco: 150,
+          watVwcCmdEco: 200,
+          watNIrrEco: 0,
+          watMode: 1,
+          watTimeSlotStart: 1200,
+          watTimeSlotDurr: 360,
+          algorithmStatus: 1,
+          plantDrStatusFlagsRaw: (statusFlags.isDrySoil ? 1 : 0) | (statusFlags.isWetSoil ? 2 : 0) | (statusFlags.isEmptyTank ? 4 : 0),
+          plantDrDryN: pot.plantDr.dryN,
+          plantDrDryVwcRaw: Math.round(pot.plantDr.dryVwcPercent * 10),
+          plantDrWetN: pot.plantDr.wetN,
+          plantDrWetVwcRaw: Math.round(pot.plantDr.wetVwcPercent * 10),
+          plantDrConfigId: pot.plantDr.configId,
           isDrySoil: statusFlags.isDrySoil,
           isWetSoil: statusFlags.isWetSoil,
           isEmptyTank: statusFlags.isEmptyTank,
