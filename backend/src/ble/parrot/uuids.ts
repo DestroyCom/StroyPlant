@@ -11,6 +11,11 @@ export const SENSOR_SERVICE_UUID = '39e1fa00-84a8-11e2-afba-0002a5d5c51b';
 // Plant Dr service (Batch 6, docs/STROYPLANT_SPEC.md section 7.11) — device-side dry/wet
 // calibration algorithm, complementary safety net alongside the backend scheduler (Batch 5).
 export const PLANT_DR_SERVICE_UUID = '39e1fd80-84a8-11e2-afba-0002a5d5c51b';
+// Calibration service (Flower Power base, shared by the Parrot Pot) — only `fe01` (raw factory
+// calibration blob, no known decode) and `fe04` (color) are read; confirmed dead-end for our
+// purposes (docs/superpowers/specs/2026-07-31-soil-conductivity-self-calibration-and-raw-sensor-
+// log-design.md), logged raw for the debug table only.
+export const CALIBRATION_SERVICE_UUID = '39e1fe00-84a8-11e2-afba-0002a5d5c51b';
 
 export const UUIDS = {
   live: {
@@ -31,10 +36,33 @@ export const UUIDS = {
     // driver reads (github.com/emericg/WatchFlower, device_parrotpot.cpp) — see
     // ble/parrot/soilConductivity.ts for the decode formula.
     soilConductivityRaw: '39e1fa02-84a8-11e2-afba-0002a5d5c51b',
+    // Raw (uncalibrated) characteristics — vestigial per the official app (never subscribed to),
+    // logged for the raw sensor debug table only (docs/superpowers/specs/2026-07-31-...).
+    lightRaw: '39e1fa01-84a8-11e2-afba-0002a5d5c51b',
+    soilTempRaw: '39e1fa03-84a8-11e2-afba-0002a5d5c51b',
+    airTempRaw: '39e1fa04-84a8-11e2-afba-0002a5d5c51b',
+    soilMoistureRaw: '39e1fa05-84a8-11e2-afba-0002a5d5c51b',
+    // "Calibrated" Ea/Ecb/EcPorous — confirmed "Characteristic not available" on both real Parrot
+    // Pots (docs/HEALTH_ENGINE.md). Still attempted every poll and logged raw (null expected).
+    eaCal: '39e1fa0c-84a8-11e2-afba-0002a5d5c51b',
+    ecbCal: '39e1fa0d-84a8-11e2-afba-0002a5d5c51b',
+    ecPorousCal: '39e1fa0e-84a8-11e2-afba-0002a5d5c51b',
   },
   watering: {
     trigger: '39e1f906-84a8-11e2-afba-0002a5d5c51b', // write [0x08, 0x00] (uint16 LE), write-with-response
     waterTankLevel: '39e1f907-84a8-11e2-afba-0002a5d5c51b', // notify, uint8 %
+    vwcIrr: '39e1f903-84a8-11e2-afba-0002a5d5c51b',
+    vwcCmd: '39e1f904-84a8-11e2-afba-0002a5d5c51b',
+    nIrr: '39e1f905-84a8-11e2-afba-0002a5d5c51b',
+    pumpDutyCycle: '39e1f908-84a8-11e2-afba-0002a5d5c51b',
+    vwcIrrEco: '39e1f90a-84a8-11e2-afba-0002a5d5c51b',
+    vwcCmdEco: '39e1f90b-84a8-11e2-afba-0002a5d5c51b',
+    nIrrEco: '39e1f90c-84a8-11e2-afba-0002a5d5c51b',
+    mode: '39e1f90d-84a8-11e2-afba-0002a5d5c51b',
+    timeSlotStart: '39e1f90e-84a8-11e2-afba-0002a5d5c51b',
+    timeSlotDurr: '39e1f90f-84a8-11e2-afba-0002a5d5c51b',
+    vacationStart: '39e1f910-84a8-11e2-afba-0002a5d5c51b',
+    vacationEnd: '39e1f911-84a8-11e2-afba-0002a5d5c51b',
     // Write uint8, client-side bounded 0-6. Only `0` (reset after maintenance) is confirmed by the
     // decompiled code — values 1-6 are accepted but their effect on the device is NOT confirmed
     // (docs/PARROT_BLE_DEEP_DIVE.md section 2). Do not assume any value "enables" the algorithm
@@ -52,6 +80,13 @@ export const UUIDS = {
     wetVwc: '39e1fd85-84a8-11e2-afba-0002a5d5c51b',
     // Notify, single byte, 4 significant bits — see decodePlantDrStatusFlags().
     statusFlags: '39e1fd86-84a8-11e2-afba-0002a5d5c51b',
+    nextWateringDate: '39e1fd87-84a8-11e2-afba-0002a5d5c51b',
+    nextEmptyTankDate: '39e1fd88-84a8-11e2-afba-0002a5d5c51b',
+    fullTankAutonomy: '39e1fd89-84a8-11e2-afba-0002a5d5c51b',
+  },
+  calibration: {
+    dataBlob: '39e1fe01-84a8-11e2-afba-0002a5d5c51b',
+    color: '39e1fe04-84a8-11e2-afba-0002a5d5c51b',
   },
 } as const;
 
