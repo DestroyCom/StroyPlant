@@ -1,11 +1,13 @@
-import type { Device, PlantProfile, Reading } from '@prisma/client';
+import type { Device, PlantProfile } from '@prisma/client';
+import type { ConductivityCalibration, ReadingWithRawLog } from './soilConductivityCalibration.js';
+import { resolveConductivityValue } from './soilConductivityCalibration.js';
 
 export type ParameterKey = 'soilMoisturePercent' | 'temperatureC' | 'humidityPercent' | 'luminosity' | 'soilConductivityUsCm';
 
-export type ParameterStatus = 'ok' | 'too_low' | 'too_high' | 'n/a';
+export type ParameterStatus = 'ok' | 'too_low' | 'too_high' | 'n/a' | 'calibrating';
 
 export interface ParameterHealth {
-  value: number;
+  value: number | null;
   status: ParameterStatus;
   speciesRange: [number, number] | null;
 }
@@ -83,7 +85,12 @@ function stdDev(values: number[], mean: number): number {
   return Math.sqrt(variance);
 }
 
-function valuesFor(key: ParameterKey, readings: Reading[]): number[] {
+function valuesFor(key: ParameterKey, readings: ReadingWithRawLog[], conductivityCalibration: ConductivityCalibration | null): number[] {
+  if (key === 'soilConductivityUsCm') {
+    return readings
+      .map((reading) => resolveConductivityValue(reading, conductivityCalibration))
+      .filter((value): value is number => value != null);
+  }
   return readings.map((reading) => reading[key]).filter((value): value is number => value != null);
 }
 
@@ -95,9 +102,10 @@ function valuesFor(key: ParameterKey, readings: Reading[]): number[] {
  */
 export function computeDeviceHealth(
   device: Pick<Device, 'kind'>,
-  readings: Reading[],
+  readings: ReadingWithRawLog[],
   profile: PlantProfile | null,
   warmupMinDays: number,
+  conductivityCalibration: ConductivityCalibration | null,
 ): DeviceHealth {
   if (!profile) {
     return { status: 'no_profile', parameters: {}, trend: 'unknown' };
@@ -120,7 +128,14 @@ export function computeDeviceHealth(
   let hasOutOfRange = false;
 
   for (const key of PARAMETERS_BY_KIND[device.kind]) {
-    const rawValue = average(valuesFor(key, recentSource));
+    // Scoped to this one parameter (design spec, Part 4) — an under-calibrated conductivity sensor
+    // never pushes the WHOLE device into 'warming_up', that status is a coarser, separate concept.
+    if (key === 'soilConductivityUsCm' && conductivityCalibration?.calibrated !== true) {
+      parameters[key] = { value: null, status: 'calibrating', speciesRange: null };
+      continue;
+    }
+
+    const rawValue = average(valuesFor(key, recentSource, conductivityCalibration));
     if (rawValue == null) continue;
     const recentValue = rawValue * (UNIT_CONVERSION[key] ?? 1);
 
@@ -142,7 +157,7 @@ export function computeDeviceHealth(
   };
 }
 
-function computeTrend(sorted: Reading[], kind: Device['kind']): HealthTrend {
+function computeTrend(sorted: ReadingWithRawLog[], kind: Device['kind']): HealthTrend {
   const key = TREND_PARAMETER_BY_KIND[kind];
   const now = Date.now();
   const recentCutoff = now - TREND_RECENT_DAYS * 24 * 3600_000;
@@ -150,10 +165,12 @@ function computeTrend(sorted: Reading[], kind: Device['kind']): HealthTrend {
   const recentValues = valuesFor(
     key,
     sorted.filter((reading) => reading.timestamp.getTime() >= recentCutoff),
+    null,
   );
   const olderValues = valuesFor(
     key,
     sorted.filter((reading) => reading.timestamp.getTime() < recentCutoff),
+    null,
   );
 
   const recentMean = average(recentValues);
