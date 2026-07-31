@@ -161,6 +161,69 @@ model Reading {
   source ReadingSource @default(POLL)
 
   @@index([deviceId, timestamp])
+  rawSensorLog RawSensorLog?
+}
+
+// Comprehensive raw-sensor debug log (docs/superpowers/specs/2026-07-31-soil-conductivity-self-
+// calibration-and-raw-sensor-log-design.md) — one row per successful Reading, every known Parrot
+// Pot/Xiaomi characteristic logged verbatim, decoded or not, used elsewhere or not. Every field
+// nullable: absent/unreadable on a given poll (e.g. eaRaw/ecbRaw/ecPorousRaw, confirmed unavailable
+// on real Pot firmware) is recorded as null, not omitted — a null here is informative ("still
+// absent as of this poll"), not ambiguous with "we didn't try." No UI-facing exposure, no retention
+// policy yet (same open-ended stance as SyncEvent).
+model RawSensorLog {
+  id        Int     @id @default(autoincrement())
+  readingId Int     @unique
+  reading   Reading @relation(fields: [readingId], references: [id])
+
+  // Parrot Pot — Live service (39e1fa00)
+  lightRaw               Int?
+  soilConductivityRaw    Int?
+  soilTempRaw            Int?
+  airTempRaw             Int?
+  soilMoistureRaw        Int?
+  soilMoistureCalibrated Float? // fa09, duplicated from Reading.soilMoisturePercent
+  airTempCalibrated      Float? // fa0a, duplicated from Reading.temperatureC
+  luminosityCalibrated   Float? // fa0b, duplicated from Reading.luminosity
+  eaRaw                  Float? // fa0c — expected null, characteristic confirmed absent on real hardware
+  ecbRaw                 Float? // fa0d — expected null, same
+  ecPorousRaw            Float? // fa0e — expected null, same
+
+  // Parrot Pot — Watering service (39e1f900)
+  waterTankLevelPercent Int?    // f907, duplicated from Reading.waterTankLevelPercent
+  watVwcIrr             Int?
+  watVwcCmd             Int?
+  watNIrr               Int?
+  watPumpDutyCycle      Int?
+  watVwcIrrEco          Int?
+  watVwcCmdEco          Int?
+  watNIrrEco            Int?
+  watMode               Int?
+  watTimeSlotStart      Int?
+  watTimeSlotDurr       Int?
+  watVacationStart      Int?
+  watVacationEnd        Int?
+  algorithmStatus       Int?
+
+  // Parrot Pot — Plant Dr service (39e1fd80)
+  plantDrStatusFlagsRaw    Int? // fd86, raw byte (in addition to the decoded booleans on Reading)
+  plantDrDryN              Int? // fd82
+  plantDrDryVwcRaw         Int? // fd83
+  plantDrWetN              Int? // fd84
+  plantDrWetVwcRaw         Int? // fd85
+  plantDrConfigId          Int? // fd81
+  plantDrNextWateringDate  Int? // fd87
+  plantDrNextEmptyTankDate Int? // fd88
+  plantDrFullTankAutonomy  Int? // fd89
+
+  // Parrot Pot — Calibration service (39e1fe00)
+  calibrationDataBlobHex String? // fe01, 28 raw bytes as hex — no known decode
+  colorRaw               Int?    // fe04
+
+  // Xiaomi LYWSD03MMC
+  tempRaw      Int?
+  humidityRaw  Int?
+  voltageRawMv Int?
 }
 
 enum TriggerSource {
