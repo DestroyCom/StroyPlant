@@ -44,12 +44,22 @@ DestCom's explicit request), surfaced 5 findings:
 This spec addresses all 5. Full audit detail (real query results, web research on DLI ranges) lives
 in the conversation history that produced it, not duplicated here.
 
+A second, independent review (external, not by DestCom or this assistant) of the wider BLE/health
+codebase was cross-checked against the real code afterward. Most of it restated already-known,
+already-correct behavior or was itself mistaken (e.g. a claimed "duplicate poll" bug in
+`namedDevicePoller.ts` that doesn't exist — `lastPolled` is set *before* `connectionQueue.run()`
+specifically to prevent that class of duplication, not cause it). One genuine, minor finding
+survived verification and is folded into this spec as Part G below: `lastPolled`/
+`consecutiveFailures` (`namedDevicePoller.ts:27-31`) are never pruned when a device is deleted from
+the database — an unbounded (if practically negligible at this project's scale) memory leak.
+
 ## Scope
 
-In scope: the 6 components below (A–F), all confined to `backend/src/health/`,
-`backend/src/ble/parrot/soilConductivity.ts`, and their 2 frontend consumers
-(`frontend/src/lib/format.ts`, `frontend/src/routes/_authenticated/devices.$deviceId.tsx`) plus
-`frontend/src/lib/types.ts`'s mirrored type definitions.
+In scope: the 7 components below (A–G), confined to `backend/src/health/`,
+`backend/src/ble/parrot/soilConductivity.ts`, `backend/src/ble/namedDevicePoller.ts` (Part G only),
+and 2 frontend consumers (`frontend/src/lib/format.ts`,
+`frontend/src/routes/_authenticated/devices.$deviceId.tsx`) plus `frontend/src/lib/types.ts`'s
+mirrored type definitions.
 
 Out of scope (explicitly deferred, confirmed with DestCom):
 - Any change to when auto-watering triggers (`health/scheduler.ts`'s `soilMoisturePercent ===
@@ -182,6 +192,17 @@ no longer needs to know or re-implement which parameters are excluded from the b
 consumes the backend's own authoritative list, which stays correct automatically if a future
 parameter is added to either PARROT_POT/XIAOMI or to the excluded set.
 
+## Part G — Prune stale poller Map entries on device deletion
+
+Unrelated to the Health Engine itself, but folded into this same implementation pass (DestCom's
+explicit request after cross-checking an external review): `namedDevicePoller.ts`'s `lastPolled` and
+`consecutiveFailures` module-level `Map`s (`:27-31`) are keyed by `deviceId` and never cleaned up
+when a `Device` row is deleted — entries accumulate forever for devices that no longer exist.
+Negligible at this project's real scale (a handful of devices, ever), but a one-line-cost fix: at the
+start of each tick in `startNamedDevicePoller`'s `setInterval` callback (`:64-88`), after fetching
+`devices`, build a `Set` of current device ids and delete any `lastPolled`/`consecutiveFailures` map
+key not present in it, before the existing per-device polling loop.
+
 ## Frontend type mirroring
 
 `frontend/src/lib/types.ts`'s `ParameterHealth`/`DeviceHealth` interfaces are hand-mirrored copies
@@ -191,14 +212,15 @@ tRPC section). Both gain the same 2 new fields as the backend (`personalDeviatio
 
 ## Migration/rollout
 
-- No new Prisma migration — all 6 parts are pure computation changes over existing tables/columns
+- No new Prisma migration — all 7 parts are pure computation changes over existing tables/columns
   (`RawSensorLog`, `Reading`, `PlantProfile`, `Device.environment`), no new persisted fields.
 - No config/env changes.
-- `mock` provider: no change needed for parts B/C/D/E/F (they're pure `scoring.ts`/frontend logic,
-  not BLE-provider-specific) — verify against the mock provider's existing simulated data covers
-  enough variation for personal-baseline (`unusual_low`/`unusual_high`/`normal`, all 3 reachable) and
-  indoor-luminosity (`too_low` reachable for a device with `environment = 'INDOOR'`) to be testable
-  without needing new mock-provider code.
+- `mock` provider: no change needed for parts B/C/D/E/F/G (they're pure `scoring.ts`/frontend/poller
+  logic, not BLE-provider-specific) — verify against the mock provider's existing simulated data
+  covers enough variation for personal-baseline (`unusual_low`/`unusual_high`/`normal`, all 3
+  reachable) and indoor-luminosity (`too_low` reachable for a device with `environment = 'INDOOR'`)
+  to be testable without needing new mock-provider code. Part G is testable directly (delete a mock
+  device row, confirm its Map entries are pruned on the next tick).
 - Existing devices with `environment = null` (the current state of every real device — location/
   environment is optional, set via the device detail page's edit dialog) are entirely unaffected by
   Part B until DestCom explicitly sets `INDOOR` on a device.
