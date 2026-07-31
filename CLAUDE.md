@@ -725,6 +725,76 @@ production server:
     GlitchTip (would require sending a real test error to DestCom's live instance, not done
     without asking) — next step is DestCom setting a real `SENTRY_DSN` and triggering a manual
     test error to confirm end-to-end delivery.
+- **Soil conductivity self-calibration + full raw sensor log** ✅ (2026-07-31) — replaces the
+  broken WatchFlower-borrowed conductivity formula (see `docs/HEALTH_ENGINE.md`'s "Soil
+  conductivity / fertility index — history" section for the full backstory) with a per-device,
+  self-improving calibration, plus a comprehensive raw-sensor debug log. Full design rationale in
+  `docs/superpowers/specs/2026-07-31-soil-conductivity-self-calibration-and-raw-sensor-log-design.md`.
+  Key decisions:
+  - **Confirmed broken on real hardware first, not just suspected**: both real Parrot Pots read
+    raw `fa02` values (775, 983) below WatchFlower's hardcoded `RAW_MIN=1500`, permanently clamping
+    "Fertilité du sol" to 1000/1000 (max) on both — a live wrong-data bug, not cosmetic. Surveyed
+    16 community Parrot/Flower-Power repos plus the 3 official `Parrot-Developers` org repos before
+    concluding no validated fix formula exists anywhere to borrow — this project has to derive its
+    own from real accumulated data instead of picking new constants from a single reading.
+  - **Write-time → read-time interpretation**: providers (`mock`/`node-ble`/`noble-bridge`) now
+    persist only the raw `fa02` uint16 (via the new `RawSensorLog` table, below) — they no longer
+    write `Reading.soilConductivityUsCm` at all going forward (the column stays in place,
+    historical rows keep their old frozen values, no backfill/migration). The "fertility" value is
+    now derived on demand — Health Engine scoring, the frontend gauge, and `devices.ts`'s `history`
+    procedure (joining each `Reading` to its `RawSensorLog.soilConductivityRaw`) all call
+    `resolveConductivityValue()`/`decodeSoilConductivityRaw()` with the device's *current*
+    calibration bounds, so a device's whole history benefits every time its calibration improves —
+    it's never frozen against stale bounds again.
+  - **Calibration confidence gate** (`backend/src/health/soilConductivityCalibration.ts`,
+    `getCalibration()`): per-device all-time min/max of its own raw `fa02` readings (scoped to
+    `Reading.source = 'POLL'`, same convention as every other Health Engine baseline calculation, so
+    a live session can never skew it), **never expiring** — DestCom's explicit choice over a
+    rolling window, since an old extreme (e.g. a fertilizer event months ago) is still real evidence
+    of the widest range this specific device has shown, not something to discard as "stale." Gated
+    by two plain exported constants (deliberately not a `Settings` DB row — YAGNI until there's a
+    reason to tune this live): `MIN_CALIBRATION_DAYS = 14` and `MIN_CALIBRATION_RAW_RANGE = 50` (on
+    the ~0-2047 raw ADC scale) — both must be satisfied before `calibrated` flips true, since
+    plenty of readings piled up in a short window still isn't proof of the device's real range.
+    Until then, `computeDeviceHealth()` reports a new `ParameterStatus` value, `'calibrating'`
+    (`health/scoring.ts`), scoped to just this one parameter — it does not push the whole device
+    into the coarser `warming_up` status, and is treated like `'n/a'` for `hasOutOfRange` purposes
+    (never counted as out-of-range). Frontend gauge shows "Calibration en cours" in that state
+    (same slot as the existing n/a handling, distinct label). **Consequence of no backfill**: every
+    real device's conductivity calibration restarts at "calibrating" for at least 14 days
+    post-deploy, even `PARROT-A073`, which already had history under the old formula — `RawSensorLog`
+    genuinely didn't exist before this and has no historical raw data to draw on.
+  - **`RawSensorLog`** (new Prisma model, migration `20260731095003_add_raw_sensor_log`, 1:1 via a
+    unique `readingId` FK) — a debug/audit trail, not a UI-facing feature, capturing literally every
+    known Parrot Pot/Xiaomi raw characteristic on every successful poll, decoded or not, used or
+    not: the full Live service (`fa01`-`fa0e`, including the confirmed-dead `fa0c`/`fa0d`/`fa0e`,
+    recorded as `null` rather than omitted), the Watering config service (`f903`-`f912`, previously
+    untouched during normal polling), the remaining Plant Dr fields (`fd81`-`fd89`, previously only
+    read on-demand via `plantDr.getCalibration`, now also read every regular poll), the Calibration
+    service (`fe01` raw hex blob, `fe04`), and Xiaomi's temp/humidity/voltage raw values. Every
+    field individually best-effort (matches the existing `soilConductivityRaw`/`STATUS_FLAGS`
+    pattern) — one missing/errored characteristic never fails the rest of the poll. **Explicit
+    non-goals**: no frontend UI surfaces any of this (debug/audit only), no retention/pruning policy
+    yet (same open-ended stance as `SyncEvent` — revisit once real production volume exists, not a
+    decision to make from zero data), and `39e1fe01`'s calibration blob semantics / the dead
+    `fa0c`/`fa0d`/`fa0e` characteristics are logged as raw bytes only, not decoded. **Practical
+    consequence**: a normal Parrot Pot poll now opens 4 GATT services (Live, Watering, Plant Dr,
+    Calibration) instead of 3 — more individual read steps, each individually fail-safe, within the
+    same already-open GATT session (no extra connect/disconnect overhead).
+  - **`noble-bridge` scope cut**: updated for interface consistency only — forwards the new raw
+    Live-service fields (`soilConductivityRaw`/`lightRaw`/`soilTempRaw`/`airTempRaw`/
+    `soilMoistureRaw`, `noble-bridge/src/parrot.ts`) so dev-on-Mac readings populate the same
+    `RawSensorLog` columns as the other providers, but does **not** gain Watering/Plant-Dr/
+    Calibration-service parity — matches its existing lower-priority "Mac dev tool, not production"
+    status (see the `DeviceProvider` section below), not validated against real hardware for this
+    change specifically.
+  - **Verified**: `mock` provider updated to simulate plausible raw values with enough variation
+    over simulated time for the calibration gate to flip to `calibrated` in tests; full workspace
+    build (`pnpm -r build`) passing across `backend`/`frontend`/`noble-bridge`. **Not yet
+    re-validated against real Parrot Pot hardware** post-deploy (the original 775/983 raw readings
+    that motivated this fix came from a one-off disposable-container test, not a running
+    deployment) — next step is confirming both real pots actually reach `calibrated: true` after
+    14+ days of normal polling in production.
 - **Next batch**: Batch 10 (extension to other devices — Flower Power, Flower Care).
 - **`noble-bridge` validated with real hardware** ✅ (2026-07-27) — a real Parrot Pot
   (`PARROT-A073`) connected and read end-to-end (scan → connect → activate → read

@@ -219,6 +219,26 @@ investigation was trying to avoid. Needs the same kind of longitudinal empirical
 used elsewhere in this project (e.g. readings before/after a known fertilizer event, across both
 real pots over time) before touching `ble/parrot/soilConductivity.ts`'s constants.
 
+**Resolved with per-device self-calibration, not a new constant guess (2026-07-31)**: rather than
+picking new global constants from n=1 (the same mistake the investigation above already rejected),
+`decodeSoilConductivityRaw()` (`ble/parrot/soilConductivity.ts`) now takes `{ rawMin, rawMax }` as
+parameters instead of WatchFlower's hardcoded values, and those bounds are derived per device from
+its own accumulated history (`backend/src/health/soilConductivityCalibration.ts`'s
+`getCalibration()`) — the all-time min/max of that device's own raw `fa02` readings, never expiring
+(an old extreme, e.g. a fertilizer event from months ago, stays part of the calibration forever, by
+design). A confidence gate (`MIN_CALIBRATION_DAYS = 14`, `MIN_CALIBRATION_RAW_RANGE = 50` on the
+~0-2047 raw scale) keeps a device reporting a new `'calibrating'` `ParameterStatus` — never a
+misleading number — until it's shown enough real variation over enough time to trust its own
+derived bounds. This also moved conductivity interpretation from write-time (the BLE provider, at
+poll time) to read-time (Health Engine/frontend) — providers now only persist the raw `fa02` value,
+so a device's whole history benefits from its calibration improving over time instead of being
+frozen against whatever bounds existed the day each reading was taken. Alongside this, a new
+`RawSensorLog` table (one row per successful `Reading`) captures every known Parrot Pot/Xiaomi raw
+characteristic, decoded or not, used or not — a debug/audit trail this calibration reads from, not
+a UI-facing feature. Full rationale, schema, and rollout detail in
+`docs/superpowers/specs/2026-07-31-soil-conductivity-self-calibration-and-raw-sensor-log-design.md`
+— not duplicated here.
+
 ## API
 
 - `GET /api/plant-profiles?search=<text>` — search by name (max 20 results), to associate a
