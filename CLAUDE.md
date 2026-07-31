@@ -781,6 +781,18 @@ production server:
     consequence**: a normal Parrot Pot poll now opens 4 GATT services (Live, Watering, Plant Dr,
     Calibration) instead of 3 — more individual read steps, each individually fail-safe, within the
     same already-open GATT session (no extra connect/disconnect overhead).
+  - **Final-review fix (critical) — Live-service raw reads ordered after deactivation**: the 7 new
+    Live-service raw reads (`lightRaw`/`soilTempRaw`/`airTempRaw`/`soilMoistureRaw`/`eaRaw`/
+    `ecbRaw`/`ecPorousRaw`, `backend/src/providers/node-ble/index.ts`) originally landed AFTER the
+    `measurePeriod.writeValueWithResponse(Buffer.from([0]))` live-mode deactivation call — this
+    project's own documented invariant (see the Parrot Pot section below) is that the Live service
+    stops refreshing once `fa06=0` is written, so those reads would have silently returned
+    stale/frozen values with no error to reveal it, exactly the kind of silent-corruption bug this
+    whole feature exists to avoid for conductivity specifically. Caught during this task's own
+    review (not by a later production incident) and fixed in a follow-up commit (`b10288c`) moving
+    all 7 reads to before the deactivation call, right after the existing `soilConductivityRaw`
+    read on the same service — `STATUS_FLAGS` (a different GATT service, Plant Dr, with no
+    measure-period gate) correctly stays read after deactivation, unaffected by this fix.
   - **`noble-bridge` scope cut**: updated for interface consistency only — forwards the new raw
     Live-service fields (`soilConductivityRaw`/`lightRaw`/`soilTempRaw`/`airTempRaw`/
     `soilMoistureRaw`, `noble-bridge/src/parrot.ts`) so dev-on-Mac readings populate the same
