@@ -44,10 +44,10 @@ export interface PlantProfile {
 }
 
 export type ParameterKey = 'soilMoisturePercent' | 'temperatureC' | 'humidityPercent' | 'luminosity' | 'soilConductivityUsCm';
-export type ParameterStatus = 'ok' | 'too_low' | 'too_high' | 'n/a';
+export type ParameterStatus = 'ok' | 'too_low' | 'too_high' | 'n/a' | 'calibrating';
 
 export interface ParameterHealth {
-  value: number;
+  value: number | null;
   status: ParameterStatus;
   speciesRange: [number, number] | null;
 }

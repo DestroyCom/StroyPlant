@@ -373,16 +373,26 @@ function DeviceDetailPage() {
                       hint={rangeHint(health?.parameters.luminosity, ' mol/m²/j', 1000)}
                     />
                   )}
-                  {reading.soilConductivityUsCm != null && (
-                    <SensorGauge
-                      label="Fertilité du sol"
-                      value={reading.soilConductivityUsCm}
-                      max={1000}
-                      unit=" µS/cm"
-                      tone={toneFor(health?.parameters.soilConductivityUsCm, 'primary')}
-                      icon={<Sprout size={16} />}
-                      hint={rangeHint(health?.parameters.soilConductivityUsCm, ' µS/cm')}
-                    />
+                  {health?.parameters.soilConductivityUsCm?.status === 'calibrating' ? (
+                    <div className="flex w-28 flex-col items-center gap-2">
+                      <div className="flex h-21 w-21 items-center justify-center rounded-full border border-dashed border-muted-foreground/40">
+                        <Sprout size={16} className="text-muted-foreground" />
+                      </div>
+                      <span className="text-center text-xs text-muted-foreground">Fertilité du sol</span>
+                      <span className="text-center text-[11px] text-muted-foreground/70">Calibration en cours</span>
+                    </div>
+                  ) : (
+                    reading.soilConductivityUsCm != null && (
+                      <SensorGauge
+                        label="Fertilité du sol"
+                        value={reading.soilConductivityUsCm}
+                        max={1000}
+                        unit=" µS/cm"
+                        tone={toneFor(health?.parameters.soilConductivityUsCm, 'primary')}
+                        icon={<Sprout size={16} />}
+                        hint={rangeHint(health?.parameters.soilConductivityUsCm, ' µS/cm')}
+                      />
+                    )
                   )}
                 </>
               )}
