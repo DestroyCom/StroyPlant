@@ -463,35 +463,14 @@ export function createNodeBleProvider(): DeviceProvider {
               });
             }
 
-            await measurePeriod.writeValueWithResponse(Buffer.from([0])).catch(() => {});
-
-            // Plant Dr STATUS_FLAGS (Batch 6) — best-effort like the conductivity reads above: the
-            // Plant Dr service may not exist on every firmware revision, must never fail the read.
-            let statusFlags: ReturnType<typeof decodePlantDrStatusFlags> | undefined;
-            try {
-              const plantDrService = await gatt.getPrimaryService(PLANT_DR_SERVICE_UUID);
-              const statusFlagsChar = await trackedCharacteristic(plantDrService, UUIDS.plantDr.statusFlags, characteristics);
-              statusFlags = decodePlantDrStatusFlags((await statusFlagsChar.readValue()).readUInt8(0));
-              log({
-                direction: 'READ',
-                label: 'Plant Dr STATUS_FLAGS read',
-                deviceId,
-                result: 'OK',
-                detail: JSON.stringify(statusFlags),
-              });
-            } catch (error) {
-              log({
-                direction: 'INFO',
-                label: 'Plant Dr STATUS_FLAGS indisponible',
-                deviceId,
-                result: 'ERROR',
-                detail: error instanceof Error ? error.message : String(error),
-              });
-            }
-
-            // Raw sensor debug log — every field here is best-effort, logged individually, never
-            // failing the rest of the poll (docs/superpowers/specs/2026-07-31-soil-conductivity-
-            // self-calibration-and-raw-sensor-log-design.md).
+            // Raw sensor debug log — Live-service characteristics only, so (like
+            // soilConductivityRaw above) these MUST be read before the fa06=0 deactivation below:
+            // the Live service doesn't refresh its values without live mode active (fa06=1,
+            // ble/parrot/uuids.ts's measurePeriod comment), so reading these after deactivation
+            // would silently return stale/frozen values with no error to reveal it. Every field
+            // here is still best-effort, logged individually, never failing the rest of the poll
+            // (docs/superpowers/specs/2026-07-31-soil-conductivity-self-calibration-and-raw-sensor-
+            // log-design.md).
             const lightRaw = await readRawBestEffort(sensorService, UUIDS.live.lightRaw, characteristics, deviceId, 'Light raw', readU16);
             const soilTempRaw = await readRawBestEffort(
               sensorService,
@@ -531,6 +510,34 @@ export function createNodeBleProvider(): DeviceProvider {
               'EcPorous raw',
               (b) => b.readFloatLE(0),
             );
+
+            await measurePeriod.writeValueWithResponse(Buffer.from([0])).catch(() => {});
+
+            // Plant Dr STATUS_FLAGS (Batch 6) — best-effort like the conductivity reads above: the
+            // Plant Dr service may not exist on every firmware revision, must never fail the read.
+            // Unlike the Live-service reads above, STATUS_FLAGS is on a different GATT service
+            // (Plant Dr) with no measure-period gate, so reading it after deactivation is correct.
+            let statusFlags: ReturnType<typeof decodePlantDrStatusFlags> | undefined;
+            try {
+              const plantDrService = await gatt.getPrimaryService(PLANT_DR_SERVICE_UUID);
+              const statusFlagsChar = await trackedCharacteristic(plantDrService, UUIDS.plantDr.statusFlags, characteristics);
+              statusFlags = decodePlantDrStatusFlags((await statusFlagsChar.readValue()).readUInt8(0));
+              log({
+                direction: 'READ',
+                label: 'Plant Dr STATUS_FLAGS read',
+                deviceId,
+                result: 'OK',
+                detail: JSON.stringify(statusFlags),
+              });
+            } catch (error) {
+              log({
+                direction: 'INFO',
+                label: 'Plant Dr STATUS_FLAGS indisponible',
+                deviceId,
+                result: 'ERROR',
+                detail: error instanceof Error ? error.message : String(error),
+              });
+            }
 
             let watVwcIrr: number | undefined;
             let watVwcCmd: number | undefined;
