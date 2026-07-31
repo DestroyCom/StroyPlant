@@ -2,6 +2,7 @@ import { TRPCError } from '@trpc/server';
 import { z } from 'zod';
 import { prisma } from '../../../db/client.js';
 import { computeDeviceHealth } from '../../../health/scoring.js';
+import { getCalibration } from '../../../health/soilConductivityCalibration.js';
 import { getHealthSettings, upsertHealthSettings } from '../../../health/settings.js';
 import { serializeDate } from '../serialize.js';
 import { protectedProcedure, router } from '../trpc.js';
@@ -51,8 +52,10 @@ export const healthRouter = router({
     const readings = await prisma.reading.findMany({
       where: { deviceId: device.id, timestamp: { gte: since }, source: 'POLL' },
       orderBy: { timestamp: 'asc' },
+      include: { rawSensorLog: true },
     });
+    const conductivityCalibration = await getCalibration(device.id);
 
-    return computeDeviceHealth(device, readings, device.plantProfile, healthSettings.warmupMinDays);
+    return computeDeviceHealth(device, readings, device.plantProfile, healthSettings.warmupMinDays, conductivityCalibration);
   }),
 });

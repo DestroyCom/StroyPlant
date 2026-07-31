@@ -6,6 +6,7 @@ import { log } from '../logger.js';
 import type { DeviceProvider } from '../providers/types.js';
 import { triggerWatering } from '../watering.js';
 import { computeDeviceHealth } from './scoring.js';
+import { getCalibration } from './soilConductivityCalibration.js';
 import { getHealthSettings } from './settings.js';
 
 // Fallback values used whenever a device has no Schedule row yet (docs/STROYPLANT_SPEC.md section
@@ -56,8 +57,10 @@ async function evaluateDevice(device: DeviceForTick, provider: DeviceProvider, c
   const readings = await prisma.reading.findMany({
     where: { deviceId: device.id, timestamp: { gte: since }, source: 'POLL' },
     orderBy: { timestamp: 'asc' },
+    include: { rawSensorLog: true },
   });
-  const health = computeDeviceHealth(device, readings, device.plantProfile, healthSettings.warmupMinDays);
+  const conductivityCalibration = await getCalibration(device.id);
+  const health = computeDeviceHealth(device, readings, device.plantProfile, healthSettings.warmupMinDays, conductivityCalibration);
 
   // Same warm-up safeguard the Health Engine uses for dashboard alerts (docs/STROYPLANT_SPEC.md
   // section 7.3) — trusting a single parameter's status before enough personal baseline has
