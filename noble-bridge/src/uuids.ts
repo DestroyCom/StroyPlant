@@ -13,6 +13,10 @@ export const UUIDS = {
     // backend/src/ble/parrot/soilConductivity.ts for the decode formula (duplicated in parrot.ts
     // below, same reasoning as this file's own header comment on duplication).
     soilConductivityRaw: '39e1fa02-84a8-11e2-afba-0002a5d5c51b',
+    lightRaw: '39e1fa01-84a8-11e2-afba-0002a5d5c51b',
+    soilTempRaw: '39e1fa03-84a8-11e2-afba-0002a5d5c51b',
+    airTempRaw: '39e1fa04-84a8-11e2-afba-0002a5d5c51b',
+    soilMoistureRaw: '39e1fa05-84a8-11e2-afba-0002a5d5c51b',
   },
   watering: {
     trigger: '39e1f906-84a8-11e2-afba-0002a5d5c51b',
