@@ -7,26 +7,65 @@ export interface ParrotPotReading {
   temperatureC: number;
   luminosity: number;
   waterTankLevelPercent?: number;
-  // "Soil conductivity" (WatchFlower CSV) / fertility index — see ble/parrot/soilConductivity.ts
-  // for the decode formula and ble/parrot/uuids.ts for the characteristic. Optional: the read can
-  // fail silently without failing the whole sensor read (best-effort, same convention as the
-  // Plant Dr fields below).
-  soilConductivityUsCm?: number;
   // Plant Dr STATUS_FLAGS (Batch 6, docs/STROYPLANT_SPEC.md section 7.11) — firmware-computed
-  // soil/reservoir/probe state. Best-effort like the conductivity fields above (never used by the
-  // official app's live mode, behavior not guaranteed on every firmware revision).
+  // soil/reservoir/probe state. Best-effort (never used by the official app's live mode, behavior
+  // not guaranteed on every firmware revision).
   isDrySoil?: boolean;
   isWetSoil?: boolean;
   isEmptyTank?: boolean;
   // A reading taken while the probe isn't in the soil doesn't represent a plant state — the Health
   // Engine excludes it from rolling-baseline calculations (docs/STROYPLANT_SPEC.md section 7.3).
   isInAir?: boolean;
+
+  // Raw sensor debug log (docs/superpowers/specs/2026-07-31-soil-conductivity-self-calibration-
+  // and-raw-sensor-log-design.md) — persisted verbatim into RawSensorLog, never used directly for
+  // scoring except soilConductivityRaw (see health/soilConductivityCalibration.ts). Deliberately NOT
+  // computed into a "fertility" value here anymore — that interpretation now happens at read time,
+  // using a per-device calibration that improves as more history accumulates, not at write time
+  // against a fixed global constant.
+  lightRaw?: number;
+  soilConductivityRaw?: number;
+  soilTempRaw?: number;
+  airTempRaw?: number;
+  soilMoistureRaw?: number;
+  eaRaw?: number;
+  ecbRaw?: number;
+  ecPorousRaw?: number;
+  watVwcIrr?: number;
+  watVwcCmd?: number;
+  watNIrr?: number;
+  watPumpDutyCycle?: number;
+  watVwcIrrEco?: number;
+  watVwcCmdEco?: number;
+  watNIrrEco?: number;
+  watMode?: number;
+  watTimeSlotStart?: number;
+  watTimeSlotDurr?: number;
+  watVacationStart?: number;
+  watVacationEnd?: number;
+  algorithmStatus?: number;
+  plantDrStatusFlagsRaw?: number;
+  plantDrDryN?: number;
+  plantDrDryVwcRaw?: number;
+  plantDrWetN?: number;
+  plantDrWetVwcRaw?: number;
+  plantDrConfigId?: number;
+  plantDrNextWateringDate?: number;
+  plantDrNextEmptyTankDate?: number;
+  plantDrFullTankAutonomy?: number;
+  calibrationDataBlobHex?: string;
+  colorRaw?: number;
 }
 
 export interface XiaomiReading {
   temperatureC: number;
   humidityPercent: number;
   batteryPercent?: number;
+
+  // Raw sensor debug log — same rationale as ParrotPotReading above.
+  tempRaw?: number;
+  humidityRaw?: number;
+  voltageRawMv?: number;
 }
 
 export type SensorReading = { kind: 'PARROT_POT'; data: ParrotPotReading } | { kind: 'XIAOMI_LYWSD03MMC'; data: XiaomiReading };
