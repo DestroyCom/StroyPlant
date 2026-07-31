@@ -22,7 +22,6 @@ export async function persistReading(deviceId: string, kind: DeviceKind, reading
           temperatureC: reading.data.temperatureC,
           luminosity: reading.data.luminosity,
           waterTankLevelPercent: reading.data.waterTankLevelPercent,
-          soilConductivityUsCm: reading.data.soilConductivityUsCm,
           isDrySoil: reading.data.isDrySoil,
           isWetSoil: reading.data.isWetSoil,
           isEmptyTank: reading.data.isEmptyTank,
@@ -34,7 +33,61 @@ export async function persistReading(deviceId: string, kind: DeviceKind, reading
           batteryPercent: reading.data.batteryPercent,
         };
 
-  const created = await prisma.reading.create({ data: { deviceId, source, ...data } });
+  // Raw sensor debug log (docs/superpowers/specs/2026-07-31-soil-conductivity-self-calibration-
+  // and-raw-sensor-log-design.md) — created in the same transaction as the Reading it's 1:1 linked
+  // to, so the two can never diverge (e.g. a Reading with no matching RawSensorLog row, which would
+  // break the "post-migration reading" detection the history/health call sites rely on).
+  const rawData =
+    reading.kind === 'PARROT_POT'
+      ? {
+          lightRaw: reading.data.lightRaw,
+          soilConductivityRaw: reading.data.soilConductivityRaw,
+          soilTempRaw: reading.data.soilTempRaw,
+          airTempRaw: reading.data.airTempRaw,
+          soilMoistureRaw: reading.data.soilMoistureRaw,
+          soilMoistureCalibrated: reading.data.soilMoisturePercent,
+          airTempCalibrated: reading.data.temperatureC,
+          luminosityCalibrated: reading.data.luminosity,
+          eaRaw: reading.data.eaRaw,
+          ecbRaw: reading.data.ecbRaw,
+          ecPorousRaw: reading.data.ecPorousRaw,
+          waterTankLevelPercent: reading.data.waterTankLevelPercent,
+          watVwcIrr: reading.data.watVwcIrr,
+          watVwcCmd: reading.data.watVwcCmd,
+          watNIrr: reading.data.watNIrr,
+          watPumpDutyCycle: reading.data.watPumpDutyCycle,
+          watVwcIrrEco: reading.data.watVwcIrrEco,
+          watVwcCmdEco: reading.data.watVwcCmdEco,
+          watNIrrEco: reading.data.watNIrrEco,
+          watMode: reading.data.watMode,
+          watTimeSlotStart: reading.data.watTimeSlotStart,
+          watTimeSlotDurr: reading.data.watTimeSlotDurr,
+          watVacationStart: reading.data.watVacationStart,
+          watVacationEnd: reading.data.watVacationEnd,
+          algorithmStatus: reading.data.algorithmStatus,
+          plantDrStatusFlagsRaw: reading.data.plantDrStatusFlagsRaw,
+          plantDrDryN: reading.data.plantDrDryN,
+          plantDrDryVwcRaw: reading.data.plantDrDryVwcRaw,
+          plantDrWetN: reading.data.plantDrWetN,
+          plantDrWetVwcRaw: reading.data.plantDrWetVwcRaw,
+          plantDrConfigId: reading.data.plantDrConfigId,
+          plantDrNextWateringDate: reading.data.plantDrNextWateringDate,
+          plantDrNextEmptyTankDate: reading.data.plantDrNextEmptyTankDate,
+          plantDrFullTankAutonomy: reading.data.plantDrFullTankAutonomy,
+          calibrationDataBlobHex: reading.data.calibrationDataBlobHex,
+          colorRaw: reading.data.colorRaw,
+        }
+      : {
+          tempRaw: reading.data.tempRaw,
+          humidityRaw: reading.data.humidityRaw,
+          voltageRawMv: reading.data.voltageRawMv,
+        };
+
+  const created = await prisma.$transaction(async (tx) => {
+    const row = await tx.reading.create({ data: { deviceId, source, ...data } });
+    await tx.rawSensorLog.create({ data: { readingId: row.id, ...rawData } });
+    return row;
+  });
   emitReading({ deviceId, kind, reading: serializeReading(created) });
 
   const mqttState = getMqttState();
