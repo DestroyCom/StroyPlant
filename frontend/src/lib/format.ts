@@ -49,9 +49,10 @@ function healthHeadline(health: DeviceHealth | undefined): string | null {
   if (!health) return null;
   if (health.status === 'warming_up') return "Période d'observation en cours";
   if (health.status === 'warning') {
-    const [key, param] = Object.entries(health.parameters).find(([, p]) => p.status === 'too_low' || p.status === 'too_high') ?? [];
+    const key = health.warningParameters[0];
+    const param = key ? health.parameters[key] : undefined;
     if (!key || !param) return null;
-    const label = PARAMETER_LABEL[key as ParameterKey];
+    const label = PARAMETER_LABEL[key];
     return param.status === 'too_low' ? `${label} trop basse pour cette espèce` : `${label} trop élevée pour cette espèce`;
   }
   return null;

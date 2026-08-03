@@ -49,7 +49,8 @@ export type ParameterStatus = 'ok' | 'too_low' | 'too_high' | 'n/a' | 'calibrati
 export interface ParameterHealth {
   value: number | null;
   status: ParameterStatus;
-  speciesRange: [number, number] | null;
+  speciesRange: [number, number | null] | null;
+  personalDeviation: 'unusual_low' | 'unusual_high' | 'normal';
 }
 
 export type HealthTrend = 'stable' | 'degrading' | 'improving' | 'unknown';
@@ -59,6 +60,7 @@ export interface DeviceHealth {
   status: DeviceHealthStatus;
   parameters: Partial<Record<ParameterKey, ParameterHealth>>;
   trend: HealthTrend;
+  warningParameters: ParameterKey[];
 }
 
 export type Environment = 'INDOOR' | 'OUTDOOR';
