@@ -2,19 +2,23 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Fix the 5 audit findings + 1 externally-sourced finding + 1 empirically-discovered finding
-(Part H, added 2026-08-03) in the StroyPlant Health Engine (indoor luminosity comparison, missing
-personal baseline, non-robust conductivity calibration, gauge/badge visual inconsistency, fragile
-parameter-ordering dependency, unbounded poller Maps, and — Part H — the luminosity comparison's
-input being an instantaneous reading compared against a daily threshold, at any time of day) per
+**Goal:** Fix the 5 audit findings + 1 externally-sourced finding + 2 empirically-discovered findings
+(Part H and Part I, added 2026-08-03) in the StroyPlant Health Engine (indoor luminosity comparison,
+missing personal baseline, non-robust conductivity calibration, gauge/badge visual inconsistency,
+fragile parameter-ordering dependency, unbounded poller Maps, the luminosity comparison's input
+being an instantaneous reading compared against a daily threshold at any time of day — Part H — and,
+Part I, an unrelated Plant Dr calibration finding folded into this same plan at DestCom's request:
+`calibrateWet` accepting a physically implausible captured value with no upper sanity bound) per
 `docs/superpowers/specs/2026-07-31-health-engine-consistency-fixes-design.md`.
 
 **Architecture:** Parts A-G are pure computation/UI logic over existing tables — no new Prisma
 migration, no config changes. Part H (Tasks 7-11) is the one exception: a new `HealthSettings.timezone`
 column, a new standalone algorithm file (`health/dailyLightIntegral.ts`), and further changes to the
-same files Parts A-G already touch. Backend changes land first (`health/scoring.ts`,
-`health/soilConductivityCalibration.ts`, `health/dailyLightIntegral.ts`, `health/settings.ts`,
-`ble/namedDevicePoller.ts`), then frontend consumption (`frontend/src/lib/types.ts`, `format.ts`,
+same files Parts A-G already touch. Part I (Task 12) is a single, independent guard added to
+`api/trpc/routers/plantDr.ts` — unrelated to the Health Engine itself, no shared code with Parts
+A-H. Backend changes land first (`health/scoring.ts`, `health/soilConductivityCalibration.ts`,
+`health/dailyLightIntegral.ts`, `health/settings.ts`, `ble/namedDevicePoller.ts`,
+`api/trpc/routers/plantDr.ts`), then frontend consumption (`frontend/src/lib/types.ts`, `format.ts`,
 `devices.$deviceId.tsx`, `sensor-gauge.tsx`, `health-engine-settings-section.tsx`), then docs.
 
 **Tech Stack:** TypeScript, Fastify/tRPC backend, Prisma/SQLite, React/TanStack frontend. This
@@ -1914,13 +1918,88 @@ git commit -m "Document Part H (real daily light integral) in HEALTH_ENGINE.md a
 
 ---
 
+### Task 12: `calibrateWet` — reject an implausibly high captured wet-point value
+
+**Files:**
+- Modify: `backend/src/api/trpc/routers/plantDr.ts`
+
+**Interfaces:**
+- Consumes: nothing new.
+- Produces: no new exported names — `calibrateWet`'s input/output shape is unchanged, it just
+  throws in one more case than before.
+
+- [ ] **Step 1: Add the upper-bound constant and check**
+
+In `backend/src/api/trpc/routers/plantDr.ts`, add near the top (after the imports):
+
+```ts
+// A real potting mix saturates well below this — a captured value above it almost certainly means
+// the "capture wet point" button was pressed while water was still actively draining through the
+// soil right after pouring, not once the reading had settled a few minutes later (design spec Part
+// I, confirmed against a real production capture that read 72.6%). A general ceiling for plausible
+// soil saturation, not a per-species value — same YAGNI stance as this project's other gate
+// constants (MIN_CALIBRATION_DAYS, MAX_GAP_MS, etc.).
+const MAX_PLAUSIBLE_WET_VWC_PERCENT = 55;
+```
+
+In the `calibrateWet` mutation, right after the existing lower-bound check
+(`if (wetVwcPercent <= dryVwcPercent) { ... }`), add:
+
+```ts
+    if (wetVwcPercent > MAX_PLAUSIBLE_WET_VWC_PERCENT) {
+      throw new TRPCError({
+        code: 'BAD_REQUEST',
+        message: `Reading (${wetVwcPercent.toFixed(1)}%) is implausibly high for soil saturation — wait a few minutes after watering for the reading to settle, then retry.`,
+      });
+    }
+```
+
+- [ ] **Step 2: Typecheck**
+
+```bash
+pnpm --filter backend exec tsc --noEmit
+```
+
+- [ ] **Step 3: Manual verification**
+
+This mutation calls `ctx.provider.readSensors(...)` for a **live** device read, so it can't be
+exercised with backdated `Reading` rows the way earlier tasks' scratch scripts do — the `mock`
+provider's live-read path is the right tool here, same as this project's own established
+convention for anything that goes through `connectionQueue`/a `DeviceProvider`. Run the dev server:
+
+```bash
+pnpm --filter backend dev
+```
+
+(`.env`'s BLE provider set to `mock`.) In a second terminal, log in as the dev admin
+(`admin@admin.com` / `admin`) and, using `curl` with the session cookie (or the frontend's existing
+`/devices/$deviceId/calibration` page), call `plantDr.calibrateWet` for `MOCK-POT-NORMAL` (a mock
+device with a species assigned and `soilMoisturePercent` around 30-40%, well under the new 55%
+ceiling) — confirm it still succeeds exactly as before (no regression to the normal path).
+
+Then temporarily raise `MAX_PLAUSIBLE_WET_VWC_PERCENT` reasoning in the other direction — simplest
+concrete check: temporarily edit `backend/src/providers/mock/index.ts`'s `MOCK-POT-NORMAL` initial
+`soilMoisturePercent` to `70` (well above the 55% ceiling), restart the dev server, call
+`plantDr.calibrateWet` again, and confirm it now fails with the new "implausibly high" message
+instead of writing the calibration. Revert the temporary mock edit afterward (`git checkout --
+backend/src/providers/mock/index.ts` or a manual undo) — it must not ship.
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add backend/src/api/trpc/routers/plantDr.ts
+git commit -m "calibrateWet: reject an implausibly high captured wet-point reading (Part I)"
+```
+
+---
+
 ## Self-Review Notes (completed during planning)
 
 - **Spec coverage**: Part A (no-op, verified by construction — outdoor/null environment path
   untouched) / Part B → Task 2 Steps 1-2, 7 / Part C → Task 2 Step 3, 7 / Part D → Task 1 / Part E →
   Task 4 / Part F → Task 2 Step 4, Task 3 Step 2 / Part G → Task 5 / Part H → Tasks 7-11 (migration
   and settings.ts in Task 7, algorithm in Task 8, scoring.ts integration in Task 9, frontend in Task
-  10, docs in Task 11). All 8 spec parts covered.
+  10, docs in Task 11) / Part I → Task 12. All 9 spec parts covered.
 - **Type consistency checked**: `ParameterHealth`/`DeviceHealth` field names and shapes match
   identically between Task 2/9 (backend) and Task 3/10 (frontend mirror) — `personalDeviation`,
   `warningParameters`, `speciesRange: [number, number | null] | null`, `liveValue`,
