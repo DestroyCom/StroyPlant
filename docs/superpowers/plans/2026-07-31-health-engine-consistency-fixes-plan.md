@@ -1301,35 +1301,55 @@ function reading(isoTimestamp: string, luminosity: number) {
 }
 
 // Day 1 (2026-01-01, UTC): a clean synthetic sun curve — flat 0.1 overnight, ramps to a 70 peak at
-// noon, back to 0.1 by evening, sampled every 3 hours (well under MAX_GAP_MS). Trapezoidal
-// integration of a symmetric ramp-up/ramp-down triangle-ish shape should land well above 1 mol/m²
-// (the point of this test is "clearly not 0.1 mol and not 70 mol either" — a mid-range plausible
-// day total, not an exact hand-computed figure).
+// noon, back to 0.1 by evening, sampled every 1.5 hours (well under MAX_GAP_MS=2h — matches Task
+// 9's own hoursOfDay convention). Trapezoidal integration of a symmetric ramp-up/ramp-down
+// triangle-ish shape should land well above 1 mol/m² (the point of this test is "clearly not 0.1
+// mol and not 70 mol either" — a mid-range plausible day total, not an exact hand-computed figure).
 const day1 = [
   reading('2026-01-01T00:00:00Z', 0.1),
+  reading('2026-01-01T01:30:00Z', 0.1),
   reading('2026-01-01T03:00:00Z', 0.1),
+  reading('2026-01-01T04:30:00Z', 0.2),
   reading('2026-01-01T06:00:00Z', 0.5),
+  reading('2026-01-01T07:30:00Z', 2),
   reading('2026-01-01T09:00:00Z', 5),
+  reading('2026-01-01T10:30:00Z', 20),
   reading('2026-01-01T12:00:00Z', 70),
+  reading('2026-01-01T13:30:00Z', 20),
   reading('2026-01-01T15:00:00Z', 5),
+  reading('2026-01-01T16:30:00Z', 2),
   reading('2026-01-01T18:00:00Z', 0.5),
+  reading('2026-01-01T19:30:00Z', 0.2),
   reading('2026-01-01T21:00:00Z', 0.1),
+  reading('2026-01-01T22:30:00Z', 0.1),
 ];
 
-// Day 2 (2026-01-02, UTC): otherwise identical, but with a 5-hour gap in the afternoon (exceeds
-// MAX_GAP_MS=2h) — this whole day must be excluded entirely, not partially counted.
+// Day 2 (2026-01-02, UTC): otherwise identical to day1 (all gaps 1.5h), except one deliberate 5-hour
+// gap in the afternoon (exceeds MAX_GAP_MS=2h) — this whole day must be excluded entirely, not
+// partially counted. Every OTHER gap stays at 1.5h so the 5h gap is unambiguously the only reason
+// this day gets excluded, not an accidental earlier one.
 const day2 = [
   reading('2026-01-02T00:00:00Z', 0.1),
+  reading('2026-01-02T01:30:00Z', 0.1),
+  reading('2026-01-02T03:00:00Z', 0.1),
+  reading('2026-01-02T04:30:00Z', 0.2),
   reading('2026-01-02T06:00:00Z', 0.5),
+  reading('2026-01-02T07:30:00Z', 2),
   reading('2026-01-02T09:00:00Z', 5),
+  reading('2026-01-02T10:30:00Z', 20),
   reading('2026-01-02T12:00:00Z', 70),
-  reading('2026-01-02T17:00:00Z', 5), // 5h after the previous point — exceeds the 2h gate
-  reading('2026-01-02T21:00:00Z', 0.1),
+  reading('2026-01-02T17:00:00Z', 5), // 5h after the previous point — exceeds the 2h gate, on purpose
+  reading('2026-01-02T18:30:00Z', 2),
+  reading('2026-01-02T20:00:00Z', 0.5),
+  reading('2026-01-02T21:30:00Z', 0.1),
 ];
 
 // "Today" — deliberately using the real current time, mirroring how computeDeviceHealth will call
-// this with real, current readings — must never appear in the result no matter how dense.
-const today = Array.from({ length: 20 }, (_, i) => reading(new Date(Date.now() - i * 3600_000).toISOString(), 3));
+// this with real, current readings — must never appear in the result no matter how dense. Kept to
+// the last 5 hours (not 20) so it can never accidentally spill into a full, valid "yesterday" entry
+// depending on what time this script happens to run — a wider window did exactly that during this
+// task's own implementation (caught and fixed).
+const today = Array.from({ length: 5 }, (_, i) => reading(new Date(Date.now() - i * 3600_000).toISOString(), 3));
 
 const totals = computeDailyTotals([...day1, ...day2, ...today], 'UTC');
 console.log(JSON.stringify(totals, null, 2));
