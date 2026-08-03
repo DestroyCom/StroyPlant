@@ -807,6 +807,44 @@ production server:
     that motivated this fix came from a one-off disposable-container test, not a running
     deployment) — next step is confirming both real pots actually reach `calibrated: true` after
     14+ days of normal polling in production.
+- **Health Engine consistency fixes** ✅ (2026-07-31) — an independent audit of the Health Engine, run
+  deliberately without reading project documentation (code + real `dev.db` data + the decompiled
+  official Parrot app only, DestCom's explicit request), found 5 issues; a 6th, unrelated but minor
+  finding from an external (non-DestCom, non-this-assistant) review of the wider codebase was
+  cross-checked against the real code and folded in alongside them (most of that external review's
+  other claims either restated already-known/correct behavior or were themselves mistaken — e.g. a
+  claimed "duplicate poll" bug in `namedDevicePoller.ts` that doesn't exist, the code's actual
+  ordering exists specifically to prevent that). Full design in
+  `docs/superpowers/specs/2026-07-31-health-engine-consistency-fixes-design.md`.
+  - **Indoor luminosity floor comparison**: `Device.environment === 'INDOOR'` now switches the
+    luminosity comparison to a floor-only check against a published low/medium/high-light houseplant
+    DLI category (2/5/10 mol/m²/day, derived from the species' own outdoor CSV minimum) instead of
+    the outdoor-oriented CSV range directly — a real production Parrot Pot reads as low as 0.1
+    mol/m²/day, structurally `too_low` forever against the CSV's typical 2-7.5 mol/day minimums.
+    `OUTDOOR`/unset devices unaffected.
+  - **Personal-deviation signal**: `ParameterHealth` gained `personalDeviation`
+    (`'unusual_low'/'unusual_high'/'normal'`, mean ± 2σ against the device's own history, excluding
+    the recent-hour slice) — additive/display-only, deliberately never influencing `status`,
+    `hasOutOfRange`, or `health/scheduler.ts`'s auto-watering trigger (confirmed explicitly with
+    DestCom given the real-world consequence of loosening that condition).
+  - **Conductivity calibration**: bounds switched from the device's all-time absolute raw min/max to
+    the 5th/95th percentile — an isolated spurious raw reading can no longer permanently redefine the
+    whole 0-1000 output scale and silently reshape historical chart values.
+  - **`DeviceHealth.warningParameters`**: the frontend's `healthHeadline` (`format.ts`) used to pick
+    the first `too_low`/`too_high` parameter via `Object.entries(...).find(...)`, silently relying on
+    `PARAMETERS_BY_KIND`'s array order to avoid surfacing conductivity (excluded from the badge) as a
+    warning's cause. `computeDeviceHealth` now exposes the authoritative list directly.
+  - **Frontend**: new `SensorGauge` `notice` tone (muted, distinct from the orange `warning`) for
+    informational-only out-of-range parameters (conductivity today) plus a `personalDeviationHint`
+    shown on every gauge; `rangeHint`/`referenceLinesFor` handle an open-ended (`null`) upper bound
+    for the indoor-luminosity case.
+  - **`namedDevicePoller.ts`**: `lastPolled`/`consecutiveFailures` Maps now pruned of deleted devices
+    on every tick (the one legitimate finding from the external review).
+  - **Verified**: all changes are pure computation/UI logic, no new migration. Backend logic verified
+    via scratch-copy-of-`dev.db` scripts (percentile calibration resists an outlier, indoor
+    luminosity floor + personal baseline behave as expected, poller pruning removes only deleted
+    devices); frontend verified against the mock provider in a real browser session (notice tone,
+    explanatory hint text, open-ended range display).
 - **Next batch**: Batch 10 (extension to other devices — Flower Power, Flower Care).
 - **`noble-bridge` validated with real hardware** ✅ (2026-07-27) — a real Parrot Pot
   (`PARROT-A073`) connected and read end-to-end (scan → connect → activate → read

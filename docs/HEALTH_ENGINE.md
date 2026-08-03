@@ -73,6 +73,15 @@ first reading, based solely on a generic species range that may not match the po
 it's better to wait for a bit of perspective. Values and comparisons are still computed and
 returned during warm-up (useful for debugging/testing), only the global status changes.
 
+**Personal-deviation signal (2026-07-31)**: every parameter also gets a `personalDeviation`
+(`'unusual_low' | 'unusual_high' | 'normal'`) computed against this specific device's own history
+(mean ± 2 standard deviations over the baseline window, excluding the same recent-hour slice being
+evaluated) — separate from, and never influencing, the `ok`/`too_low`/`too_high` status above or the
+auto-watering scheduler. Requires at least 5 historical points outside the recent window; stays
+`'normal'` during warm-up or with too little history. Purely informational (shown as a gauge hint),
+answering "is this unusual for THIS plant" independently of "is this outside the species' general
+range."
+
 ## The calculation, step by step (`computeDeviceHealth` in `src/health/scoring.ts`)
 
 For each parameter relevant to the device type:
@@ -111,6 +120,16 @@ one) that is returned in the API response, so that the value and the species ran
 the same unit on the consumer side (frontend, MCP...). Before this unit was confirmed,
 luminosity was deliberately excluded from the comparison — that's no longer the case.
 
+**Special case — indoor luminosity (2026-07-31)**: the WatchFlower CSV's light thresholds are
+garden/outdoor-oriented (typically 2-7.5 mol/m²/day minimums). A real production Parrot Pot placed
+indoors reads as low as 0.1 mol/m²/day — two orders of magnitude below those thresholds — which
+would make luminosity structurally always `too_low` regardless of actual plant health. When
+`Device.environment === 'INDOOR'`, the comparison switches to a **floor-only** check (never
+`too_high`) against a published general houseplant DLI category (low/medium/high, 2/5/10
+mol/m²/day) derived from the species' own outdoor minimum — not a per-species indoor value, since no
+such dataset exists anywhere (WatchFlower, the official Parrot app, or any of the other Flower Power
+repos surveyed). `OUTDOOR` and unset (`null`, the default) devices are unaffected.
+
 ### 3. Trend detection
 
 On the parameter most revealing of progressive water shortage — soil moisture for the Parrot
@@ -138,16 +157,12 @@ pot, while staying sensitive on a pot that's usually very stable.
 
 ## What isn't done yet (known limitations, not bugs)
 
-- **The rolling baseline isn't yet used to compute the `ok`/`too_low`/`too_high` status itself**,
-  only the trend. The "coarse safety net" (species range) and the "personalized refinement"
-  (baseline) described in section 7.3 of the spec aren't fully combined yet — that's the logical
-  next step once we've observed real behavior on production devices long enough to validate that
-  the current trend logic is relevant.
-- **No `STATUS_FLAGS.isInAir` filtering** (probe out of soil): this flag comes from the Plant Dr
-  service of the Parrot Pot, which isn't implemented yet (Batch 6). Today, a reading taken while
-  the probe is poorly planted or removed pollutes the calculations like any other reading. To be
-  fixed once Batch 6 is done — not added preemptively, to avoid an unnecessary DB column in the
-  meantime.
+- **The rolling baseline still doesn't drive the `ok`/`too_low`/`too_high` status itself** — as of
+  2026-07-31 it exists as a separate, additive `personalDeviation` signal (see above), deliberately
+  kept out of the coarse status and the auto-watering scheduler given the real-world consequence of
+  changing when watering triggers. Fully merging the two (species range as a coarse guardrail,
+  personal baseline as the actual day-to-day comparison) remains a possible future step once real
+  production behavior has been observed long enough to validate it.
 - **No score persisted in the database**: each call to `GET /api/devices/:id/health` recomputes
   everything on the fly from the stored `Reading` records. Deliberate: there's no cron
   infrastructure in the project yet (the scanner runs in a loop but nothing else), and Batch 5
@@ -238,6 +253,14 @@ characteristic, decoded or not, used or not — a debug/audit trail this calibra
 a UI-facing feature. Full rationale, schema, and rollout detail in
 `docs/superpowers/specs/2026-07-31-soil-conductivity-self-calibration-and-raw-sensor-log-design.md`
 — not duplicated here.
+
+**2026-07-31 update — self-calibration, then percentile bounds**: the fixed WatchFlower constants
+above were replaced by a per-device calibration derived from real accumulated `RawSensorLog` history
+(`backend/src/health/soilConductivityCalibration.ts`, gated on 14+ days of history and a raw spread
+of 50+ before trusting it — reports `'calibrating'` until then). Initially this used the device's
+all-time raw min/max; refined the same day to the 5th/95th percentile instead, so a single spurious
+raw reading can't permanently redefine the whole 0-1000 scale and silently reshape historical chart
+values — it now just clamps at the extreme end instead.
 
 ## API
 
