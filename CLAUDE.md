@@ -845,6 +845,33 @@ production server:
     luminosity floor + personal baseline behave as expected, poller pruning removes only deleted
     devices); frontend verified against the mock provider in a real browser session (notice tone,
     explanatory hint text, open-ended range display).
+- **Health Engine consistency fixes — Part H, real daily light integral** ✅ (2026-08-03) — added to
+  the same batch above after SSH'ing into the production server and pulling 5 days of real `Reading`
+  rows for both real Parrot Pots, prompted by DestCom noticing the dashboard calling out "not enough
+  light" at times a plant obviously couldn't be receiving any (nighttime). The real data showed the
+  luminosity comparison was broken at any time of day, not just at night: `39e1fa0b` behaves as an
+  instantaneous reading (flat ~0.1 mol/day overnight, ~70 mol/day peak at solar noon on one real
+  pot), not a true daily total, so comparing it directly against a full-day species threshold was
+  structurally invalid. `health/dailyLightIntegral.ts`'s `computeDailyTotals()` (new file) now
+  trapezoidal-integrates each raw reading across real calendar days (in a new
+  `HealthSettings.timezone`, editable on `/settings`, default UTC) into a true daily total — this,
+  not the old hourly average, is what `luminosity`'s status now compares, across every environment
+  (not just indoor, unlike Part B above). A day is only "complete" if no gap between consecutive
+  readings exceeds 2h, and the still-in-progress current day is never counted. Zero complete days
+  yet reuses the existing `'calibrating'` status (Part D). The gauge separately shows the live
+  instantaneous reading (informational only), and a "Lumière insuffisante depuis 3 jours" advisory
+  appears if the 3 most recent complete days were all `too_low` — a single overcast day never
+  triggers it. `personalDeviation` is deliberately left at `'normal'` for luminosity (Part C's
+  instantaneous-value baseline isn't meaningful against a daily total; not asked for during
+  brainstorming, flagged as a possible future follow-up rather than silently attempted).
+  - **Verified**: `computeDailyTotals` against synthetic day/night data (a gapped day correctly
+    excluded, today never included, a plausible mid-range total for a clean sun curve); full
+    `computeDeviceHealth` integration against a scratch `dev.db` copy (3 good days → `ok` status +
+    `luminosityRecentDaysTooLow: false`, a brand-new device with < 1 day of history → `'calibrating'`
+    with a populated `liveValue`); `HealthSettings.timezone` default/round-trip/invalid-rejection.
+    **Not yet re-validated against the real production Parrot Pots** (the 5-day dataset that
+    motivated this fix predates the fix itself) — next deploy should be followed by checking both
+    real pots' luminosity status once a few real calendar days have accumulated under the new logic.
 - **Next batch**: Batch 10 (extension to other devices — Flower Power, Flower Care).
 - **`noble-bridge` validated with real hardware** ✅ (2026-07-27) — a real Parrot Pot
   (`PARROT-A073`) connected and read end-to-end (scan → connect → activate → read

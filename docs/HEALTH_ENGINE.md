@@ -130,6 +130,25 @@ mol/m²/day) derived from the species' own outdoor minimum — not a per-species
 such dataset exists anywhere (WatchFlower, the official Parrot app, or any of the other Flower Power
 repos surveyed). `OUTDOOR` and unset (`null`, the default) devices are unaffected.
 
+**Special case — daily light integral, not an instantaneous reading (2026-08-03)**: `39e1fa0b`,
+despite its confirmed mol/m²/day (DLI) unit, was found — via 5 days of real production data from 2
+real Parrot Pots — to behave as an INSTANTANEOUS light-derived reading, not a true accumulated daily
+total: flat ~0.1 mol/day overnight, a sharp solar-noon peak (~70 mol/day observed on a window-side
+pot), back to floor by evening. Comparing that instantaneous value directly against a species'
+full-day DLI threshold (the behavior since Batch 4) was structurally invalid at ANY time of day, not
+just at night — a pot could read `too_low` most of the day and `too_high` for the hour around solar
+noon. `health/dailyLightIntegral.ts`'s `computeDailyTotals()` now integrates every raw reading
+across each calendar day (trapezoidal rule: average rate × elapsed day-fraction between consecutive
+points) into a real daily total, in the timezone configured on the Settings page
+(`HealthSettings.timezone`, default UTC). Only fully complete days count (a day with a >2h gap
+between readings, or the still-in-progress current day, is excluded entirely) — the most recent
+complete day's total is what actually gets compared, for every environment (not just indoor). Zero
+complete days yet (brand-new device) reports `'calibrating'`, reusing the same status conductivity
+calibration already uses. The gauge separately shows the live instantaneous reading as informational
+text, and a "move the plant" advisory appears if the 3 most recent complete days were all
+`too_low`. Full design: `docs/superpowers/specs/2026-07-31-health-engine-consistency-fixes-design.md`,
+Part H.
+
 ### 3. Trend detection
 
 On the parameter most revealing of progressive water shortage — soil moisture for the Parrot
