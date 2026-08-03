@@ -1,6 +1,6 @@
 # Health Engine consistency fixes — design spec
 
-Date: 2026-07-31 (Part H added 2026-08-03)
+Date: 2026-07-31 (Part H added 2026-08-03, Part I added 2026-08-03)
 Status: approved by DestCom, ready for implementation planning
 
 ## Purpose
@@ -72,11 +72,12 @@ fixes the actual input: a real trapezoidal daily integral over each calendar day
 
 ## Scope
 
-In scope: the 8 components below (A–H), confined to `backend/src/health/` (Part H adds
+In scope: the 9 components below (A–I), confined to `backend/src/health/` (Part H adds
 `health/dailyLightIntegral.ts` and touches `health/settings.ts`),
 `backend/src/ble/parrot/soilConductivity.ts`, `backend/src/ble/namedDevicePoller.ts` (Part G only),
-`backend/prisma/schema.prisma` (Part H only — new `HealthSettings.timezone` field), and 3 frontend
-consumers (`frontend/src/lib/format.ts`,
+`backend/src/api/trpc/routers/plantDr.ts` (Part I only — unrelated to the Health Engine itself, see
+Part I's own note), `backend/prisma/schema.prisma` (Part H only — new `HealthSettings.timezone`
+field), and 3 frontend consumers (`frontend/src/lib/format.ts`,
 `frontend/src/routes/_authenticated/devices.$deviceId.tsx`,
 `frontend/src/components/health-engine-settings-section.tsx` — Part H's timezone field) plus
 `frontend/src/lib/types.ts`'s mirrored type definitions.
@@ -288,6 +289,40 @@ threshold mismatch is not an indoor-only problem).
 7. **No historical backfill**: `computeDailyTotals` operates on whatever raw `Reading.luminosity`
    rows already exist — a device with a year of history immediately benefits (its past days are
    simply recomputed as real integrals the first time this ships), no migration script needed.
+
+## Part I — Plausibility upper bound on `calibrateWet`'s captured wet-point value
+
+Discovered and confirmed empirically 2026-08-03, same production data pull as Part H, but an
+unrelated subsystem (Batch 6's Plant Dr device-side calibration, not the Health Engine) — folded
+into this same spec/plan at DestCom's explicit request rather than a separate document, since it
+was found in the same session.
+
+**Finding**: `plantDr.ts`'s `calibrateWet` mutation (`backend/src/api/trpc/routers/plantDr.ts:43-57`)
+takes a **live** soil-moisture reading from the device at the exact moment the button is pressed and
+writes it as `WET_VWC`, checked only against a lower bound (`wetVwcPercent <= dryVwcPercent` →
+reject). No upper sanity bound exists. On the real `A0:14:3D:CD:A3:D3` pot, this captured `72.6%`
+VWC — physically implausible for real potting substrate (typical mixes saturate well below that,
+long before free water starts draining out) — almost certainly because the button was pressed while
+water was still actively draining through the soil immediately after pouring, not once the reading
+had settled a few minutes later. The resulting device-side calibration span (`15.0%`–`72.6%`) is
+unrealistically wide.
+
+**Fix**: add an upper plausibility bound, same hard-reject pattern as the existing lower-bound
+check (a `TRPCError({code: 'BAD_REQUEST', ...})`, no override) — `calibrateWet` throws if
+`wetVwcPercent` exceeds `MAX_PLAUSIBLE_WET_VWC_PERCENT = 55` (a plain exported constant next to the
+mutation, not a `HealthSettings`/species field — same YAGNI stance as this spec's other gate
+constants: a general ceiling for realistic potting-mix saturation, not a per-species value, matching
+how Part B's indoor-light categories are already explicitly "published general figures, not
+per-species data"). Error message tells the user what happened and what to do:
+`"Reading (${value}%) is implausibly high for soil saturation — wait a few minutes after watering
+for the reading to settle, then retry."` No change to the existing lower-bound check or to
+`buildPlantDrWriteValues`/the device write path itself — this only adds one more guard before that
+write happens.
+
+**Out of scope**: retroactively fixing the already-written `72.6%` calibration on the real pot —
+DestCom will re-run `calibrateWet` manually once this ships, no backend correction script needed
+(the device is always re-read live on every future calibration, so a stale bad value self-heals the
+next time the feature is used correctly).
 
 ## Frontend type mirroring
 
