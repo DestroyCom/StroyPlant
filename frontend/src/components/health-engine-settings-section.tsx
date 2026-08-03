@@ -16,11 +16,13 @@ export function HealthEngineSettingsSection() {
 
   const [baselineWindowDays, setBaselineWindowDays] = useState(14);
   const [warmupMinDays, setWarmupMinDays] = useState(3);
+  const [timezone, setTimezone] = useState('UTC');
 
   useEffect(() => {
     if (!settings) return;
     setBaselineWindowDays(settings.baselineWindowDays);
     setWarmupMinDays(settings.warmupMinDays);
+    setTimezone(settings.timezone);
   }, [settings]);
 
   const upsertMutation = useMutation(
@@ -40,7 +42,8 @@ export function HealthEngineSettingsSection() {
       <CardHeader>
         <CardTitle>Moteur de santé</CardTitle>
         <CardDescription>
-          Fenêtre glissante utilisée pour la baseline personnelle de chaque appareil et sa période de chauffe.
+          Fenêtre glissante utilisée pour la baseline personnelle de chaque appareil, sa période de chauffe, et le fuseau horaire utilisé
+          pour calculer la lumière reçue par jour (heure locale, minuit à minuit).
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-wrap items-end gap-4">
@@ -68,11 +71,22 @@ export function HealthEngineSettingsSection() {
             className="w-24"
           />
         </div>
+        <div className="flex flex-col gap-1">
+          <Label htmlFor="health-timezone">Fuseau horaire</Label>
+          <Input
+            id="health-timezone"
+            type="text"
+            value={timezone}
+            onChange={(event) => setTimezone(event.target.value)}
+            placeholder="Europe/Paris"
+            className="w-40"
+          />
+        </div>
         <Button
           variant="outline"
           size="sm"
           disabled={upsertMutation.isPending}
-          onClick={() => upsertMutation.mutate({ baselineWindowDays, warmupMinDays })}
+          onClick={() => upsertMutation.mutate({ baselineWindowDays, warmupMinDays, timezone })}
         >
           Enregistrer
         </Button>

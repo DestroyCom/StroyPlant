@@ -377,19 +377,44 @@ function DeviceDetailPage() {
                   {reading.waterTankLevelPercent != null && (
                     <SensorGauge label="Réservoir" value={reading.waterTankLevelPercent} tone="accent" icon={<Droplets size={16} />} />
                   )}
-                  {reading.luminosity != null && (
-                    <SensorGauge
-                      label="Luminosité (DLI)"
-                      value={reading.luminosity}
-                      max={30}
-                      unit=" mol/m²/j"
-                      tone={toneFor(health?.parameters.luminosity, 'accent')}
-                      icon={<Sun size={16} />}
-                      hint={[rangeHint(health?.parameters.luminosity, ' mol/m²/j', 1000), personalDeviationHint(health?.parameters.luminosity)]
-                        .filter(Boolean)
-                        .join(' · ')}
-                    />
-                  )}
+                  {(health?.parameters.luminosity != null || reading.luminosity != null) &&
+                    (health?.parameters.luminosity?.status === 'calibrating' ? (
+                      <div className="flex w-28 flex-col items-center gap-2">
+                        <div className="flex h-21 w-21 items-center justify-center rounded-full border border-dashed border-muted-foreground/40">
+                          <Sun size={16} className="text-muted-foreground" />
+                        </div>
+                        <span className="text-center text-xs text-muted-foreground">Luminosité (DLI)</span>
+                        <span className="text-center text-[11px] text-muted-foreground/70">Historique de lumière insuffisant</span>
+                      </div>
+                    ) : (
+                      <div className="flex w-28 flex-col items-center gap-1">
+                        <SensorGauge
+                          label="Luminosité (DLI)"
+                          value={
+                            health?.parameters.luminosity?.value != null
+                              ? health.parameters.luminosity.value / 1000
+                              : (reading.luminosity ?? 0)
+                          }
+                          max={30}
+                          unit=" mol/m²/j"
+                          tone={toneFor(health?.parameters.luminosity, 'accent')}
+                          icon={<Sun size={16} />}
+                          hint={[
+                            rangeHint(health?.parameters.luminosity, ' mol/m²/j', 1000),
+                            health?.parameters.luminosity?.liveValue != null &&
+                              `Instantané : ${(health.parameters.luminosity.liveValue / 1000).toFixed(2)} mol/m²/j`,
+                            personalDeviationHint(health?.parameters.luminosity),
+                          ]
+                            .filter(Boolean)
+                            .join(' · ')}
+                        />
+                        {health?.luminosityRecentDaysTooLow && (
+                          <span className="text-center text-[11px] text-warning-foreground">
+                            Lumière insuffisante depuis 3 jours — envisagez de rapprocher la plante d'une fenêtre.
+                          </span>
+                        )}
+                      </div>
+                    ))}
                   {health?.parameters.soilConductivityUsCm?.status === 'calibrating' ? (
                     <div className="flex w-28 flex-col items-center gap-2">
                       <div className="flex h-21 w-21 items-center justify-center rounded-full border border-dashed border-muted-foreground/40">
@@ -442,7 +467,11 @@ function DeviceDetailPage() {
                       value={reading.humidityPercent}
                       tone={toneFor(health?.parameters.humidityPercent, 'primary')}
                       icon={<Droplets size={16} />}
-                      hint={[rangeHint(health?.parameters.humidityPercent, '%'), trendParameterKey === 'humidityPercent' && trendHint, personalDeviationHint(health?.parameters.humidityPercent)]
+                      hint={[
+                        rangeHint(health?.parameters.humidityPercent, '%'),
+                        trendParameterKey === 'humidityPercent' && trendHint,
+                        personalDeviationHint(health?.parameters.humidityPercent),
+                      ]
                         .filter(Boolean)
                         .join(' · ')}
                     />
