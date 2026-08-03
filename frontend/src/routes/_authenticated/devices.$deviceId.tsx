@@ -20,31 +20,43 @@ import type { ParameterHealth, Reading } from '@/lib/types';
 import { cn } from '@/lib/utils';
 
 type Period = '24h' | '7j' | '30j';
-type GaugeTone = 'primary' | 'accent' | 'info' | 'danger' | 'warning';
+type GaugeTone = 'primary' | 'accent' | 'info' | 'danger' | 'warning' | 'notice';
 
 const PERIOD_HOURS: Record<Period, number> = { '24h': 24, '7j': 24 * 7, '30j': 24 * 30 };
 
-function toneFor(param: ParameterHealth | undefined, fallback: GaugeTone): GaugeTone {
-  return param?.status === 'too_low' || param?.status === 'too_high' ? 'warning' : fallback;
+function toneFor(param: ParameterHealth | undefined, fallback: GaugeTone, options: { informational?: boolean } = {}): GaugeTone {
+  if (param?.status !== 'too_low' && param?.status !== 'too_high') return fallback;
+  return options.informational ? 'notice' : 'warning';
 }
 
 // Species range displayed in the gauge legend — undefined if no species assigned or parameter
-// not applicable (n/a) for this species.
+// not applicable (n/a) for this species. A null upper bound (indoor luminosity's floor-only
+// comparison, see design spec Part B) renders as "≥ X" instead of "X–Y".
 function rangeHint(param: ParameterHealth | undefined, unit: string, scale = 1): string | undefined {
   if (!param?.speciesRange) return undefined;
   const [min, max] = param.speciesRange;
+  if (max == null) return `≥ ${Math.round(min / scale)}${unit} attendu`;
   return `${Math.round(min / scale)}–${Math.round(max / scale)}${unit} attendu`;
 }
 
 // Reference lines (min/max expected for the assigned species) displayed on the history
-// chart — same source as rangeHint, undefined if no species assigned or parameter n/a.
+// chart — same source as rangeHint, undefined if no species assigned or parameter n/a. Omits the
+// max line entirely when there's no upper bound (nothing meaningful to draw).
 function referenceLinesFor(param: ParameterHealth | undefined, scale = 1): HistoryReferenceLine[] | undefined {
   if (!param?.speciesRange) return undefined;
   const [min, max] = param.speciesRange;
-  return [
-    { value: min / scale, label: 'Min attendu' },
-    { value: max / scale, label: 'Max attendu' },
-  ];
+  const lines: HistoryReferenceLine[] = [{ value: min / scale, label: 'Min attendu' }];
+  if (max != null) lines.push({ value: max / scale, label: 'Max attendu' });
+  return lines;
+}
+
+// "Inhabituel pour cette plante" signal (design spec Part C) — additive to the existing
+// species-range hint, never replaces it, and never changes the gauge's tone (personalDeviation is
+// purely informational, same visual register as the conductivity notice below).
+function personalDeviationHint(param: ParameterHealth | undefined): string | undefined {
+  if (param?.personalDeviation === 'unusual_low') return 'Inhabituel (bas) pour cette plante';
+  if (param?.personalDeviation === 'unusual_high') return 'Inhabituel (élevé) pour cette plante';
+  return undefined;
 }
 
 interface ChartSpec {
@@ -343,6 +355,7 @@ function DeviceDetailPage() {
                       hint={[
                         rangeHint(health?.parameters.soilMoisturePercent, '%'),
                         trendParameterKey === 'soilMoisturePercent' && trendHint,
+                        personalDeviationHint(health?.parameters.soilMoisturePercent),
                       ]
                         .filter(Boolean)
                         .join(' · ')}
@@ -356,7 +369,9 @@ function DeviceDetailPage() {
                       unit="°"
                       tone={toneFor(health?.parameters.temperatureC, 'info')}
                       icon={<Thermometer size={16} />}
-                      hint={rangeHint(health?.parameters.temperatureC, '°')}
+                      hint={[rangeHint(health?.parameters.temperatureC, '°'), personalDeviationHint(health?.parameters.temperatureC)]
+                        .filter(Boolean)
+                        .join(' · ')}
                     />
                   )}
                   {reading.waterTankLevelPercent != null && (
@@ -370,7 +385,9 @@ function DeviceDetailPage() {
                       unit=" mol/m²/j"
                       tone={toneFor(health?.parameters.luminosity, 'accent')}
                       icon={<Sun size={16} />}
-                      hint={rangeHint(health?.parameters.luminosity, ' mol/m²/j', 1000)}
+                      hint={[rangeHint(health?.parameters.luminosity, ' mol/m²/j', 1000), personalDeviationHint(health?.parameters.luminosity)]
+                        .filter(Boolean)
+                        .join(' · ')}
                     />
                   )}
                   {health?.parameters.soilConductivityUsCm?.status === 'calibrating' ? (
@@ -388,9 +405,17 @@ function DeviceDetailPage() {
                         value={reading.soilConductivityUsCm}
                         max={1000}
                         unit=" µS/cm"
-                        tone={toneFor(health?.parameters.soilConductivityUsCm, 'primary')}
+                        tone={toneFor(health?.parameters.soilConductivityUsCm, 'primary', { informational: true })}
                         icon={<Sprout size={16} />}
-                        hint={rangeHint(health?.parameters.soilConductivityUsCm, ' µS/cm')}
+                        hint={[
+                          rangeHint(health?.parameters.soilConductivityUsCm, ' µS/cm'),
+                          (health?.parameters.soilConductivityUsCm?.status === 'too_low' ||
+                            health?.parameters.soilConductivityUsCm?.status === 'too_high') &&
+                            "n'affecte pas le statut global",
+                          personalDeviationHint(health?.parameters.soilConductivityUsCm),
+                        ]
+                          .filter(Boolean)
+                          .join(' · ')}
                       />
                     )
                   )}
@@ -406,7 +431,9 @@ function DeviceDetailPage() {
                       unit="°"
                       tone={toneFor(health?.parameters.temperatureC, 'info')}
                       icon={<Thermometer size={16} />}
-                      hint={rangeHint(health?.parameters.temperatureC, '°')}
+                      hint={[rangeHint(health?.parameters.temperatureC, '°'), personalDeviationHint(health?.parameters.temperatureC)]
+                        .filter(Boolean)
+                        .join(' · ')}
                     />
                   )}
                   {reading.humidityPercent != null && (
@@ -415,7 +442,7 @@ function DeviceDetailPage() {
                       value={reading.humidityPercent}
                       tone={toneFor(health?.parameters.humidityPercent, 'primary')}
                       icon={<Droplets size={16} />}
-                      hint={[rangeHint(health?.parameters.humidityPercent, '%'), trendParameterKey === 'humidityPercent' && trendHint]
+                      hint={[rangeHint(health?.parameters.humidityPercent, '%'), trendParameterKey === 'humidityPercent' && trendHint, personalDeviationHint(health?.parameters.humidityPercent)]
                         .filter(Boolean)
                         .join(' · ')}
                     />

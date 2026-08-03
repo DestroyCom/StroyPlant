@@ -6,6 +6,7 @@ const TONE_VARS = {
   info: 'var(--color-blue-500)',
   danger: 'var(--destructive)',
   warning: 'var(--warning-foreground)',
+  notice: 'var(--color-muted-foreground)',
 } as const;
 
 export function SensorGauge({
