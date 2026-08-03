@@ -17,20 +17,35 @@ export interface ConductivityCalibration {
 
 export type ReadingWithRawLog = Reading & { rawSensorLog: RawSensorLog | null };
 
-// All-time (never expiring, DestCom's explicit choice) min/max of the raw 39e1fa02 value this
-// specific device has ever reported during a normal poll — a calibration should reflect the widest
-// real range this device has ever shown, not "recent" behavior. Scoped to source='POLL' like every
-// other Health Engine baseline calculation, so a live session can never skew it.
+// Linear-interpolation percentile (matches numpy's default) over an already-sorted array.
+function percentile(sortedValues: number[], p: number): number {
+  if (sortedValues.length === 1) return sortedValues[0];
+  const index = p * (sortedValues.length - 1);
+  const lower = Math.floor(index);
+  const upper = Math.ceil(index);
+  if (lower === upper) return sortedValues[lower];
+  const weight = index - lower;
+  return sortedValues[lower] * (1 - weight) + sortedValues[upper] * weight;
+}
+
+// Bounds derived from the 5th/95th percentile (not the absolute min/max, 2026-07-31 follow-up) of
+// the raw 39e1fa02 value this specific device has ever reported during a normal poll — all-time,
+// never expiring (DestCom's explicit choice: a calibration should reflect the widest real range
+// this device has shown, not "recent" behavior), scoped to source='POLL' like every other Health
+// Engine baseline calculation so a live session can never skew it. Percentiles (not the true
+// min/max) so a single spurious raw reading (electrical glitch, bad contact) can't permanently
+// redefine the whole 0-1000 output scale and silently reshape every historical chart value — it
+// just clamps at the extreme end via decodeSoilConductivityRaw's existing clamp() instead.
 export async function getCalibration(deviceId: string): Promise<ConductivityCalibration | null> {
-  const agg = await prisma.rawSensorLog.aggregate({
+  const rows = await prisma.rawSensorLog.findMany({
     where: { reading: { deviceId, source: 'POLL' }, soilConductivityRaw: { not: null } },
-    _min: { soilConductivityRaw: true },
-    _max: { soilConductivityRaw: true },
-    _count: { soilConductivityRaw: true },
+    select: { soilConductivityRaw: true },
   });
-  if (agg._count.soilConductivityRaw === 0 || agg._min.soilConductivityRaw == null || agg._max.soilConductivityRaw == null) {
-    return null;
-  }
+  if (rows.length === 0) return null;
+
+  const values = rows.map((row) => row.soilConductivityRaw as number).sort((a, b) => a - b);
+  const rawMin = percentile(values, 0.05);
+  const rawMax = percentile(values, 0.95);
 
   const oldest = await prisma.rawSensorLog.findFirst({
     where: { reading: { deviceId, source: 'POLL' }, soilConductivityRaw: { not: null } },
@@ -39,9 +54,7 @@ export async function getCalibration(deviceId: string): Promise<ConductivityCali
   });
   const daysCovered = oldest ? (Date.now() - oldest.reading.timestamp.getTime()) / (24 * 3600_000) : 0;
 
-  const rawMin = agg._min.soilConductivityRaw;
-  const rawMax = agg._max.soilConductivityRaw;
-  const readingCount = agg._count.soilConductivityRaw;
+  const readingCount = values.length;
   const calibrated = daysCovered >= MIN_CALIBRATION_DAYS && rawMax - rawMin >= MIN_CALIBRATION_RAW_RANGE;
 
   return { rawMin, rawMax, readingCount, daysCovered, calibrated };
