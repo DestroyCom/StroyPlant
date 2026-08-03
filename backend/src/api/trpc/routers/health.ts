@@ -12,7 +12,7 @@ export const healthRouter = router({
   getSettings: protectedProcedure.query(() => getHealthSettings()),
 
   upsertSettings: protectedProcedure
-    .input(z.object({ baselineWindowDays: z.number().int().min(1).max(365), warmupMinDays: z.number().int().min(0).max(365) }))
+    .input(z.object({ baselineWindowDays: z.number().int().min(1).max(365), warmupMinDays: z.number().int().min(0).max(365), timezone: z.string().min(1) }))
     .mutation(({ input }) => upsertHealthSettings(input)),
 
   plantProfiles: protectedProcedure.input(z.object({ search: z.string().optional() })).query(async ({ input }) => {

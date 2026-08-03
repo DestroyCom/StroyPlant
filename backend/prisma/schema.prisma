@@ -82,6 +82,11 @@ model HealthSettings {
   id                 Int      @id @default(1)
   baselineWindowDays Int      @default(14)
   warmupMinDays      Int      @default(3)
+  // IANA timezone name (e.g. "Europe/Paris"), used only by health/dailyLightIntegral.ts to decide
+  // calendar-day boundaries for the luminosity daily light integral (Part H, 2026-08-03 design spec
+  // addition). Defaults to UTC — the server's own timezone, and this project's convention everywhere
+  // else (no other file has ever needed timezone awareness before this).
+  timezone           String   @default("UTC")
   updatedAt          DateTime @updatedAt
 }
 
