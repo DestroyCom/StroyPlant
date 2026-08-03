@@ -2,8 +2,8 @@ import type { Device } from '@prisma/client';
 import type { MqttClient } from 'mqtt';
 import { prisma } from '../db/client.js';
 import { computeDeviceHealth } from '../health/scoring.js';
-import { getCalibration } from '../health/soilConductivityCalibration.js';
 import { getHealthSettings } from '../health/settings.js';
+import { getCalibration } from '../health/soilConductivityCalibration.js';
 import type { WateringResult } from '../watering.js';
 import { buildDiscoveryEntities } from './discovery.js';
 import { discoveryConfigTopic, healthTopic, type MqttTopicSettings, stateTopic, wateringResultTopic } from './topics.js';
@@ -34,7 +34,14 @@ export async function publishHealthState(client: MqttClient, deviceId: string, b
     include: { rawSensorLog: true },
   });
   const conductivityCalibration = await getCalibration(deviceId);
-  const health = computeDeviceHealth(device, readings, device.plantProfile, healthSettings.warmupMinDays, conductivityCalibration);
+  const health = computeDeviceHealth(
+    device,
+    readings,
+    device.plantProfile,
+    healthSettings.warmupMinDays,
+    conductivityCalibration,
+    healthSettings.timezone,
+  );
   client.publish(healthTopic(baseTopic, deviceId), JSON.stringify(health), { qos: 0, retain: true });
 }
 

@@ -2,8 +2,8 @@ import { TRPCError } from '@trpc/server';
 import { z } from 'zod';
 import { prisma } from '../../../db/client.js';
 import { computeDeviceHealth } from '../../../health/scoring.js';
-import { getCalibration } from '../../../health/soilConductivityCalibration.js';
 import { getHealthSettings, upsertHealthSettings } from '../../../health/settings.js';
+import { getCalibration } from '../../../health/soilConductivityCalibration.js';
 import { serializeDate } from '../serialize.js';
 import { protectedProcedure, router } from '../trpc.js';
 
@@ -12,7 +12,13 @@ export const healthRouter = router({
   getSettings: protectedProcedure.query(() => getHealthSettings()),
 
   upsertSettings: protectedProcedure
-    .input(z.object({ baselineWindowDays: z.number().int().min(1).max(365), warmupMinDays: z.number().int().min(0).max(365), timezone: z.string().min(1) }))
+    .input(
+      z.object({
+        baselineWindowDays: z.number().int().min(1).max(365),
+        warmupMinDays: z.number().int().min(0).max(365),
+        timezone: z.string().min(1),
+      }),
+    )
     .mutation(({ input }) => upsertHealthSettings(input)),
 
   plantProfiles: protectedProcedure.input(z.object({ search: z.string().optional() })).query(async ({ input }) => {
@@ -56,6 +62,13 @@ export const healthRouter = router({
     });
     const conductivityCalibration = await getCalibration(device.id);
 
-    return computeDeviceHealth(device, readings, device.plantProfile, healthSettings.warmupMinDays, conductivityCalibration);
+    return computeDeviceHealth(
+      device,
+      readings,
+      device.plantProfile,
+      healthSettings.warmupMinDays,
+      conductivityCalibration,
+      healthSettings.timezone,
+    );
   }),
 });

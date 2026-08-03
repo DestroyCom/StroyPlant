@@ -1,4 +1,5 @@
 import type { Device, PlantProfile } from '@prisma/client';
+import { computeDailyTotals } from './dailyLightIntegral.js';
 import type { ConductivityCalibration, ReadingWithRawLog } from './soilConductivityCalibration.js';
 import { resolveConductivityValue } from './soilConductivityCalibration.js';
 
@@ -11,6 +12,11 @@ export interface ParameterHealth {
   status: ParameterStatus;
   speciesRange: [number, number | null] | null;
   personalDeviation: 'unusual_low' | 'unusual_high' | 'normal';
+  // Live instantaneous reading (mmol/m²/day, same conversion as `value`) — informational only,
+  // never used for `status`. Always null except for `luminosity` (Part H, design spec step 5): the
+  // gauge still shows "what the light level looks like right now" alongside the daily-total-based
+  // value/status, since the daily total is only ever as fresh as yesterday.
+  liveValue: number | null;
 }
 
 export type HealthTrend = 'stable' | 'degrading' | 'improving' | 'unknown';
@@ -22,6 +28,11 @@ export interface DeviceHealth {
   parameters: Partial<Record<ParameterKey, ParameterHealth>>;
   trend: HealthTrend;
   warningParameters: ParameterKey[];
+  // True iff the 3 most recent COMPLETE calendar days were all too_low on luminosity (Part H, design
+  // spec step 6) — drives the frontend's "move the plant" advisory. False (never true) for Xiaomi
+  // devices, which have no luminosity parameter at all, and for any device with fewer than 3
+  // complete days of luminosity history.
+  luminosityRecentDaysTooLow: boolean;
 }
 
 // Short rolling average rather than the instantaneous value alone (docs/STROYPLANT_SPEC.md section 7.3).
@@ -189,9 +200,10 @@ export function computeDeviceHealth(
   profile: PlantProfile | null,
   warmupMinDays: number,
   conductivityCalibration: ConductivityCalibration | null,
+  timezone: string,
 ): DeviceHealth {
   if (!profile) {
-    return { status: 'no_profile', parameters: {}, trend: 'unknown', warningParameters: [] };
+    return { status: 'no_profile', parameters: {}, trend: 'unknown', warningParameters: [], luminosityRecentDaysTooLow: false };
   }
 
   // A reading taken with the probe out of the soil (Plant Dr STATUS_FLAGS, section 7.11) doesn't
@@ -210,12 +222,56 @@ export function computeDeviceHealth(
   const parameters: Partial<Record<ParameterKey, ParameterHealth>> = {};
   let hasOutOfRange = false;
   const warningParameters: ParameterKey[] = [];
+  let luminosityRecentDaysTooLow = false;
 
   for (const key of PARAMETERS_BY_KIND[device.kind]) {
     // Scoped to this one parameter (design spec, Part 4) — an under-calibrated conductivity sensor
     // never pushes the WHOLE device into 'warming_up', that status is a coarser, separate concept.
     if (key === 'soilConductivityUsCm' && conductivityCalibration?.calibrated !== true) {
-      parameters[key] = { value: null, status: 'calibrating', speciesRange: null, personalDeviation: 'normal' };
+      parameters[key] = { value: null, status: 'calibrating', speciesRange: null, personalDeviation: 'normal', liveValue: null };
+      continue;
+    }
+
+    // Luminosity (Part H, 2026-08-03): the daily total (last COMPLETE calendar day, in `timezone`)
+    // replaces the hourly-average instantaneous value as the comparison input, across every
+    // environment — the instantaneous-vs-daily-threshold mismatch isn't an indoor-only problem, see
+    // the design spec's Part H introduction for the real production numbers that proved this.
+    if (key === 'luminosity') {
+      const mostRecentRaw = [...sorted].reverse().find((reading) => reading.luminosity != null)?.luminosity ?? null;
+      const liveValue = mostRecentRaw != null ? mostRecentRaw * (UNIT_CONVERSION[key] ?? 1) : null;
+
+      const dailyTotals = computeDailyTotals(sorted, timezone);
+      if (dailyTotals.length === 0) {
+        // No complete calendar day yet (brand-new device, or every day so far failed the
+        // MAX_GAP_MS gate) — reuses the existing 'calibrating' status (Part D) rather than a new
+        // enum member: same meaning, "not enough data yet, never a stale/misleading number".
+        parameters[key] = { value: null, status: 'calibrating', speciesRange: null, personalDeviation: 'normal', liveValue };
+        continue;
+      }
+
+      const recentValue = dailyTotals[0].totalMol * (UNIT_CONVERSION[key] ?? 1);
+      const { speciesRange, status } = resolveRangeAndStatus(key, recentValue, profile, device.environment);
+      if (status !== 'ok' && status !== 'n/a') {
+        hasOutOfRange = true;
+        warningParameters.push(key);
+      }
+
+      // "Move the plant" advisory (design spec step 6): the 3 most recent COMPLETE days, not just
+      // the 1 used for `status` above — a single overcast day must not trigger this, only a
+      // sustained pattern. dailyTotals is already most-recent-first.
+      const last3Days = dailyTotals.slice(0, 3);
+      luminosityRecentDaysTooLow =
+        last3Days.length === 3 &&
+        last3Days.every(
+          (day) => resolveRangeAndStatus(key, day.totalMol * (UNIT_CONVERSION[key] ?? 1), profile, device.environment).status === 'too_low',
+        );
+
+      // personalDeviation is deliberately NOT computed for luminosity: Part C's baseline is built
+      // from per-reading INSTANTANEOUS values (valuesFor()), which would compare a daily TOTAL
+      // against a mean of noon-peak-and-midnight-floor noise — not a meaningful comparison, and Part
+      // H's brainstorm didn't ask for a day-total-based personal baseline. Always 'normal' for this
+      // one parameter; revisit only if DestCom asks for it explicitly.
+      parameters[key] = { value: recentValue, status, speciesRange, personalDeviation: 'normal', liveValue };
       continue;
     }
 
@@ -238,7 +294,7 @@ export function computeDeviceHealth(
 
     const personalDeviation = computePersonalDeviation(key, rawValue, sorted, recentSource, warmingUp, conductivityCalibration);
 
-    parameters[key] = { value: recentValue, status, speciesRange, personalDeviation };
+    parameters[key] = { value: recentValue, status, speciesRange, personalDeviation, liveValue: null };
   }
 
   return {
@@ -246,6 +302,7 @@ export function computeDeviceHealth(
     parameters,
     trend: computeTrend(sorted, device.kind),
     warningParameters,
+    luminosityRecentDaysTooLow,
   };
 }
 
