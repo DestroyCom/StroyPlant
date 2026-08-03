@@ -613,7 +613,7 @@ function healthHeadline(health: DeviceHealth | undefined): string | null {
 - [ ] **Step 3: Typecheck**
 
 ```bash
-pnpm --filter frontend exec tsc --noEmit
+pnpm --filter frontend exec tsc -b --noEmit
 ```
 
 Expect remaining errors only in `devices.$deviceId.tsx` (its `rangeHint`/`referenceLinesFor` still
@@ -764,7 +764,7 @@ first array element.
 - [ ] **Step 6: Typecheck**
 
 ```bash
-pnpm --filter frontend exec tsc --noEmit
+pnpm --filter frontend exec tsc -b --noEmit
 ```
 
 Expect a clean pass across the whole `frontend` package now.
@@ -1805,7 +1805,7 @@ when `health` hasn't loaded yet, matching how every other gauge in this file alr
 - [ ] **Step 5: Typecheck**
 
 ```bash
-pnpm --filter frontend exec tsc --noEmit
+pnpm --filter frontend exec tsc -b --noEmit
 pnpm --filter backend exec tsc --noEmit
 ```
 
