@@ -5,6 +5,14 @@ import { prisma } from '../../../db/client.js';
 import { log } from '../../../logger.js';
 import { protectedProcedure, router } from '../trpc.js';
 
+// A real potting mix saturates well below this — a captured value above it almost certainly means
+// the "capture wet point" button was pressed while water was still actively draining through the
+// soil right after pouring, not once the reading had settled a few minutes later (design spec Part
+// I, confirmed against a real production capture that read 72.6%). A general ceiling for plausible
+// soil saturation, not a per-species value — same YAGNI stance as this project's other gate
+// constants (MIN_CALIBRATION_DAYS, MAX_GAP_MS, etc.).
+const MAX_PLAUSIBLE_WET_VWC_PERCENT = 55;
+
 export const plantDrRouter = router({
   // Live read from the device, not from our DB — the device itself is the source of truth for its
   // own calibration (docs/STROYPLANT_SPEC.md section 7.11), no local copy kept.
@@ -53,6 +61,13 @@ export const plantDrRouter = router({
       throw new TRPCError({
         code: 'BAD_REQUEST',
         message: `Current soil moisture (${wetVwcPercent.toFixed(1)}%) isn't above the species' dry threshold (${dryVwcPercent}%) — water the plant first, then retry`,
+      });
+    }
+
+    if (wetVwcPercent > MAX_PLAUSIBLE_WET_VWC_PERCENT) {
+      throw new TRPCError({
+        code: 'BAD_REQUEST',
+        message: `Reading (${wetVwcPercent.toFixed(1)}%) is implausibly high for soil saturation — wait a few minutes after watering for the reading to settle, then retry.`,
       });
     }
 
