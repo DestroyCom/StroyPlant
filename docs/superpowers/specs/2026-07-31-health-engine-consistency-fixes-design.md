@@ -1,6 +1,6 @@
 # Health Engine consistency fixes — design spec
 
-Date: 2026-07-31
+Date: 2026-07-31 (Part H added 2026-08-03)
 Status: approved by DestCom, ready for implementation planning
 
 ## Purpose
@@ -53,13 +53,33 @@ survived verification and is folded into this spec as Part G below: `lastPolled`
 `consecutiveFailures` (`namedDevicePoller.ts:27-31`) are never pruned when a device is deleted from
 the database — an unbounded (if practically negligible at this project's scale) memory leak.
 
+**2026-08-03 addition (Part H) — a 6th finding, discovered empirically, not by static audit**: SSH'd
+into the production server and pulled 5 days of real `Reading` rows for both real Parrot Pots
+(`dev.db`'s successor, `prod.db`) to validate this spec's still-unimplemented Part B before building
+it, prompted by DestCom noticing the dashboard calling out "not enough light" at times when a plant
+obviously couldn't be receiving any (nighttime). The real data confirmed something worse than a
+nighttime edge case: `39e1fa0b`, despite being confirmed-and-documented as mol/m²/day (DLI), behaves
+as an **instantaneous** light-derived reading, not a true accumulated daily total — flat ~0.1 mol/day
+floor overnight, a sharp solar-noon peak (~70 mol/day observed on the window-side pot), back to floor
+by evening. `computeDeviceHealth`'s `recentValue` (a 1-hour rolling average, `scoring.ts:26,138-140`)
+compares this instantaneous signal directly against the species' absolute full-day DLI thresholds —
+structurally invalid for the *entire* comparison, at any time of day, not just at night: the
+window-side pot reads `too_low` most of the day and `too_high` for the hour around solar noon,
+essentially never `ok`. Part B (below) does not fix this — it only changes which threshold indoor
+pots are compared against, still feeding it the same instantaneous 1-hour-average input. Part H
+fixes the actual input: a real trapezoidal daily integral over each calendar day, replacing
+`recentValue` for the `luminosity` parameter across all environments (not just indoor).
+
 ## Scope
 
-In scope: the 7 components below (A–G), confined to `backend/src/health/`,
+In scope: the 8 components below (A–H), confined to `backend/src/health/` (Part H adds
+`health/dailyLightIntegral.ts` and touches `health/settings.ts`),
 `backend/src/ble/parrot/soilConductivity.ts`, `backend/src/ble/namedDevicePoller.ts` (Part G only),
-and 2 frontend consumers (`frontend/src/lib/format.ts`,
-`frontend/src/routes/_authenticated/devices.$deviceId.tsx`) plus `frontend/src/lib/types.ts`'s
-mirrored type definitions.
+`backend/prisma/schema.prisma` (Part H only — new `HealthSettings.timezone` field), and 3 frontend
+consumers (`frontend/src/lib/format.ts`,
+`frontend/src/routes/_authenticated/devices.$deviceId.tsx`,
+`frontend/src/components/health-engine-settings-section.tsx` — Part H's timezone field) plus
+`frontend/src/lib/types.ts`'s mirrored type definitions.
 
 Out of scope (explicitly deferred, confirmed with DestCom):
 - Any change to when auto-watering triggers (`health/scheduler.ts`'s `soilMoisturePercent ===
@@ -203,24 +223,100 @@ start of each tick in `startNamedDevicePoller`'s `setInterval` callback (`:64-88
 `devices`, build a `Set` of current device ids and delete any `lastPolled`/`consecutiveFailures` map
 key not present in it, before the existing per-device polling loop.
 
+## Part H — Real daily light integral, replacing the instantaneous luminosity comparison
+
+Discovered and confirmed empirically 2026-08-03 (see the addition to "Purpose" above) — not part of
+the original 2026-07-31 audit. Fixes the actual input Part B's category floors (and the unmodified
+Part A raw species range, for outdoor/unknown environment) are compared against, for the
+`luminosity` parameter, across **all** environments (not just indoor — the instantaneous-vs-daily-
+threshold mismatch is not an indoor-only problem).
+
+1. **New file `backend/src/health/dailyLightIntegral.ts`**, structurally parallel to
+   `soilConductivityCalibration.ts`: `computeDailyTotals(readings, timezone): DailyLightTotal[]`.
+   Groups a device's `luminosity` readings (raw, mol/m²/day units, same source as today —
+   `source: 'POLL'` only, matching every other Health Engine baseline calculation so a live session
+   can never skew this) into calendar days in the given IANA `timezone`, most recent day first.
+2. **Trapezoidal integration**: each raw reading is already an instantaneous rate expressed in
+   "mol/m²/day-equivalent" units (confirmed by the observed real-hardware pattern: flat ~0.1 floor
+   overnight, sharp peak at solar noon, not a monotonically-accumulating counter). For two
+   consecutive readings within the same calendar day, the light received during that interval is
+   `((value1 + value2) / 2) * (elapsedMs / 86_400_000)` (average rate × elapsed fraction of a day) —
+   summed across all consecutive pairs in the day gives that day's true total mol/m² received. The
+   partial interval before the day's first reading and after its last reading is not counted (edge
+   trapezoids dropped) — negligible error since both edges sit in the flat overnight floor in
+   practice.
+3. **Day completeness gate**: a calendar day is "complete and usable" only if no gap between two
+   consecutive readings within it exceeds **2 hours** (a constant, `MAX_GAP_MS`, exported next to
+   `computeDailyTotals` — same YAGNI stance as `MIN_CALIBRATION_DAYS`/`MIN_CALIBRATION_RAW_RANGE`,
+   not a `HealthSettings` field). A day that fails this gate is dropped entirely from the returned
+   list — neither counted as good nor bad, treated like missing data, consistent with how the rest
+   of the Health Engine already treats gaps (no interpolation across missing readings anywhere
+   else).
+4. **`HealthSettings` gains a `timezone` field** (`String`, default `"UTC"`, migration required —
+   this is the one part of this spec that DOES need a Prisma migration, unlike A–G). Editable in the
+   existing "Moteur de santé" Settings card (`health-engine-settings-section.tsx`) alongside
+   `baselineWindowDays`/`warmupMinDays`, via the existing `health.getSettings`/`upsertSettings`
+   procedures (extend their zod schema/return shape, no new procedure). Used only by
+   `computeDailyTotals`'s day-boundary grouping — no other part of the codebase gains timezone
+   awareness. DestCom's explicit choice over hardcoding UTC: a France-based user's "today" should
+   mean their calendar day, not the server's.
+5. **`scoring.ts` integration, `luminosity` key only**:
+   - `recentValue` for `luminosity` is no longer the 1-hour rolling average — it becomes the total
+     from the most recent **complete** day returned by `computeDailyTotals` (first element of the
+     list, since it's most-recent-first). This value feeds the exact same downstream comparison
+     Parts A/B already define (raw species range for outdoor/unknown, category floor for indoor) —
+     no change to `speciesRangeFor`/Part B's category logic itself, only to what value reaches it.
+   - **Warm-up gate**: if `computeDailyTotals` returns zero complete days (brand-new device, or
+     every day so far failed the 2h-gap gate), `luminosity`'s `status` is `'calibrating'` (reusing
+     the existing `ParameterStatus` value from Part D, not a new enum member) with `value: null` —
+     mirrors the conductivity gate's shape exactly, but with its own threshold (1 complete day, not
+     14 — a daily total is a complete, independent measurement the moment a day finishes, unlike a
+     calibration range that needs many samples to stabilize) and its own frontend hint copy ("Historique
+     de lumière insuffisant" rather than conductivity's "Calibration en cours" — Part E's `notice`
+     tone gauge already supports a per-case hint string, no new tone needed).
+   - The gauge still shows the **live instantaneous raw value** (already read every poll) as
+     informational text alongside the daily-total-based status/value — e.g. "Aujourd'hui : X mol/j
+     (en cours)" under the main gauge value — never contributing to `status`. Purely so the dashboard
+     doesn't look "frozen" between two day boundaries.
+6. **Move-the-plant advisory**: if the 3 most recent *complete* days (from `computeDailyTotals`) are
+   all `too_low` against the applicable threshold (species range or indoor category floor, same
+   comparison as step 5), the frontend shows a short advisory line under the luminosity gauge:
+   *"Lumière insuffisante depuis 3 jours — envisagez de rapprocher la plante d'une fenêtre."* A
+   single isolated `too_low` day (e.g. one overcast day) does not trigger this — computed on the
+   frontend from a new `DeviceHealth` field, `luminosityRecentDaysTooLow: boolean` (backend, set in
+   `scoring.ts` from the same 3-day window), not re-derived client-side from raw readings.
+7. **No historical backfill**: `computeDailyTotals` operates on whatever raw `Reading.luminosity`
+   rows already exist — a device with a year of history immediately benefits (its past days are
+   simply recomputed as real integrals the first time this ships), no migration script needed.
+
 ## Frontend type mirroring
 
 `frontend/src/lib/types.ts`'s `ParameterHealth`/`DeviceHealth` interfaces are hand-mirrored copies
 of the backend's tRPC output shape (existing pattern, no shared package — see CLAUDE.md's frontend
-tRPC section). Both gain the same 2 new fields as the backend (`personalDeviation` on
-`ParameterHealth`, `warningParameters` on `DeviceHealth`) to stay in sync.
+tRPC section). Both gain the same fields as the backend to stay in sync: `personalDeviation` (Part
+C) and `liveValue: number | null` (Part H, step 5 — the informational instantaneous reading; always
+`null` except for `luminosity`) on `ParameterHealth`; `warningParameters` (Part F) and
+`luminosityRecentDaysTooLow: boolean` (Part H, step 6) on `DeviceHealth`.
 
 ## Migration/rollout
 
-- No new Prisma migration — all 7 parts are pure computation changes over existing tables/columns
-  (`RawSensorLog`, `Reading`, `PlantProfile`, `Device.environment`), no new persisted fields.
+- Parts A–G need no new Prisma migration — pure computation changes over existing tables/columns
+  (`RawSensorLog`, `Reading`, `PlantProfile`, `Device.environment`), no new persisted fields. **Part
+  H is the one exception**: `HealthSettings` gains a `timezone` column (migration required, default
+  `"UTC"` so existing single-row settings resolve with no manual step).
 - No config/env changes.
 - `mock` provider: no change needed for parts B/C/D/E/F/G (they're pure `scoring.ts`/frontend/poller
   logic, not BLE-provider-specific) — verify against the mock provider's existing simulated data
   covers enough variation for personal-baseline (`unusual_low`/`unusual_high`/`normal`, all 3
   reachable) and indoor-luminosity (`too_low` reachable for a device with `environment = 'INDOOR'`)
   to be testable without needing new mock-provider code. Part G is testable directly (delete a mock
-  device row, confirm its Map entries are pruned on the next tick).
+  device row, confirm its Map entries are pruned on the next tick). **Part H** needs the mock
+  provider's simulated luminosity to cover enough of a real day/night cycle for `computeDailyTotals`
+  to produce at least one complete day and exercise the 2h-gap exclusion and the 3-consecutive-day
+  advisory — check `providers/mock/index.ts`'s existing luminosity simulation covers this before
+  writing new mock logic, only add what's missing.
 - Existing devices with `environment = null` (the current state of every real device — location/
   environment is optional, set via the device detail page's edit dialog) are entirely unaffected by
-  Part B until DestCom explicitly sets `INDOOR` on a device.
+  Part B until DestCom explicitly sets `INDOOR` on a device. Part H applies regardless of
+  `environment` (see Part H's intro) — every Parrot Pot's luminosity comparison switches to the
+  daily-integral input the moment this ships, whether `environment` is set or not.
