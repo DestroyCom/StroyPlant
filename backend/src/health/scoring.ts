@@ -9,7 +9,8 @@ export type ParameterStatus = 'ok' | 'too_low' | 'too_high' | 'n/a' | 'calibrati
 export interface ParameterHealth {
   value: number | null;
   status: ParameterStatus;
-  speciesRange: [number, number] | null;
+  speciesRange: [number, number | null] | null;
+  personalDeviation: 'unusual_low' | 'unusual_high' | 'normal';
 }
 
 export type HealthTrend = 'stable' | 'degrading' | 'improving' | 'unknown';
@@ -20,6 +21,7 @@ export interface DeviceHealth {
   status: DeviceHealthStatus;
   parameters: Partial<Record<ParameterKey, ParameterHealth>>;
   trend: HealthTrend;
+  warningParameters: ParameterKey[];
 }
 
 // Short rolling average rather than the instantaneous value alone (docs/STROYPLANT_SPEC.md section 7.3).
@@ -46,6 +48,28 @@ const PARAMETERS_BY_KIND: Record<Device['kind'], ParameterKey[]> = {
 const UNIT_CONVERSION: Partial<Record<ParameterKey, number>> = {
   luminosity: 1000,
 };
+
+type LightCategory = 'low' | 'medium' | 'high';
+
+// Published general houseplant DLI (Daily Light Integral) categories — NOT a per-species indoor
+// dataset (none exists anywhere: not in the WatchFlower CSV, not in the official Parrot app, not in
+// any of the other Flower Power repos surveyed). Used only when Device.environment is INDOOR, where
+// ambient window light with no supplemental grow lighting makes the outdoor/garden-oriented
+// WatchFlower CSV thresholds structurally unreachable for most real placements (a real production
+// Parrot Pot reading: 0.1 mol/m²/day, two full orders of magnitude below the CSV's typical 2-7.5
+// mol/day minimums). Values in mmol/m²/day to match PlantProfile.lightMinMmol/lightMaxMmol's own
+// unit — no separate conversion needed here.
+const INDOOR_LIGHT_FLOOR_MMOL: Record<LightCategory, number> = { low: 2000, medium: 5000, high: 10000 };
+
+// Classifies a SPECIES (not a device) by its own outdoor light need, using the CSV's own
+// lightMinMmol — a species that tolerates little light outdoors is assumed shade-tolerant indoors
+// too, and vice versa. Breakpoints match the same published low/medium/high-light category
+// boundaries as INDOOR_LIGHT_FLOOR_MMOL above.
+function classifyLightCategory(speciesOutdoorMinMmol: number): LightCategory {
+  if (speciesOutdoorMinMmol <= 5000) return 'low';
+  if (speciesOutdoorMinMmol <= 15000) return 'medium';
+  return 'high';
+}
 
 // Parameter most revealing of a progressive lack of water/moisture, used for trend
 // detection: soil moisture for the Parrot Pot (probe in the soil), ambient humidity for the Xiaomi
@@ -74,6 +98,28 @@ function speciesRangeFor(key: ParameterKey, profile: PlantProfile): [number, num
   }
 }
 
+// Resolves both the comparison range and the resulting status for one parameter. Indoor luminosity
+// is the one special case (floor-only comparison against a published category, see above) — every
+// other parameter/environment combination uses the species CSV range unchanged.
+function resolveRangeAndStatus(
+  key: ParameterKey,
+  recentValue: number,
+  profile: PlantProfile,
+  environment: Device['environment'],
+): { speciesRange: [number, number | null] | null; status: ParameterStatus } {
+  if (key === 'luminosity' && environment === 'INDOOR') {
+    const outdoorRange = speciesRangeFor(key, profile);
+    if (!outdoorRange) return { speciesRange: null, status: 'n/a' };
+    const floor = INDOOR_LIGHT_FLOOR_MMOL[classifyLightCategory(outdoorRange[0])];
+    return { speciesRange: [floor, null], status: recentValue < floor ? 'too_low' : 'ok' };
+  }
+
+  const speciesRange = speciesRangeFor(key, profile);
+  if (!speciesRange) return { speciesRange: null, status: 'n/a' };
+  const [min, max] = speciesRange;
+  return { speciesRange, status: recentValue < min ? 'too_low' : recentValue > max ? 'too_high' : 'ok' };
+}
+
 function average(values: number[]): number | null {
   if (values.length === 0) return null;
   return values.reduce((sum, v) => sum + v, 0) / values.length;
@@ -83,6 +129,43 @@ function stdDev(values: number[], mean: number): number {
   if (values.length < 2) return 0;
   const variance = values.reduce((sum, v) => sum + (v - mean) ** 2, 0) / values.length;
   return Math.sqrt(variance);
+}
+
+// Minimum baseline sample size before trusting a personal mean/stddev — reuses the same "5" the
+// existing recentSource fallback already uses a few lines below (not a new invented threshold).
+const PERSONAL_BASELINE_MIN_POINTS = 5;
+// Standard statistical convention for "unusual" (2 standard deviations), not a domain-specific
+// constant — see design spec Part C.
+const PERSONAL_BASELINE_SIGMA = 2;
+
+// Compares a device's own current value against ITS OWN recent history (excluding the same
+// RECENT_WINDOW_MS slice being evaluated) — separate from, and never influencing, the
+// species-range-based status above. Uses the pre-unit-conversion raw value (same unit valuesFor()
+// already returns for this key) so no extra conversion bookkeeping is needed here; unit consistency
+// only matters within this self-comparison, not against species thresholds.
+function computePersonalDeviation(
+  key: ParameterKey,
+  rawValue: number,
+  sorted: ReadingWithRawLog[],
+  recentSource: ReadingWithRawLog[],
+  warmingUp: boolean,
+  conductivityCalibration: ConductivityCalibration | null,
+): 'unusual_low' | 'unusual_high' | 'normal' {
+  if (warmingUp) return 'normal';
+
+  const recentSet = new Set(recentSource);
+  const baselineReadings = sorted.filter((reading) => !recentSet.has(reading));
+  const baselineValues = valuesFor(key, baselineReadings, conductivityCalibration);
+  if (baselineValues.length < PERSONAL_BASELINE_MIN_POINTS) return 'normal';
+
+  const baselineMean = average(baselineValues);
+  if (baselineMean == null) return 'normal';
+  const baselineStdDev = stdDev(baselineValues, baselineMean);
+  if (baselineStdDev === 0) return 'normal';
+
+  if (rawValue < baselineMean - PERSONAL_BASELINE_SIGMA * baselineStdDev) return 'unusual_low';
+  if (rawValue > baselineMean + PERSONAL_BASELINE_SIGMA * baselineStdDev) return 'unusual_high';
+  return 'normal';
 }
 
 function valuesFor(key: ParameterKey, readings: ReadingWithRawLog[], conductivityCalibration: ConductivityCalibration | null): number[] {
@@ -101,14 +184,14 @@ function valuesFor(key: ParameterKey, readings: ReadingWithRawLog[], conductivit
  * the caller to bound the Prisma query upstream and pass the matching `warmupMinDays`.
  */
 export function computeDeviceHealth(
-  device: Pick<Device, 'kind'>,
+  device: Pick<Device, 'kind' | 'environment'>,
   readings: ReadingWithRawLog[],
   profile: PlantProfile | null,
   warmupMinDays: number,
   conductivityCalibration: ConductivityCalibration | null,
 ): DeviceHealth {
   if (!profile) {
-    return { status: 'no_profile', parameters: {}, trend: 'unknown' };
+    return { status: 'no_profile', parameters: {}, trend: 'unknown', warningParameters: [] };
   }
 
   // A reading taken with the probe out of the soil (Plant Dr STATUS_FLAGS, section 7.11) doesn't
@@ -126,12 +209,13 @@ export function computeDeviceHealth(
 
   const parameters: Partial<Record<ParameterKey, ParameterHealth>> = {};
   let hasOutOfRange = false;
+  const warningParameters: ParameterKey[] = [];
 
   for (const key of PARAMETERS_BY_KIND[device.kind]) {
     // Scoped to this one parameter (design spec, Part 4) — an under-calibrated conductivity sensor
     // never pushes the WHOLE device into 'warming_up', that status is a coarser, separate concept.
     if (key === 'soilConductivityUsCm' && conductivityCalibration?.calibrated !== true) {
-      parameters[key] = { value: null, status: 'calibrating', speciesRange: null };
+      parameters[key] = { value: null, status: 'calibrating', speciesRange: null, personalDeviation: 'normal' };
       continue;
     }
 
@@ -139,31 +223,29 @@ export function computeDeviceHealth(
     if (rawValue == null) continue;
     const recentValue = rawValue * (UNIT_CONVERSION[key] ?? 1);
 
-    const speciesRange = speciesRangeFor(key, profile);
-    let status: ParameterStatus = 'n/a';
-    if (speciesRange) {
-      const [min, max] = speciesRange;
-      status = recentValue < min ? 'too_low' : recentValue > max ? 'too_high' : 'ok';
-      // Deliberately excluded from hasOutOfRange (2026-07-31, final-review follow-up): the
-      // per-device conductivity calibration is a RELATIVE percentile within this device's own
-      // observed raw range (always stretched to fill 0-1000, by construction), compared here
-      // against ABSOLUTE µS/cm species thresholds — a scale mismatch already flagged as unresolved
-      // even in WatchFlower's own reference app (ble/parrot/soilConductivity.ts's header comment).
-      // A device with genuinely stable conductivity but ordinary sensor noise can clear the
-      // MIN_CALIBRATION_RAW_RANGE gate and then have that noise amplified across the full output
-      // scale, risking a persistent false 'warning' badge. Until the scale question is actually
-      // resolved empirically, this parameter's status/value/speciesRange are still computed and
-      // shown on the gauge (tone, hint) for information, but never flip the device's overall status.
-      if (status !== 'ok' && key !== 'soilConductivityUsCm') hasOutOfRange = true;
+    const { speciesRange, status } = resolveRangeAndStatus(key, recentValue, profile, device.environment);
+    // Deliberately excluded from hasOutOfRange (2026-07-31, final-review follow-up): the
+    // per-device conductivity calibration is a RELATIVE percentile within this device's own
+    // observed raw range (always stretched to fill 0-1000, by construction), compared here
+    // against ABSOLUTE µS/cm species thresholds — a scale mismatch already flagged as unresolved
+    // even in WatchFlower's own reference app. Until the scale question is actually resolved
+    // empirically, this parameter's status/value/speciesRange are still computed and shown on the
+    // gauge (tone, hint) for information, but never flip the device's overall status.
+    if (status !== 'ok' && status !== 'n/a' && key !== 'soilConductivityUsCm') {
+      hasOutOfRange = true;
+      warningParameters.push(key);
     }
 
-    parameters[key] = { value: recentValue, status, speciesRange };
+    const personalDeviation = computePersonalDeviation(key, rawValue, sorted, recentSource, warmingUp, conductivityCalibration);
+
+    parameters[key] = { value: recentValue, status, speciesRange, personalDeviation };
   }
 
   return {
     status: warmingUp ? 'warming_up' : hasOutOfRange ? 'warning' : 'ok',
     parameters,
     trend: computeTrend(sorted, device.kind),
+    warningParameters,
   };
 }
 
