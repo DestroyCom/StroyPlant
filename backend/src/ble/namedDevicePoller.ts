@@ -66,6 +66,18 @@ export function startNamedDevicePoller(provider: DeviceProvider, connectionQueue
       const { pollIntervalMinutes } = await getPollSettings();
       const pollIntervalMs = pollIntervalMinutes * 60_000;
       const devices = await prisma.device.findMany({ where: { name: { not: null } } });
+
+      // Devices deleted since the last tick would otherwise leak their entries in these Maps
+      // forever (negligible at this project's real scale, but a one-line-cost fix — external
+      // review finding, cross-checked and confirmed 2026-07-31).
+      const currentDeviceIds = new Set(devices.map((device) => device.id));
+      for (const id of lastPolled.keys()) {
+        if (!currentDeviceIds.has(id)) lastPolled.delete(id);
+      }
+      for (const id of consecutiveFailures.keys()) {
+        if (!currentDeviceIds.has(id)) consecutiveFailures.delete(id);
+      }
+
       for (const device of devices) {
         const last = lastPolled.get(device.id) ?? 0;
         const failures = consecutiveFailures.get(device.id) ?? 0;
