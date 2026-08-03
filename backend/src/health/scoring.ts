@@ -121,7 +121,10 @@ function resolveRangeAndStatus(
   if (key === 'luminosity' && environment === 'INDOOR') {
     const outdoorRange = speciesRangeFor(key, profile);
     if (!outdoorRange) return { speciesRange: null, status: 'n/a' };
-    const floor = INDOOR_LIGHT_FLOOR_MMOL[classifyLightCategory(outdoorRange[0])];
+    // The indoor accommodation is meant to be more LENIENT than the outdoor range, never stricter —
+    // for species whose own outdoor minimum sits below the category floor, cap the floor at that
+    // outdoor minimum (found during the final whole-branch review, 2026-08-03).
+    const floor = Math.min(INDOOR_LIGHT_FLOOR_MMOL[classifyLightCategory(outdoorRange[0])], outdoorRange[0]);
     return { speciesRange: [floor, null], status: recentValue < floor ? 'too_low' : 'ok' };
   }
 

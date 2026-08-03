@@ -153,12 +153,13 @@ function DeviceDetailPage() {
           },
           {
             key: 'luminosity',
-            label: 'Luminosité (DLI)',
+            // "Luminosité instantanée" (not "(DLI)"): this chart plots raw per-reading instantaneous
+            // values, but the Health Engine's speciesRange is now a DAILY TOTAL threshold (Part H) —
+            // drawing it as a reference line here would falsely claim "below minimum ~20h/day" on a
+            // healthy device. No referenceLines for this one chart (final whole-branch review, 2026-08-03).
+            label: 'Luminosité instantanée',
             unit: ' mol/m²/j',
             getValue: (r) => r.luminosity,
-            // Converted mmol -> mol to stay in the same unit as the displayed raw value (see
-            // scoring.ts, the species range is stored in mmol).
-            referenceLines: referenceLinesFor(health?.parameters.luminosity, 1000),
           },
           {
             key: 'soilConductivityUsCm',

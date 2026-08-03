@@ -1,6 +1,6 @@
-import type { Reading, RawSensorLog } from '@prisma/client';
-import { prisma } from '../db/client.js';
+import type { RawSensorLog, Reading } from '@prisma/client';
 import { decodeSoilConductivityRaw } from '../ble/parrot/soilConductivity.js';
+import { prisma } from '../db/client.js';
 
 // Confidence-gate constants (docs/superpowers/specs/2026-07-31-soil-conductivity-self-calibration-
 // and-raw-sensor-log-design.md, Part 3) — plain exported constants, not a Settings DB row (YAGNI).
@@ -16,6 +16,14 @@ export interface ConductivityCalibration {
 }
 
 export type ReadingWithRawLog = Reading & { rawSensorLog: RawSensorLog | null };
+
+// getCalibration() is called on every devices.list/devices.history/health.deviceHealth request
+// (the detail page polls health.deviceHealth every 60s) and otherwise re-scans a device's entire
+// all-time RawSensorLog history on each call — unbounded, and growing forever with no pruning. A
+// calibration's percentile bounds change glacially (all-time 5th/95th percentiles), so a short TTL
+// costs nothing in practical staleness; matches the detail page's own ~60s poll interval.
+const CALIBRATION_CACHE_TTL_MS = 60_000;
+const calibrationCache = new Map<string, { value: ConductivityCalibration | null; expiresAt: number }>();
 
 // Linear-interpolation percentile (matches numpy's default) over an already-sorted array.
 function percentile(sortedValues: number[], p: number): number {
@@ -37,11 +45,17 @@ function percentile(sortedValues: number[], p: number): number {
 // redefine the whole 0-1000 output scale and silently reshape every historical chart value — it
 // just clamps at the extreme end via decodeSoilConductivityRaw's existing clamp() instead.
 export async function getCalibration(deviceId: string): Promise<ConductivityCalibration | null> {
+  const cached = calibrationCache.get(deviceId);
+  if (cached && cached.expiresAt > Date.now()) return cached.value;
+
   const rows = await prisma.rawSensorLog.findMany({
     where: { reading: { deviceId, source: 'POLL' }, soilConductivityRaw: { not: null } },
     select: { soilConductivityRaw: true },
   });
-  if (rows.length === 0) return null;
+  if (rows.length === 0) {
+    calibrationCache.set(deviceId, { value: null, expiresAt: Date.now() + CALIBRATION_CACHE_TTL_MS });
+    return null;
+  }
 
   const values = rows.map((row) => row.soilConductivityRaw as number).sort((a, b) => a - b);
   const rawMin = percentile(values, 0.05);
@@ -57,7 +71,9 @@ export async function getCalibration(deviceId: string): Promise<ConductivityCali
   const readingCount = values.length;
   const calibrated = daysCovered >= MIN_CALIBRATION_DAYS && rawMax - rawMin >= MIN_CALIBRATION_RAW_RANGE;
 
-  return { rawMin, rawMax, readingCount, daysCovered, calibrated };
+  const result: ConductivityCalibration = { rawMin, rawMax, readingCount, daysCovered, calibrated };
+  calibrationCache.set(deviceId, { value: result, expiresAt: Date.now() + CALIBRATION_CACHE_TTL_MS });
+  return result;
 }
 
 // Resolves the "fertility" value for one Reading: readings created after this feature shipped
