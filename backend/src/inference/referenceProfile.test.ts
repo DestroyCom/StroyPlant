@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { resolveReferenceProfile } from './referenceProfile.js';
 import type { PlantProfile } from '@prisma/client';
+
+import { resolveReferenceProfile } from './referenceProfile.js';
 
 function fakePlantProfile(overrides: Partial<PlantProfile> = {}): PlantProfile {
   return {
