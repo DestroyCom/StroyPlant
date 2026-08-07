@@ -1,5 +1,9 @@
 import type { Device, Reading, WateringEvent } from '@prisma/client';
 
+// Re-exported so downstream inference files (e.g. engine.ts's FIELD_TO_CAPABILITY map) can
+// reference `keyof Reading` without importing directly from '@prisma/client' themselves.
+export type { Reading };
+
 export type FactId = string;
 export type IndicatorId = string;
 export type SymptomId = string;
@@ -154,7 +158,10 @@ export interface RecommendationResult {
 export interface RecommendationRule {
   id: string;
   triggers: DiagnosisId[];
-  evaluate(diagnosis: DiagnosisFinding, ctx: InferenceContext & { operationalConstraints: OperationalConstraints }): RecommendationResult | null;
+  evaluate(
+    diagnosis: DiagnosisFinding,
+    ctx: InferenceContext & { operationalConstraints: OperationalConstraints },
+  ): RecommendationResult | null;
 }
 
 export interface Recommendation {
