@@ -48,6 +48,20 @@ describe('combineWeightedEvidence', () => {
     assert.equal(breakdown.missing.length, 1);
     assert.equal(breakdown.missing[0].reason, 'insufficient_history');
   });
+
+  it('includes items with strength: 0 in the weighted mean (does not exclude)', () => {
+    const { value } = combineWeightedEvidence([item({ weight: 1, strength: 0 }), item({ weight: 1, strength: 0.8 })]);
+    assert.ok(value != null && Math.abs(value - 0.4) < 1e-9);
+  });
+
+  it('strength: 0 (present, negative) differs from strength: null (missing)', () => {
+    const { value: withNull } = combineWeightedEvidence([item({ weight: 1, strength: null }), item({ weight: 1, strength: 0.8 })]);
+    const { value: withZero } = combineWeightedEvidence([item({ weight: 1, strength: 0 }), item({ weight: 1, strength: 0.8 })]);
+
+    assert.ok(withNull != null && Math.abs(withNull - 0.8) < 1e-9);
+    assert.ok(withZero != null && Math.abs(withZero - 0.4) < 1e-9);
+    assert.notEqual(withNull, withZero);
+  });
 });
 
 describe('combineNoisyOr', () => {
