@@ -34,9 +34,12 @@ describe('chronic_underwatering', () => {
     ]);
     const result = chronicUnderwatering.evaluate({ indicators: new Map(), facts: new Map(), environment: env, symptoms });
     assert.ok(result != null);
-    // Not equal to water_stress's own severity (0.8) — genuinely combines both symptoms.
-    assert.notEqual(result.severity, 0.8);
-    assert.ok(result.severity > 0.8, `expected combined severity above water_stress alone, got ${result.severity}`);
+    // Weighted combination: 0.65 * 0.8 (water_stress) + 0.35 * 1 (irregular_watering) = 0.87
+    // This exact check proves both "not a passthrough" and "correctly weighted", not just direction.
+    assert.ok(
+      result.severity != null && Math.abs(result.severity - 0.87) < 1e-9,
+      `expected severity ≈0.87 (correctly weighted combination), got ${result.severity}`,
+    );
   });
 
   it('is null when neither contributing symptom is present', () => {
