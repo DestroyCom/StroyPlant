@@ -22,8 +22,8 @@ import type {
 const DOMINANT_IMPORTANCE_THRESHOLD = 0.5; // to recalibrate empirically once real data exists (spec's Priority Score section)
 const WEAK_HYPOTHESIS_IMPORTANCE_THRESHOLD = 0.15;
 
-// Empty in V1 — only one RecommendationAction (TRIGGER_WATERING) exists, so no pair can ever
-// conflict yet. Populate once a second, genuinely conflicting action (e.g. DELAY_WATERING) ships.
+// Empty in V1 — only one RecommendationAction exists, so no pair can ever conflict. Populate
+// once a second, genuinely conflicting action ships.
 export const MUTUALLY_EXCLUSIVE_ACTIONS: [string, string][] = [];
 
 function importanceOf(f: { severity: number; confidence: number; coverage: { ratio: number } }): number {
