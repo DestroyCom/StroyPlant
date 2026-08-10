@@ -22,6 +22,16 @@ import type {
 const DOMINANT_IMPORTANCE_THRESHOLD = 0.5; // to recalibrate empirically once real data exists (spec's Priority Score section)
 const WEAK_HYPOTHESIS_IMPORTANCE_THRESHOLD = 0.15;
 
+// A noise floor, distinct from WEAK_HYPOTHESIS_IMPORTANCE_THRESHOLD below: a finding whose
+// importance falls under this is indistinguishable from evidence-combination noise (e.g. a
+// Symptom's ever-present-but-tiny contribution, like water_stress's temperature sigmoid term
+// never being exactly 0 even for a perfectly healthy reading) and is treated as "not diagnosed,"
+// never surfaced at any tier — not to be confused with WEAK_HYPOTHESIS_IMPORTANCE_THRESHOLD,
+// which classifies the tier of findings that already clear this floor. An initial engineering
+// estimate (not derived from real data), pending empirical recalibration — same convention as
+// this file's other threshold constants.
+const MINIMUM_REPORTABLE_IMPORTANCE = 0.01;
+
 // Empty in V1 — only one RecommendationAction exists, so no pair can ever conflict. Populate
 // once a second, genuinely conflicting action ships.
 export const MUTUALLY_EXCLUSIVE_ACTIONS: [string, string][] = [];
@@ -76,9 +86,13 @@ function computeSymptoms(rules: SymptomRule[], ctx: InferenceContext): SymptomSn
 }
 
 export function classifyTiers(findings: Array<Omit<DiagnosisFinding, 'tier'>>): DiagnosisFinding[] {
-  if (findings.length === 0) return [];
-  const maxImportance = Math.max(...findings.map(importanceOf));
-  return findings.map((finding) => {
+  // Findings below the noise floor are dropped entirely — never tiered, never returned — before
+  // maxImportance is computed, so a noise-floor finding can't skew what counts as "dominant" among
+  // the genuine ones either.
+  const reportable = findings.filter((finding) => importanceOf(finding) >= MINIMUM_REPORTABLE_IMPORTANCE);
+  if (reportable.length === 0) return [];
+  const maxImportance = Math.max(...reportable.map(importanceOf));
+  return reportable.map((finding) => {
     const importance = importanceOf(finding);
     const tier: DiagnosisFinding['tier'] =
       importance < WEAK_HYPOTHESIS_IMPORTANCE_THRESHOLD

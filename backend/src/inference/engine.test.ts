@@ -83,6 +83,37 @@ describe('classifyTiers', () => {
   it('returns an empty array for no findings', () => {
     assert.deepEqual(classifyTiers([]), []);
   });
+
+  it('drops a finding below the noise floor entirely, never even as weak_hypothesis', () => {
+    const findings: Array<Omit<DiagnosisFinding, 'tier'>> = [
+      {
+        id: 'noise',
+        severity: 0.03,
+        confidence: 0.03,
+        coverage: coverage(1),
+        evidenceBreakdown: { formula: 'noisyOr', items: [], missing: [] },
+      },
+    ];
+    // importance = 0.03 * 0.03 * 1 = 0.0009, far below MINIMUM_REPORTABLE_IMPORTANCE (0.01).
+    assert.deepEqual(classifyTiers(findings), []);
+  });
+
+  it('keeps a genuinely weak-but-real finding once it clears the noise floor', () => {
+    const findings: Array<Omit<DiagnosisFinding, 'tier'>> = [
+      {
+        id: 'weak_but_real',
+        severity: 0.3,
+        confidence: 0.75,
+        coverage: coverage(0.2),
+        evidenceBreakdown: { formula: 'noisyOr', items: [], missing: [] },
+      },
+    ];
+    // importance = 0.3 * 0.75 * 0.2 = 0.045, above the 0.01 noise floor but below the 0.15
+    // weak_hypothesis threshold — the exact case the noise floor must NOT swallow.
+    const tiered = classifyTiers(findings);
+    assert.equal(tiered.length, 1);
+    assert.equal(tiered[0]?.tier, 'weak_hypothesis');
+  });
 });
 
 describe('reconcileRecommendations', () => {
