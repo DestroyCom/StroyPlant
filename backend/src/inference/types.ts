@@ -112,7 +112,13 @@ export interface SymptomResult {
   confidence: number;
   coverage: EvidenceCoverage;
   supportingFacts: FactId[];
-  evidenceBreakdown: EvidenceBreakdown;
+  // Kept separately (rather than a single evidenceBreakdown) because severity and confidence are
+  // each produced by a different combination formula (combineWeightedEvidence vs. combineNoisyOr)
+  // over the same input items — collapsing to one breakdown would make severity, the number a user
+  // actually sees, impossible to explain by descending the evidence tree (spec's "why 0.72 and not
+  // 0.35" requirement).
+  severityBreakdown: EvidenceBreakdown;
+  confidenceBreakdown: EvidenceBreakdown;
 }
 
 export interface SymptomRule {
@@ -130,7 +136,10 @@ export interface DiagnosisFinding {
   confidence: number;
   coverage: EvidenceCoverage;
   tier: 'dominant' | 'secondary' | 'weak_hypothesis';
-  evidenceBreakdown: EvidenceBreakdown;
+  // See SymptomResult's severityBreakdown/confidenceBreakdown comment — same rationale: severity
+  // and confidence come from two separate combination calls, both must stay explainable.
+  severityBreakdown: EvidenceBreakdown;
+  confidenceBreakdown: EvidenceBreakdown;
 }
 
 export interface DiagnosisRule {

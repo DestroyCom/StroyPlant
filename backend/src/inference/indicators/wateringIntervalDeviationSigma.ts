@@ -9,7 +9,7 @@ const MIN_BASELINE_INTERVALS = 3;
 // physically meaningless value for even a modest schedule deviation, especially with this
 // indicator's typically small sample sizes. Unlike the drying-rate indicator (%/day), this one
 // works in hours, so a separate constant is needed. 12 hours is an initial engineering estimate —
-// about a quarter of a day, small relative to the multi-day watering cycles this project's real
+// half a day, small relative to the multi-day watering cycles this project's real
 // devices use, but large enough to absorb realistic jitter — not derived from real sensor data
 // yet; pending empirical recalibration once real production data accumulates (same convention as
 // other initial-estimate constants in this codebase, e.g. `HEAT_CONTRIBUTION_MIDPOINT_C` in the

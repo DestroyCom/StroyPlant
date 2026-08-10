@@ -48,7 +48,8 @@ describe('symptomEvidence', () => {
           confidence: 0.8,
           coverage: { availableWeight: 1, totalWeight: 1, ratio: 1 },
           supportingFacts: [],
-          evidenceBreakdown: { formula: 'weightedAverage', items: [], missing: [] },
+          severityBreakdown: { formula: 'weightedAverage', items: [], missing: [] },
+          confidenceBreakdown: { formula: 'noisyOr', items: [], missing: [] },
         },
       ],
     ]);
@@ -64,7 +65,8 @@ describe('diagnosisEvidence', () => {
       confidence: 0.85,
       coverage: { availableWeight: 1, totalWeight: 1, ratio: 1 },
       tier: 'secondary',
-      evidenceBreakdown: { formula: 'noisyOr', items: [], missing: [] },
+      severityBreakdown: { formula: 'weightedAverage', items: [], missing: [] },
+      confidenceBreakdown: { formula: 'noisyOr', items: [], missing: [] },
     };
     const evidence = diagnosisEvidence(diagnosis, 1);
     assert.equal(evidence.strength, 0.85);

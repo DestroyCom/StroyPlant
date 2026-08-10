@@ -20,10 +20,10 @@ export const waterStress: SymptomRule = {
       ),
     ];
 
-    const { value: severity } = combineWeightedEvidence(items);
+    const { value: severity, breakdown: severityBreakdown } = combineWeightedEvidence(items);
     if (severity == null) return null;
 
-    const { confidence, breakdown } = combineNoisyOr(items);
+    const { confidence, breakdown: confidenceBreakdown } = combineNoisyOr(items);
     const coverage = computeCoverage(items);
 
     return {
@@ -32,7 +32,8 @@ export const waterStress: SymptomRule = {
       confidence,
       coverage,
       supportingFacts: ['soil_moisture_below_profile_min', 'drying_rate_unusually_fast'],
-      evidenceBreakdown: breakdown,
+      severityBreakdown,
+      confidenceBreakdown,
     };
   },
 };

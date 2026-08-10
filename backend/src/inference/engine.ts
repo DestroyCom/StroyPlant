@@ -22,14 +22,13 @@ import type {
 const DOMINANT_IMPORTANCE_THRESHOLD = 0.5; // to recalibrate empirically once real data exists (spec's Priority Score section)
 const WEAK_HYPOTHESIS_IMPORTANCE_THRESHOLD = 0.15;
 
-// A noise floor, distinct from WEAK_HYPOTHESIS_IMPORTANCE_THRESHOLD below: a finding whose
-// importance falls under this is indistinguishable from evidence-combination noise (e.g. a
-// Symptom's ever-present-but-tiny contribution, like water_stress's temperature sigmoid term
-// never being exactly 0 even for a perfectly healthy reading) and is treated as "not diagnosed,"
-// never surfaced at any tier — not to be confused with WEAK_HYPOTHESIS_IMPORTANCE_THRESHOLD,
-// which classifies the tier of findings that already clear this floor. An initial engineering
-// estimate (not derived from real data), pending empirical recalibration — same convention as
-// this file's other threshold constants.
+// A noise floor, distinct from the existing WEAK_HYPOTHESIS_IMPORTANCE_THRESHOLD constant above: a
+// finding whose importance falls under this is indistinguishable from evidence-combination noise
+// (e.g. a Symptom whose sigmoid-derived term is never exactly 0 even for a perfectly healthy
+// reading) and is treated as "not diagnosed," never surfaced at any tier — not to be confused with
+// WEAK_HYPOTHESIS_IMPORTANCE_THRESHOLD, which classifies the tier of findings that already clear
+// this floor. An initial engineering estimate (not derived from real data), pending empirical
+// recalibration — same convention as this file's other threshold constants.
 const MINIMUM_REPORTABLE_IMPORTANCE = 0.01;
 
 // Empty in V1 — only one RecommendationAction exists, so no pair can ever conflict. Populate
@@ -154,6 +153,7 @@ export function reconcileRecommendations(
     }
     existing.confidence = Math.max(existing.confidence, candidate.confidence);
     existing.importance = Math.max(existing.importance, importance);
+    if (URGENCY_RANK[candidate.urgency] > URGENCY_RANK[existing.urgency]) existing.urgency = candidate.urgency;
     if (!existing.triggeredBy.includes(candidate.triggeredBy)) existing.triggeredBy.push(candidate.triggeredBy);
   }
 

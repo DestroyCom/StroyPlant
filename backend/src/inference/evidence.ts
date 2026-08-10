@@ -12,6 +12,12 @@ function missingFrom(items: EvidenceItem[]): EvidenceBreakdown['missing'] {
     .map((item) => ({ source: item.source, reason: item.missingReason ?? 'sensor_absent' }));
 }
 
+// Does NOT special-case `polarity` — every non-null-strength item (`supports` or `contradicts`
+// alike) is averaged in as-is, weighted only by `weight`/`strength`. A `contradicts` item here is
+// NOT subtracted or inverted, it is blended into the mean exactly like a `supports` item with the
+// same strength would be. Callers who need contradicting evidence to reduce (not average into) a
+// combined value must either exclude contradicting items from the array passed to this function, or
+// use `combineNoisyOr` instead, which does handle polarity (for confidence, not severity).
 export function combineWeightedEvidence(items: EvidenceItem[]): { value: number | null; breakdown: EvidenceBreakdown } {
   const available = items.filter((item) => item.strength != null);
   const totalWeight = available.reduce((sum, item) => sum + item.weight, 0);

@@ -62,6 +62,14 @@ describe('combineWeightedEvidence', () => {
     assert.ok(withZero != null && Math.abs(withZero - 0.4) < 1e-9);
     assert.notEqual(withNull, withZero);
   });
+
+  it('does NOT special-case polarity — a contradicts item is averaged in as-is, not subtracted or excluded (pins current behavior, see the doc comment above the function)', () => {
+    const { value } = combineWeightedEvidence([
+      item({ weight: 1, strength: 0.8, polarity: 'supports' }),
+      item({ weight: 1, strength: 0.8, polarity: 'contradicts' }),
+    ]);
+    assert.ok(value != null && Math.abs(value - 0.8) < 1e-9);
+  });
 });
 
 describe('combineNoisyOr', () => {

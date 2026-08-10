@@ -11,12 +11,12 @@ export const chronicUnderwatering: DiagnosisRule = {
       symptomEvidence(ctx.symptoms, 'irregular_watering', 0.35),
     ];
 
-    const { value: severity } = combineWeightedEvidence(items);
+    const { value: severity, breakdown: severityBreakdown } = combineWeightedEvidence(items);
     if (severity == null) return null;
 
-    const { confidence, breakdown } = combineNoisyOr(items);
+    const { confidence, breakdown: confidenceBreakdown } = combineNoisyOr(items);
     const coverage = computeCoverage(items);
 
-    return { id: 'chronic_underwatering', severity, confidence, coverage, evidenceBreakdown: breakdown };
+    return { id: 'chronic_underwatering', severity, confidence, coverage, severityBreakdown, confidenceBreakdown };
   },
 };

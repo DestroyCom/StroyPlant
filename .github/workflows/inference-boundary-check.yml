@@ -4,10 +4,14 @@ on:
   pull_request:
     paths:
       - 'backend/src/inference/**'
+      - 'backend/scripts/checkInferenceBoundary.ts'
+      - '.github/workflows/inference-boundary-check.yml'
   push:
     branches: [main]
     paths:
       - 'backend/src/inference/**'
+      - 'backend/scripts/checkInferenceBoundary.ts'
+      - '.github/workflows/inference-boundary-check.yml'
 
 jobs:
   check-boundary:
@@ -21,4 +25,12 @@ jobs:
           cache: 'pnpm'
       - run: pnpm install --frozen-lockfile
       - run: npx tsx scripts/checkInferenceBoundary.ts
+        working-directory: backend
+      - run: pnpm exec prisma generate
+        working-directory: backend
+      - run: pnpm test
+        working-directory: backend
+      - run: npx tsc -p tsconfig.json --noEmit
+        working-directory: backend
+      - run: npx biome check src/inference
         working-directory: backend

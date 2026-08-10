@@ -15,7 +15,8 @@ const diagnosis: DiagnosisFinding = {
   confidence: 0.85,
   coverage: { availableWeight: 1, totalWeight: 1, ratio: 1 },
   tier: 'dominant',
-  evidenceBreakdown: { formula: 'noisyOr', items: [], missing: [] },
+  severityBreakdown: { formula: 'weightedAverage', items: [], missing: [] },
+  confidenceBreakdown: { formula: 'noisyOr', items: [], missing: [] },
 };
 
 describe('trigger_watering', () => {

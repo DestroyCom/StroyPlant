@@ -63,14 +63,16 @@ describe('classifyTiers', () => {
         severity: 0.9,
         confidence: 0.65,
         coverage: coverage(0.95),
-        evidenceBreakdown: { formula: 'noisyOr', items: [], missing: [] },
+        severityBreakdown: { formula: 'weightedAverage', items: [], missing: [] },
+        confidenceBreakdown: { formula: 'noisyOr', items: [], missing: [] },
       },
       {
         id: 'b',
         severity: 0.3,
         confidence: 0.75,
         coverage: coverage(0.2),
-        evidenceBreakdown: { formula: 'noisyOr', items: [], missing: [] },
+        severityBreakdown: { formula: 'weightedAverage', items: [], missing: [] },
+        confidenceBreakdown: { formula: 'noisyOr', items: [], missing: [] },
       },
     ];
     const tiered = classifyTiers(findings);
@@ -91,7 +93,8 @@ describe('classifyTiers', () => {
         severity: 0.03,
         confidence: 0.03,
         coverage: coverage(1),
-        evidenceBreakdown: { formula: 'noisyOr', items: [], missing: [] },
+        severityBreakdown: { formula: 'weightedAverage', items: [], missing: [] },
+        confidenceBreakdown: { formula: 'noisyOr', items: [], missing: [] },
       },
     ];
     // importance = 0.03 * 0.03 * 1 = 0.0009, far below MINIMUM_REPORTABLE_IMPORTANCE (0.01).
@@ -105,7 +108,8 @@ describe('classifyTiers', () => {
         severity: 0.3,
         confidence: 0.75,
         coverage: coverage(0.2),
-        evidenceBreakdown: { formula: 'noisyOr', items: [], missing: [] },
+        severityBreakdown: { formula: 'weightedAverage', items: [], missing: [] },
+        confidenceBreakdown: { formula: 'noisyOr', items: [], missing: [] },
       },
     ];
     // importance = 0.3 * 0.75 * 0.2 = 0.045, above the 0.01 noise floor but below the 0.15
@@ -123,7 +127,8 @@ describe('reconcileRecommendations', () => {
     confidence: 0.8,
     coverage: coverage(1),
     tier: 'dominant',
-    evidenceBreakdown: { formula: 'noisyOr', items: [], missing: [] },
+    severityBreakdown: { formula: 'weightedAverage', items: [], missing: [] },
+    confidenceBreakdown: { formula: 'noisyOr', items: [], missing: [] },
   };
 
   it('merges two candidates recommending the same action, unioning triggeredBy', () => {
@@ -146,6 +151,27 @@ describe('reconcileRecommendations', () => {
     const [reconciled] = reconcileRecommendations(candidates, [baseDiagnosis, { ...baseDiagnosis, id: 'd2' }]);
     assert.equal(reconciled.confidence, 0.9);
     assert.deepEqual(reconciled.triggeredBy.sort(), ['d1', 'd2']);
+  });
+
+  it('merges two candidates for the same action, keeping the higher urgency even when the higher-urgency candidate arrives second', () => {
+    const candidates: RecommendationResult[] = [
+      {
+        action: 'TRIGGER_WATERING',
+        urgency: 'info',
+        confidence: 0.9,
+        triggeredBy: 'd1',
+        evidenceBreakdown: { formula: 'noisyOr', items: [], missing: [] },
+      },
+      {
+        action: 'TRIGGER_WATERING',
+        urgency: 'action_needed',
+        confidence: 0.2,
+        triggeredBy: 'd2',
+        evidenceBreakdown: { formula: 'noisyOr', items: [], missing: [] },
+      },
+    ];
+    const [reconciled] = reconcileRecommendations(candidates, [baseDiagnosis, { ...baseDiagnosis, id: 'd2' }]);
+    assert.equal(reconciled.urgency, 'action_needed');
   });
 
   it('drops the lower-importance side of a mutually exclusive pair', () => {
@@ -222,7 +248,8 @@ describe('InferenceEngine', () => {
               confidence: 1,
               coverage: coverage(1),
               supportingFacts: ['dry'],
-              evidenceBreakdown: { formula: 'weightedAverage', items: [], missing: [] },
+              severityBreakdown: { formula: 'weightedAverage', items: [], missing: [] },
+              confidenceBreakdown: { formula: 'noisyOr', items: [], missing: [] },
             };
       },
     };
@@ -238,7 +265,8 @@ describe('InferenceEngine', () => {
               severity: s.severity,
               confidence: s.confidence,
               coverage: coverage(1),
-              evidenceBreakdown: { formula: 'noisyOr', items: [], missing: [] },
+              severityBreakdown: { formula: 'weightedAverage', items: [], missing: [] },
+              confidenceBreakdown: { formula: 'noisyOr', items: [], missing: [] },
             };
       },
     };

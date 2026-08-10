@@ -4,6 +4,7 @@ import { toPlantHealthStatusDTO } from './dto.js';
 import type { InferenceResult } from './types.js';
 
 const emptyBreakdown = { formula: 'noisyOr' as const, items: [], missing: [] };
+const emptyWeightedBreakdown = { formula: 'weightedAverage' as const, items: [], missing: [] };
 
 describe('toPlantHealthStatusDTO', () => {
   it('maps diagnoses and recommendations to their minimal external shape only', () => {
@@ -18,7 +19,8 @@ describe('toPlantHealthStatusDTO', () => {
           confidence: 0.9,
           coverage: { availableWeight: 1, totalWeight: 1, ratio: 1 },
           tier: 'dominant',
-          evidenceBreakdown: emptyBreakdown,
+          severityBreakdown: emptyWeightedBreakdown,
+          confidenceBreakdown: emptyBreakdown,
         },
       ],
       recommendations: [
@@ -32,8 +34,10 @@ describe('toPlantHealthStatusDTO', () => {
       diagnoses: [{ id: 'chronic_underwatering', severity: 0.8, confidence: 0.9, tier: 'dominant' }],
       recommendations: [{ action: 'TRIGGER_WATERING', confidence: 0.85 }],
     });
-    // Internal-only fields (coverage, evidenceBreakdown, importance, triggeredBy) never appear.
-    assert.equal('evidenceBreakdown' in dto.diagnoses[0], false);
+    // Internal-only fields (coverage, severityBreakdown, confidenceBreakdown, importance,
+    // triggeredBy) never appear.
+    assert.equal('severityBreakdown' in dto.diagnoses[0], false);
+    assert.equal('confidenceBreakdown' in dto.diagnoses[0], false);
     assert.equal('importance' in dto.recommendations[0], false);
   });
 

@@ -4,7 +4,8 @@ import type { EnvironmentContext, SymptomSnapshot } from '../types.js';
 import { chronicUnderwatering } from './chronicUnderwatering.js';
 
 const env: EnvironmentContext = { deviceKind: 'PARROT_POT', environment: null, capabilities: [], observationsAvailability: {} };
-const emptyBreakdown = { formula: 'weightedAverage' as const, items: [], missing: [] };
+const emptySeverityBreakdown = { formula: 'weightedAverage' as const, items: [], missing: [] };
+const emptyConfidenceBreakdown = { formula: 'noisyOr' as const, items: [], missing: [] };
 
 describe('chronic_underwatering', () => {
   it('combines water_stress and irregular_watering into a diagnosis with real interpretation (not an alias)', () => {
@@ -17,7 +18,8 @@ describe('chronic_underwatering', () => {
           confidence: 0.9,
           coverage: { availableWeight: 1, totalWeight: 1, ratio: 1 },
           supportingFacts: [],
-          evidenceBreakdown: emptyBreakdown,
+          severityBreakdown: emptySeverityBreakdown,
+          confidenceBreakdown: emptyConfidenceBreakdown,
         },
       ],
       [
@@ -28,7 +30,8 @@ describe('chronic_underwatering', () => {
           confidence: 0.8,
           coverage: { availableWeight: 1, totalWeight: 1, ratio: 1 },
           supportingFacts: [],
-          evidenceBreakdown: emptyBreakdown,
+          severityBreakdown: emptySeverityBreakdown,
+          confidenceBreakdown: emptyConfidenceBreakdown,
         },
       ],
     ]);

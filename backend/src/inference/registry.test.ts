@@ -81,7 +81,7 @@ describe('inferenceEngine — chronic_underwatering vertical slice', () => {
     assert.deepEqual(recommendation.triggeredBy, ['chronic_underwatering']);
   });
 
-  it('withholds the recommendation while a cooldown is active, without withholding the diagnosis', () => {
+  it('keeps both diagnosis and recommendation while a cooldown is active, only lowering confidence', () => {
     const result = inferenceEngine.run(underwateredHistory(), profile, env, { ...operational, cooldownActive: true });
     assert.ok(
       result.diagnoses.some((d) => d.id === 'chronic_underwatering'),

@@ -8,10 +8,10 @@ export const irregularWatering: SymptomRule = {
   evaluate(ctx) {
     const items: EvidenceItem[] = [factEvidence(ctx.facts, 'watering_interval_unusually_long', 1)];
 
-    const { value: severity } = combineWeightedEvidence(items);
+    const { value: severity, breakdown: severityBreakdown } = combineWeightedEvidence(items);
     if (severity == null) return null;
 
-    const { confidence, breakdown } = combineNoisyOr(items);
+    const { confidence, breakdown: confidenceBreakdown } = combineNoisyOr(items);
     const coverage = computeCoverage(items);
 
     return {
@@ -20,7 +20,8 @@ export const irregularWatering: SymptomRule = {
       confidence,
       coverage,
       supportingFacts: ['watering_interval_unusually_long'],
-      evidenceBreakdown: breakdown,
+      severityBreakdown,
+      confidenceBreakdown,
     };
   },
 };
