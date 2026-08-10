@@ -893,6 +893,77 @@ production server:
   row written + `BAD_GATEWAY` surfaced to the caller), plant-profile assign/unassign, and live
   reading events actually pushed over the subscription while connected. See technical detail below
   for the router shape and the Date-serialization detail (`api/trpc/serialize.ts`).
+- **Horticultural inference engine — V1 vertical slice, Phase A** ✅ (2026-08-10, on branch
+  `worktree-inference-engine-v1`, not yet merged to `main`) — the first step of a multi-phase
+  replacement for the Health Engine (`backend/src/health/`, still the live/production code path;
+  nothing below is wired into any real consumer yet). Full design in
+  `docs/superpowers/specs/2026-08-07-horticultural-inference-engine-design.md` (RFC, DestCom-approved
+  after several rounds of review) and `docs/superpowers/plans/2026-08-07-horticultural-inference-engine-v1-slice.md`
+  (18-task implementation plan, executed via subagent-driven-development with a task review + fix
+  loop after every task, plus a final whole-branch review). Explicitly positioned as a rule-based,
+  deterministic, explainable expert system — never an LLM making the diagnosis, never a black-box
+  model — see the RFC's "Non-negotiable principles" section.
+  - **What was built**: a 5-layer pure-function pipeline (`backend/src/inference/`) —
+    Measurements → Indicators (4: rolling soil-moisture/temperature averages,
+    `dryingRateDeviationSigma`, `wateringIntervalDeviationSigma`) → Facts (3, boolean+confidence
+    only, no severity) → Symptoms (2: `water_stress`, `irregular_watering`, graded 0-1 severity) →
+    Diagnosis (1: `chronic_underwatering`) → Recommendation (1: `TRIGGER_WATERING`), orchestrated by
+    a fully domain-blind `InferenceEngine` class (`engine.ts` — contains zero concrete rule ids
+    anywhere, mechanically enforced by `validateRegistry()` at construction time). Every rule
+    composes exactly 2 canonical evidence-combination functions (`combineWeightedEvidence` for
+    severity, `combineNoisyOr` for confidence, both in `evidence.ts`) — no rule ever reimplements
+    combination math; a whole-branch audit confirmed this held uniformly across all 4 rule layers.
+  - **Species-blindness**: the engine core never imports `PlantProfile` — only
+    `referenceProfile.ts`'s `resolveReferenceProfile()` may, mechanically enforced by
+    `backend/scripts/checkInferenceBoundary.ts` + `.github/workflows/inference-boundary-check.yml`
+    (recursive filesystem scan, fails CI on any other file importing it). Verified twice: once per
+    its own task, once again independently by direct `grep` during the final whole-branch review.
+  - **Two statistical safety fixes, both DestCom-directed rather than plan-literal** (found during
+    implementation, not anticipated by the RFC): (1) `dryingRateDeviationSigma`/
+    `wateringIntervalDeviationSigma` floor their baseline standard deviation
+    (`MIN_STDDEV_PERCENT_PER_DAY`/`MIN_STDDEV_HOURS`) so a device with a very *stable* history can't
+    produce an artificially huge, physically meaningless z-score from near-zero natural variance —
+    the most stable, healthiest devices were the ones structurally most exposed to this false
+    signal before the fix; (2) `engine.ts`'s `classifyTiers` gained a `MINIMUM_REPORTABLE_IMPORTANCE`
+    noise floor after the end-to-end integration test (Task 16) revealed a healthy device could still
+    produce a spurious near-zero `weak_hypothesis` diagnosis purely from an always-slightly-nonzero
+    evidence term (a `sigmoid()`-transformed temperature contribution) — distinct from the existing
+    `WEAK_HYPOTHESIS_IMPORTANCE_THRESHOLD`, which classifies tier among findings that already clear
+    this floor.
+  - **Final whole-branch review** (independent of the 18 per-task reviews) additionally fixed: a
+    cross-task regression where a concrete rule name leaked back into an `engine.ts` comment after
+    being removed once already; a real bug in `reconcileRecommendations` where merging two
+    same-action Recommendation candidates took the max `confidence`/`importance` but silently kept
+    whichever candidate's `urgency` was evaluated first, never comparing via the existing
+    `URGENCY_RANK` table (unreachable today — only one `RecommendationAction` exists — but fixed
+    now while `engine.ts` is undisturbed); `SymptomResult`/`DiagnosisFinding` widened to carry
+    `severityBreakdown` AND `confidenceBreakdown` (previously only the confidence-producing
+    `combineNoisyOr` breakdown was kept, meaning `severity` — the number a user actually sees —
+    was not explainable by descending the evidence tree, contradicting an explicit RFC guarantee);
+    CI wiring so `pnpm test`/`tsc --noEmit`/`biome check` actually run on every PR touching
+    `backend/src/inference/`, not just the species-blindness script.
+  - **Deliberately deferred as a single "before Phase C wiring" checklist** (documented in a comment
+    atop `registry.ts`, DestCom-approved, zero risk while the module stays unwired): `AvailabilityReason`
+    is never actually set by any adapter (`EvidenceBreakdown.missing` always reports `sensor_absent`
+    regardless of the real reason); no clock injection (all 4 Indicators call `Date.now()` directly,
+    so the pipeline is not replayable/reproducible against historical readings, undermining the
+    RFC's stated reason for not persisting the full evidence tree); the two rolling-average
+    Indicators' stale-data fallback has no age bound (a device offline for months could still
+    produce a confident-enough value reaching `TRIGGER_WATERING`); `dryingRateDeviationSigma` buckets
+    days in hardcoded UTC rather than the device's configured timezone, unlike this codebase's own
+    established convention (`health/dailyLightIntegral.ts`'s `HealthSettings.timezone`).
+  - **Verified**: 91 tests (`cd backend && pnpm test`, Node's built-in `node:test` via `tsx` — the
+    first test infrastructure this monorepo has ever had), `tsc --noEmit` and `biome check` both
+    clean, all independently re-run and confirmed during the final review rather than only trusted
+    from per-task reports. An end-to-end integration test (`registry.test.ts`) proves the full
+    `chronic_underwatering` slice fires correctly against hand-crafted 40-day synthetic
+    healthy/underwatered device histories, run through the real wired `InferenceEngine` — not just
+    unit-tested in isolation.
+  - **Not done**: no consumer is wired to `inferenceEngine` yet — no tRPC procedure, no MQTT
+    publisher, no MCP tool, no scheduler change. `backend/src/health/` remains the only code path
+    actually read by the app today. The RFC's own 5-phase Migration Plan (shadow mode → migrate
+    read-only consumers → migrate the auto-watering scheduler only after zero-disagreement
+    verification → cleanup) is the deliberate next step, not started.
 
 ## Repo structure
 
@@ -906,7 +977,13 @@ backend/         API + business logic (Fastify, Prisma/SQLite, auth, BLE) — ru
                    Parrot protocol logic (ble/parrot/) and Xiaomi (ble/xiaomi/)
   src/providers/   DeviceProvider implementations (mock, noble-bridge, node-ble) + factory
   src/health/      Health Engine (Batch 4): plant_profiles CSV import + scoring engine + settings.ts
-                   (HealthSettings, DB-backed baseline/warm-up config, see Project status)
+                   (HealthSettings, DB-backed baseline/warm-up config, see Project status) — still
+                   the only code path actually consumed by the app; see src/inference/ below
+  src/inference/   Horticultural inference engine, V1 vertical slice (Phase A, isolated, not yet
+                   wired to any consumer — see Project status): Indicators/Facts/Symptoms/
+                   Diagnosis/Recommendations pipeline (engine.ts, evidence.ts, registry.ts),
+                   never imports PlantProfile except referenceProfile.ts (mechanically enforced,
+                   scripts/checkInferenceBoundary.ts)
   src/mqtt/        MQTT + Home Assistant auto-discovery (Batch 7): topics, discovery payloads,
                    manager.ts (live-reconfigurable client singleton, DB-backed via MqttSettings),
                    publisher (state/health/watering-result), commands (HA button → watering)
