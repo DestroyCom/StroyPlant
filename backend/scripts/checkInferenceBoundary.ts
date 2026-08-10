@@ -1,5 +1,5 @@
-import { readFileSync, readdirSync, statSync } from 'node:fs';
-import { join } from 'node:path';
+import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { basename, join } from 'node:path';
 
 const INFERENCE_DIR = join(import.meta.dirname, '..', 'src', 'inference');
 const EXEMPT_FILE = 'referenceProfile.ts';
@@ -22,7 +22,7 @@ function main(): void {
   const violations: string[] = [];
 
   for (const filePath of collectTsFiles(INFERENCE_DIR)) {
-    if (filePath.endsWith(EXEMPT_FILE)) continue;
+    if (basename(filePath) === EXEMPT_FILE) continue;
     const content = readFileSync(filePath, 'utf-8');
     if (FORBIDDEN_PATTERN.test(content) && content.includes('PlantProfile')) {
       violations.push(filePath);
