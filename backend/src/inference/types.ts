@@ -19,6 +19,10 @@ export interface EnvironmentContext {
   environment: Device['environment'];
   capabilities: DeviceCapabilities;
   observationsAvailability: Record<string, AvailabilityReason | 'available'>;
+  // IANA timezone name (e.g. 'Europe/Paris'). Optional and defaults to 'UTC' at the one call site
+  // that reads it today (dryingRateDeviationSigma's day bucketing) — omitting it, or setting it to
+  // 'UTC', preserves the exact previous (hardcoded-UTC) behavior.
+  timezone?: string;
 }
 
 export interface DeviceObservations {

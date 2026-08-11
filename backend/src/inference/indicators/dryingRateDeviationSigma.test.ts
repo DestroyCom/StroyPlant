@@ -80,4 +80,35 @@ describe('dryingRateDeviationSigma', () => {
     const second = dryingRateDeviationSigma.compute(observations, env, NOW);
     assert.deepEqual(first, second);
   });
+
+  it('buckets "today" by the device timezone, not hardcoded UTC — closes the ~2h blind spot right after UTC midnight', () => {
+    const localNow = new Date('2020-06-16T01:00:00.000Z'); // 1am UTC = 2am in Etc/GMT-1, same local calendar day
+    const timezone = 'Etc/GMT-1'; // fixed offset (UTC+1), no DST — deterministic
+    const baselineDays = Array.from({ length: 10 }, (_, i) => readingsForDay(i + 1, 50, 45, localNow)).flat();
+    const todayReadings = [
+      // Local midnight (00:00 in Etc/GMT-1) is 2020-06-15T23:00:00Z — the start of local "today".
+      fakeReading({ timestamp: new Date('2020-06-15T23:00:00.000Z'), soilMoisturePercent: 50 }),
+      // localNow itself: local 02:00, exactly 2h into local "today" — meets MIN_HOURS_FOR_TODAY_RATE.
+      fakeReading({ timestamp: localNow, soilMoisturePercent: 46 }),
+    ];
+    const result = dryingRateDeviationSigma.compute(
+      { readings: [...baselineDays, ...todayReadings], wateringEvents: [] },
+      { ...env, timezone },
+      localNow,
+    );
+    // Bucketed by hardcoded UTC, "today" (June 16 UTC) would only span 00:00-01:00 UTC = 1h of
+    // data, below MIN_HOURS_FOR_TODAY_RATE (2h), and this would incorrectly return null. Bucketed
+    // by the device's actual 'Etc/GMT-1' timezone, "today" (local June 16) has been running since
+    // 2020-06-15T23:00:00Z and spans exactly 2h by `localNow` — enough to compute a rate.
+    assert.notEqual(result.value, null);
+  });
+
+  it('preserves the exact previous (UTC) behavior when timezone is omitted', () => {
+    const baselineDays = Array.from({ length: 10 }, (_, i) => readingsForDay(i + 1, 50, 45)).flat();
+    const today = readingsForDay(0, 50, 44);
+    const observations = { readings: [...baselineDays, ...today], wateringEvents: [] };
+    const withExplicitUtc = dryingRateDeviationSigma.compute(observations, { ...env, timezone: 'UTC' }, NOW);
+    const withOmittedTimezone = dryingRateDeviationSigma.compute(observations, env, NOW);
+    assert.deepEqual(withExplicitUtc, withOmittedTimezone);
+  });
 });

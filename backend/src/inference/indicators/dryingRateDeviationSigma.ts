@@ -15,8 +15,13 @@ const MIN_HOURS_FOR_TODAY_RATE = 2;
 // `HEAT_CONTRIBUTION_MIDPOINT_C` in the `water_stress` symptom).
 const MIN_STDDEV_PERCENT_PER_DAY = 1.0;
 
-function dayKey(date: Date): string {
-  return date.toISOString().slice(0, 10);
+// "YYYY-MM-DD" in the given IANA timezone — the en-CA locale is a standard trick for getting
+// Intl.DateTimeFormat to produce ISO-ordered digits directly, no manual string reassembly needed.
+// Deliberately duplicated from health/dailyLightIntegral.ts's own dayKey helper rather than
+// imported: backend/src/inference/ must never depend on any other part of the app outside itself,
+// mirroring the same isolation principle that already governs the species-blindness boundary.
+function dayKey(date: Date, timezone: string): string {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(date);
 }
 
 // Positive = drying (losing moisture) over the day; negative = gaining (e.g. after watering).
@@ -32,20 +37,21 @@ function dailyRate(dayReadings: Reading[]): number | null {
 export const dryingRateDeviationSigma: IndicatorDefinition = {
   id: 'dryingRateDeviationSigma',
   requiredFields: ['soilMoisturePercent'],
-  compute(observations: DeviceObservations, _environment: EnvironmentContext, now: Date): IndicatorValue {
+  compute(observations: DeviceObservations, environment: EnvironmentContext, now: Date): IndicatorValue {
+    const timezone = environment.timezone ?? 'UTC';
     const withMoisture = observations.readings
       .filter((r) => r.source === 'POLL' && r.soilMoisturePercent != null)
       .sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
 
     const byDay = new Map<string, Reading[]>();
     for (const reading of withMoisture) {
-      const key = dayKey(reading.timestamp);
+      const key = dayKey(reading.timestamp, timezone);
       const bucket = byDay.get(key);
       if (bucket) bucket.push(reading);
       else byDay.set(key, [reading]);
     }
 
-    const today = dayKey(now);
+    const today = dayKey(now, timezone);
     const todayRate = dailyRate(byDay.get(today) ?? []);
     if (todayRate == null) return { id: 'dryingRateDeviationSigma', value: null, confidence: 0 };
 
