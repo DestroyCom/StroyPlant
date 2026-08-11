@@ -51,7 +51,12 @@ const FIELD_TO_CAPABILITY: Partial<Record<keyof Reading, 'soilMoisture' | 'tempe
   humidityPercent: 'humidity',
 };
 
-function computeIndicators(defs: IndicatorDefinition[], observations: DeviceObservations, environment: EnvironmentContext): IndicatorIndex {
+function computeIndicators(
+  defs: IndicatorDefinition[],
+  observations: DeviceObservations,
+  environment: EnvironmentContext,
+  now: Date,
+): IndicatorIndex {
   const index: IndicatorIndex = new Map();
   for (const def of defs) {
     const isSupported = def.requiredFields.every((field) => {
@@ -59,7 +64,7 @@ function computeIndicators(defs: IndicatorDefinition[], observations: DeviceObse
       return capability == null || environment.capabilities.includes(capability);
     });
     if (!isSupported) continue;
-    index.set(def.id, def.compute(observations, environment));
+    index.set(def.id, def.compute(observations, environment, now));
   }
   return index;
 }
@@ -238,8 +243,9 @@ export class InferenceEngine {
     profile: ReferenceProfile | null,
     environment: EnvironmentContext,
     operational: OperationalConstraints,
+    now: Date = new Date(),
   ): InferenceResult {
-    const indicators = computeIndicators(this.indicatorDefs, observations, environment);
+    const indicators = computeIndicators(this.indicatorDefs, observations, environment, now);
     const facts = computeFacts(this.factDefs, indicators, profile);
     const ctx: InferenceContext = { indicators, facts, plantState: null, environment };
     const symptoms = computeSymptoms(this.symptomRules, ctx);

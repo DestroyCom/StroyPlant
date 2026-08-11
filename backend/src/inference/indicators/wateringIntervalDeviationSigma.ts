@@ -1,4 +1,4 @@
-import type { DeviceObservations, IndicatorDefinition, IndicatorValue } from '../types.js';
+import type { DeviceObservations, EnvironmentContext, IndicatorDefinition, IndicatorValue } from '../types.js';
 
 const MIN_BASELINE_INTERVALS = 3;
 // Deliberate floor on the baseline's standard deviation, same rationale and convention as
@@ -19,7 +19,7 @@ const MIN_STDDEV_HOURS = 12;
 export const wateringIntervalDeviationSigma: IndicatorDefinition = {
   id: 'wateringIntervalDeviationSigma',
   requiredFields: [],
-  compute(observations: DeviceObservations): IndicatorValue {
+  compute(observations: DeviceObservations, _environment: EnvironmentContext, now: Date): IndicatorValue {
     const successful = observations.wateringEvents
       .filter((event) => event.success)
       .sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
@@ -45,7 +45,7 @@ export const wateringIntervalDeviationSigma: IndicatorDefinition = {
     const effectiveStdDev = Math.max(stdDev, MIN_STDDEV_HOURS);
 
     const lastWatering = successful[successful.length - 1];
-    const currentGapHours = (Date.now() - lastWatering.timestamp.getTime()) / 3_600_000;
+    const currentGapHours = (now.getTime() - lastWatering.timestamp.getTime()) / 3_600_000;
     const sigma = (currentGapHours - mean) / effectiveStdDev;
     const confidence = Math.min(1, intervalsHours.length / (MIN_BASELINE_INTERVALS * 2));
 

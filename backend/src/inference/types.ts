@@ -49,7 +49,7 @@ export interface IndicatorValue<T = number> {
 export interface IndicatorDefinition {
   id: IndicatorId;
   requiredFields: (keyof Reading)[];
-  compute(observations: DeviceObservations, environment: EnvironmentContext): IndicatorValue;
+  compute(observations: DeviceObservations, environment: EnvironmentContext, now: Date): IndicatorValue;
 }
 
 export type IndicatorIndex = Map<IndicatorId, IndicatorValue>;

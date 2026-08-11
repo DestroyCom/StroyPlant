@@ -1,5 +1,5 @@
 import type { Reading } from '@prisma/client';
-import type { DeviceObservations, IndicatorDefinition, IndicatorValue } from '../types.js';
+import type { DeviceObservations, EnvironmentContext, IndicatorDefinition, IndicatorValue } from '../types.js';
 
 const MIN_BASELINE_DAYS = 5;
 const BASELINE_WINDOW_DAYS = 14;
@@ -32,7 +32,7 @@ function dailyRate(dayReadings: Reading[]): number | null {
 export const dryingRateDeviationSigma: IndicatorDefinition = {
   id: 'dryingRateDeviationSigma',
   requiredFields: ['soilMoisturePercent'],
-  compute(observations: DeviceObservations): IndicatorValue {
+  compute(observations: DeviceObservations, _environment: EnvironmentContext, now: Date): IndicatorValue {
     const withMoisture = observations.readings
       .filter((r) => r.source === 'POLL' && r.soilMoisturePercent != null)
       .sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
@@ -45,7 +45,7 @@ export const dryingRateDeviationSigma: IndicatorDefinition = {
       else byDay.set(key, [reading]);
     }
 
-    const today = dayKey(new Date());
+    const today = dayKey(now);
     const todayRate = dailyRate(byDay.get(today) ?? []);
     if (todayRate == null) return { id: 'dryingRateDeviationSigma', value: null, confidence: 0 };
 
