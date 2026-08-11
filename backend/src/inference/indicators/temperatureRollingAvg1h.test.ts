@@ -38,4 +38,22 @@ describe('temperatureRollingAvg1h', () => {
     const second = temperatureRollingAvg1h.compute(observations, env, NOW);
     assert.deepEqual(first, second);
   });
+
+  it('discards the fallback average when the most recent fallback reading is older than 24h (stale)', () => {
+    const readings = Array.from({ length: 5 }, (_, i) =>
+      fakeReading({ timestamp: new Date(NOW.getTime() - (25 + i) * 3_600_000), temperatureC: 22 }),
+    );
+    const result = temperatureRollingAvg1h.compute({ readings, wateringEvents: [] }, env, NOW);
+    assert.equal(result.value, null);
+    assert.equal(result.confidence, 0);
+  });
+
+  it('still uses the fallback average when the most recent fallback reading is within 24h', () => {
+    const readings = Array.from({ length: 5 }, (_, i) =>
+      fakeReading({ timestamp: new Date(NOW.getTime() - (20 + i) * 3_600_000), temperatureC: 22 }),
+    );
+    const result = temperatureRollingAvg1h.compute({ readings, wateringEvents: [] }, env, NOW);
+    assert.equal(result.value, 22);
+    assert.equal(result.confidence, 0.5);
+  });
 });
