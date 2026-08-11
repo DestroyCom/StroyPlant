@@ -68,6 +68,12 @@ describe('wateringIntervalDeviationSigma', () => {
   });
 
   it('computes correctly against a `now` far from the real wall clock, proving it never reads Date.now() internally', () => {
+    // 4 events spaced 4 days apart (96 hours): intervals = [96h, 96h, 96h], mean = 96h.
+    // Current gap since the last event (4 days ago) = 96 hours.
+    // Sigma = (96 - 96) / max(stddev=0, MIN_STDDEV_HOURS=12) = 0 / 12 = 0.
+    // If the indicator uses the real Date.now() instead of the injected NOW (2020), the current
+    // gap would be ~6 years = ~52,000 hours, giving sigma ≈ (52000 - 96) / 12 ≈ 4326 — a
+    // completely different magnitude. A sigma near 0 proves the injected `now` is being used.
     const events = [
       fakeWateringEvent({ timestamp: new Date(NOW.getTime() - 16 * DAY_MS) }),
       fakeWateringEvent({ timestamp: new Date(NOW.getTime() - 12 * DAY_MS) }),
@@ -75,10 +81,10 @@ describe('wateringIntervalDeviationSigma', () => {
       fakeWateringEvent({ timestamp: new Date(NOW.getTime() - 4 * DAY_MS) }),
     ];
     const result = wateringIntervalDeviationSigma.compute({ readings: [], wateringEvents: events }, env, NOW);
-    // If the indicator used the real Date.now() instead of the injected NOW (2020) to compute the
-    // "current gap since the last watering", the gap would be a huge, unrelated real-world number
-    // instead of the ~4-day gap this fixture actually represents.
-    assert.notEqual(result.value, null);
+    // Tight bound: sigma should be very close to 0 (within floating-point error). This assertion
+    // fails immediately if someone reverts to Date.now() instead of the injected `now`, since
+    // that would produce a sigma in the thousands, not near zero.
+    assert.ok(result.value != null && Math.abs(result.value) < 0.1, `expected sigma ≈ 0, got ${result.value}`);
   });
 
   it('produces identical output for two separate calls with the same observations and the same fixed now', () => {
