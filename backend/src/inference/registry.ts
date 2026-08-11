@@ -5,6 +5,9 @@
 // not an oversight; nothing downstream consumes evidenceBreakdown.missing at the Fact/Symptom/
 // Diagnosis level yet. The other 3 findings that same pass identified (no clock injection, no
 // staleness bound on the rolling-average fallback, hardcoded-UTC day bucketing) are resolved.
+// Also: the Phase C adapter must populate EnvironmentContext.timezone from the real
+// HealthSettings.timezone row — omitting it silently falls back to 'UTC' with no test failure to
+// catch the regression.
 import { diagnosisRules } from './diagnoses/index.js';
 import { InferenceEngine } from './engine.js';
 import { factDefinitions } from './facts/index.js';

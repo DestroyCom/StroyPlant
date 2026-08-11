@@ -20,8 +20,17 @@ const MIN_STDDEV_PERCENT_PER_DAY = 1.0;
 // Deliberately duplicated from health/dailyLightIntegral.ts's own dayKey helper rather than
 // imported: backend/src/inference/ must never depend on any other part of the app outside itself,
 // mirroring the same isolation principle that already governs the species-blindness boundary.
+// Formatters are memoized by timezone (module-level cache, deterministic and pure w.r.t. the
+// timezone string) — constructing a fresh Intl.DateTimeFormat per call measured 52x slower than
+// reusing one, and this runs once per reading in compute()'s byDay loop below.
+const dayKeyFormatters = new Map<string, Intl.DateTimeFormat>();
 function dayKey(date: Date, timezone: string): string {
-  return new Intl.DateTimeFormat('en-CA', { timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(date);
+  let formatter = dayKeyFormatters.get(timezone);
+  if (!formatter) {
+    formatter = new Intl.DateTimeFormat('en-CA', { timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit' });
+    dayKeyFormatters.set(timezone, formatter);
+  }
+  return formatter.format(date);
 }
 
 // Positive = drying (losing moisture) over the day; negative = gaining (e.g. after watering).

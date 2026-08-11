@@ -96,10 +96,11 @@ describe('dryingRateDeviationSigma', () => {
       { ...env, timezone },
       localNow,
     );
-    // Bucketed by hardcoded UTC, "today" (June 16 UTC) would only span 00:00-01:00 UTC = 1h of
-    // data, below MIN_HOURS_FOR_TODAY_RATE (2h), and this would incorrectly return null. Bucketed
-    // by the device's actual 'Etc/GMT-1' timezone, "today" (local June 16) has been running since
-    // 2020-06-15T23:00:00Z and spans exactly 2h by `localNow` — enough to compute a rate.
+    // Bucketed by hardcoded UTC, the 2020-06-15T23:00:00Z reading falls into the June 15 bucket
+    // (not June 16), leaving "today" (June 16 UTC) with only localNow's single reading — dailyRate
+    // returns null at its two-reading minimum before MIN_HOURS_FOR_TODAY_RATE is even checked.
+    // Bucketed by the device's actual 'Etc/GMT-1' timezone, both readings land in the same
+    // local-June-16 bucket, spanning exactly 2h — enough to compute a rate.
     assert.notEqual(result.value, null);
   });
 
