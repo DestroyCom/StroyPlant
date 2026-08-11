@@ -23,7 +23,9 @@ export const wateringIntervalDeviationSigma: IndicatorDefinition = {
     const successful = observations.wateringEvents
       .filter((event) => event.success)
       .sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
-    if (successful.length === 0) return { id: 'wateringIntervalDeviationSigma', value: null, confidence: 0 };
+    if (successful.length === 0) {
+      return { id: 'wateringIntervalDeviationSigma', value: null, confidence: 0, unavailableReason: 'no_recent_data' };
+    }
 
     const intervalsHours: number[] = [];
     for (let i = 1; i < successful.length; i++) {
@@ -31,7 +33,13 @@ export const wateringIntervalDeviationSigma: IndicatorDefinition = {
     }
 
     if (intervalsHours.length < MIN_BASELINE_INTERVALS) {
-      return { id: 'wateringIntervalDeviationSigma', value: null, confidence: 0, meta: { sampleSize: intervalsHours.length } };
+      return {
+        id: 'wateringIntervalDeviationSigma',
+        value: null,
+        confidence: 0,
+        meta: { sampleSize: intervalsHours.length },
+        unavailableReason: 'insufficient_history',
+      };
     }
 
     const mean = intervalsHours.reduce((sum, h) => sum + h, 0) / intervalsHours.length;

@@ -56,4 +56,17 @@ describe('temperatureRollingAvg1h', () => {
     assert.equal(result.value, 22);
     assert.equal(result.confidence, 0.5);
   });
+
+  it('sets unavailableReason "no_recent_data" when there is no temperature data at all', () => {
+    const result = temperatureRollingAvg1h.compute({ readings: [], wateringEvents: [] }, env, NOW);
+    assert.equal(result.unavailableReason, 'no_recent_data');
+  });
+
+  it('sets unavailableReason "no_recent_data" when the fallback average is stale (> 24h old)', () => {
+    const readings = Array.from({ length: 5 }, (_, i) =>
+      fakeReading({ timestamp: new Date(NOW.getTime() - (25 + i) * 3_600_000), temperatureC: 22 }),
+    );
+    const result = temperatureRollingAvg1h.compute({ readings, wateringEvents: [] }, env, NOW);
+    assert.equal(result.unavailableReason, 'no_recent_data');
+  });
 });

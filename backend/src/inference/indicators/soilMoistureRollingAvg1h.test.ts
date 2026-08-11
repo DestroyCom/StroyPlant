@@ -78,4 +78,17 @@ describe('soilMoistureRollingAvg1h', () => {
     assert.equal(result.value, 50);
     assert.equal(result.confidence, 0.5);
   });
+
+  it('sets unavailableReason "no_recent_data" when there is no soil moisture data at all', () => {
+    const result = soilMoistureRollingAvg1h.compute({ readings: [], wateringEvents: [] }, env, NOW);
+    assert.equal(result.unavailableReason, 'no_recent_data');
+  });
+
+  it('sets unavailableReason "no_recent_data" when the fallback average is stale (> 24h old)', () => {
+    const readings = Array.from({ length: 5 }, (_, i) =>
+      fakeReading({ timestamp: new Date(NOW.getTime() - (25 + i) * 3_600_000), soilMoisturePercent: 50 }),
+    );
+    const result = soilMoistureRollingAvg1h.compute({ readings, wateringEvents: [] }, env, NOW);
+    assert.equal(result.unavailableReason, 'no_recent_data');
+  });
 });

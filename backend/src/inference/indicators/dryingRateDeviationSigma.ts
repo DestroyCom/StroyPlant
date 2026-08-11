@@ -53,7 +53,7 @@ export const dryingRateDeviationSigma: IndicatorDefinition = {
 
     const today = dayKey(now, timezone);
     const todayRate = dailyRate(byDay.get(today) ?? []);
-    if (todayRate == null) return { id: 'dryingRateDeviationSigma', value: null, confidence: 0 };
+    if (todayRate == null) return { id: 'dryingRateDeviationSigma', value: null, confidence: 0, unavailableReason: 'no_recent_data' };
 
     const baselineRates: number[] = [];
     for (const [day, dayReadings] of byDay) {
@@ -64,7 +64,13 @@ export const dryingRateDeviationSigma: IndicatorDefinition = {
     const recentBaselineRates = baselineRates.slice(-BASELINE_WINDOW_DAYS);
 
     if (recentBaselineRates.length < MIN_BASELINE_DAYS) {
-      return { id: 'dryingRateDeviationSigma', value: null, confidence: 0, meta: { sampleSize: recentBaselineRates.length } };
+      return {
+        id: 'dryingRateDeviationSigma',
+        value: null,
+        confidence: 0,
+        meta: { sampleSize: recentBaselineRates.length },
+        unavailableReason: 'insufficient_history',
+      };
     }
 
     const mean = recentBaselineRates.reduce((sum, r) => sum + r, 0) / recentBaselineRates.length;

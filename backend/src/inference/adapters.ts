@@ -28,6 +28,11 @@ export function indicatorEvidence(
     strength,
     confidence: indicator?.confidence ?? null,
     polarity,
+    // undefined both when the indicator was never computed at all (capability-gated-out) and when
+    // it was computed but didn't set its own reason — either way, evidence.ts's missingFrom()
+    // falls back to 'sensor_absent', which is correct for the former case and shouldn't occur for
+    // the latter now that every registered Indicator sets this field on every null path.
+    missingReason: indicator?.unavailableReason,
   };
 }
 

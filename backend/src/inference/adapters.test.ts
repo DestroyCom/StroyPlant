@@ -35,6 +35,20 @@ describe('indicatorEvidence', () => {
     const indicators: IndicatorIndex = new Map([['i1', { id: 'i1', value: null, confidence: 0 }]]);
     assert.equal(indicatorEvidence(indicators, 'i1', 1, (value) => value).strength, null);
   });
+
+  it("propagates the indicator's unavailableReason into missingReason when the value is null", () => {
+    const indicators: IndicatorIndex = new Map([
+      ['i1', { id: 'i1', value: null, confidence: 0, unavailableReason: 'insufficient_history' }],
+    ]);
+    const evidence = indicatorEvidence(indicators, 'i1', 1, (value) => value);
+    assert.equal(evidence.missingReason, 'insufficient_history');
+  });
+
+  it('leaves missingReason undefined (evidence.ts applies the sensor_absent fallback) when the indicator was never computed at all', () => {
+    const evidence = indicatorEvidence(new Map(), 'unknown', 1, (value) => value);
+    assert.equal(evidence.strength, null);
+    assert.equal(evidence.missingReason, undefined);
+  });
 });
 
 describe('symptomEvidence', () => {

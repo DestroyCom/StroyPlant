@@ -21,12 +21,12 @@ export const temperatureRollingAvg1h: IndicatorDefinition = {
     const recent = withTemp.filter((r) => nowMs - r.timestamp.getTime() <= RECENT_WINDOW_MS);
     const sample = recent.length > 0 ? recent : withTemp.slice(-FALLBACK_SAMPLE_SIZE);
 
-    if (sample.length === 0) return { id: 'temperatureRollingAvg1h', value: null, confidence: 0 };
+    if (sample.length === 0) return { id: 'temperatureRollingAvg1h', value: null, confidence: 0, unavailableReason: 'no_recent_data' };
 
     if (recent.length === 0) {
       const mostRecentFallback = sample[sample.length - 1];
       if (nowMs - mostRecentFallback.timestamp.getTime() > MAX_STALE_FALLBACK_AGE_MS) {
-        return { id: 'temperatureRollingAvg1h', value: null, confidence: 0 };
+        return { id: 'temperatureRollingAvg1h', value: null, confidence: 0, unavailableReason: 'no_recent_data' };
       }
     }
 

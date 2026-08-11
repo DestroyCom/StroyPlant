@@ -48,6 +48,12 @@ export interface IndicatorValue<T = number> {
   value: T | null;
   confidence: number;
   meta?: { windowHours?: number; sampleSize?: number; trend?: 'improving' | 'stable' | 'degrading'; [key: string]: unknown };
+  // Only meaningful when value === null. Set by the Indicator itself on every null-returning path,
+  // read by adapters.ts's indicatorEvidence to populate EvidenceBreakdown.missing with the real
+  // reason instead of always defaulting to 'sensor_absent'. 'sensor_absent' is reserved for the
+  // capability-gated-out case (engine.ts never even calls compute()) — an Indicator whose
+  // compute() actually ran always sets 'no_recent_data' or 'insufficient_history' instead.
+  unavailableReason?: AvailabilityReason;
 }
 
 export interface IndicatorDefinition {

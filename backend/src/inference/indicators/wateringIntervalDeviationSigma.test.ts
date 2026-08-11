@@ -98,4 +98,18 @@ describe('wateringIntervalDeviationSigma', () => {
     const second = wateringIntervalDeviationSigma.compute(observations, env, NOW);
     assert.deepEqual(first, second);
   });
+
+  it('sets unavailableReason "no_recent_data" with no successful watering events', () => {
+    const result = wateringIntervalDeviationSigma.compute({ readings: [], wateringEvents: [] }, env, NOW);
+    assert.equal(result.unavailableReason, 'no_recent_data');
+  });
+
+  it('sets unavailableReason "insufficient_history" with fewer than 3 historical intervals', () => {
+    const events = [
+      fakeWateringEvent({ timestamp: new Date(NOW.getTime() - 8 * DAY_MS) }),
+      fakeWateringEvent({ timestamp: new Date(NOW.getTime() - 4 * DAY_MS) }),
+    ];
+    const result = wateringIntervalDeviationSigma.compute({ readings: [], wateringEvents: events }, env, NOW);
+    assert.equal(result.unavailableReason, 'insufficient_history');
+  });
 });

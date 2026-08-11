@@ -111,4 +111,16 @@ describe('dryingRateDeviationSigma', () => {
     const withOmittedTimezone = dryingRateDeviationSigma.compute(observations, env, NOW);
     assert.deepEqual(withExplicitUtc, withOmittedTimezone);
   });
+
+  it('sets unavailableReason "insufficient_history" when there are fewer than 5 baseline days', () => {
+    const readings = [...readingsForDay(2, 50, 45), ...readingsForDay(1, 50, 45), ...readingsForDay(0, 50, 30)];
+    const result = dryingRateDeviationSigma.compute({ readings, wateringEvents: [] }, env, NOW);
+    assert.equal(result.unavailableReason, 'insufficient_history');
+  });
+
+  it('sets unavailableReason "no_recent_data" when today has no reading pair to compute a rate from', () => {
+    const baselineDays = Array.from({ length: 10 }, (_, i) => readingsForDay(i + 1, 50, 45)).flat();
+    const result = dryingRateDeviationSigma.compute({ readings: baselineDays, wateringEvents: [] }, env, NOW);
+    assert.equal(result.unavailableReason, 'no_recent_data');
+  });
 });
