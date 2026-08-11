@@ -1,18 +1,10 @@
-// Known follow-up before wiring a real consumer (tRPC/MQTT/MCP/scheduler) to inferenceEngine —
-// all deferred together since they share one root cause (the engine's real-time/data-availability
-// boundary is thin because nothing consumes it yet) and carry zero risk while unwired:
-// 1. AvailabilityReason (types.ts) is never actually set by any adapter — EvidenceBreakdown.missing
-//    always reports 'sensor_absent' regardless of the real reason (offline vs. never-existed).
-// 2. No clock injection: all 4 indicators call Date.now()/new Date() directly, so the pipeline is
-//    not replayable/reproducible against the same historical readings — contradicts the RFC's
-//    stated reason for not persisting the full evidence tree.
-// 3. The two rolling-average indicators' stale-data fallback (last 5 readings) has no age bound —
-//    a device offline for months can still produce a confident-enough value that reaches
-//    TRIGGER_WATERING.
-// 4. dryingRateDeviationSigma buckets days in hardcoded UTC (not the device's configured timezone,
-//    unlike the rest of this codebase's convention, e.g. health/dailyLightIntegral.ts's
-//    HealthSettings.timezone) — a ~2h/day blind spot right after UTC midnight where the "today"
-//    bucket can't span the minimum window.
+// Before wiring a real consumer (tRPC/MQTT/MCP/scheduler) to inferenceEngine: AvailabilityReason
+// (types.ts) is threaded through Indicators only (IndicatorValue.unavailableReason), not yet
+// through Facts/Symptoms/Diagnoses — a deliberate scope cut made by the 2026-08-10 Phase A
+// hardening pass (docs/superpowers/specs/2026-08-10-inference-engine-phase-a-hardening-design.md),
+// not an oversight; nothing downstream consumes evidenceBreakdown.missing at the Fact/Symptom/
+// Diagnosis level yet. The other 3 findings that same pass identified (no clock injection, no
+// staleness bound on the rolling-average fallback, hardcoded-UTC day bucketing) are resolved.
 import { diagnosisRules } from './diagnoses/index.js';
 import { InferenceEngine } from './engine.js';
 import { factDefinitions } from './facts/index.js';

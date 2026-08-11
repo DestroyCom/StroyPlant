@@ -964,6 +964,38 @@ production server:
     actually read by the app today. The RFC's own 5-phase Migration Plan (shadow mode → migrate
     read-only consumers → migrate the auto-watering scheduler only after zero-disagreement
     verification → cleanup) is the deliberate next step, not started.
+- **Inference engine — Phase A hardening** ✅ (2026-08-11) — fixed the 4 findings the V1 slice's
+  final whole-branch review had deferred as a "before Phase C wiring" checklist (comment atop
+  `backend/src/inference/registry.ts`), per DestCom's explicit request to resolve them now rather
+  than carry them into Phase C. Full design in
+  `docs/superpowers/specs/2026-08-10-inference-engine-phase-a-hardening-design.md`. Still entirely
+  isolated under `backend/src/inference/` — no consumer wiring, same as the entry above.
+  - **Clock injection**: `InferenceEngine.run` gained an optional 5th parameter, `now: Date = new
+    Date()`, threaded down into every `IndicatorDefinition.compute(observations, environment, now)`
+    call — all 4 Indicators now use the injected `now` instead of reading `Date.now()`/`new Date()`
+    internally, making the pipeline genuinely replayable against historical readings (the RFC's own
+    stated justification for not persisting the full evidence tree).
+  - **Staleness bound**: the two rolling-average indicators' stale-data fallback (last 5 readings
+    when nothing is within the last hour) now discards the fallback entirely — returning `{ value:
+    null, confidence: 0 }` instead of a falsely-confident stale average — if the most recent
+    fallback reading is more than `MAX_STALE_FALLBACK_AGE_MS` (24h, an initial engineering estimate)
+    old.
+  - **Timezone-aware day bucketing**: `EnvironmentContext` gained an optional `timezone` field
+    (IANA name, defaulting to `'UTC'`). `dryingRateDeviationSigma`'s day-bucketing `dayKey` helper
+    now uses it via the same `Intl.DateTimeFormat`/`en-CA` technique already used by
+    `health/dailyLightIntegral.ts`'s own `dayKey` — deliberately duplicated, not imported, since
+    `backend/src/inference/` must never depend on any other part of the app. Closes a ~2h/day blind
+    spot right after UTC midnight where the "today" bucket couldn't span the minimum window for a
+    device whose real local day had already been running for hours.
+  - **`AvailabilityReason` threading (Indicator level only)**: `IndicatorValue` gained an optional
+    `unavailableReason` field, set by all 4 Indicators on every null-returning path
+    (`'no_recent_data'` vs. `'insufficient_history'`, per indicator) and read by `adapters.ts`'s
+    `indicatorEvidence`, which now populates `EvidenceBreakdown.missing` with the real reason
+    instead of always defaulting to `'sensor_absent'`. Deliberately not threaded further through
+    Facts/Symptoms/Diagnoses in this pass (DestCom's explicit choice) — `registry.ts`'s comment now
+    records this as the one remaining deliberately-deferred residual.
+  - **Verified**: full `pnpm test` suite (all existing tests plus new determinism/staleness/
+    timezone/`unavailableReason` cases) and `tsc --noEmit`/`biome check` both clean.
 
 ## Repo structure
 
