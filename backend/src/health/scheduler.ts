@@ -35,12 +35,12 @@ export function resolveEffectiveSchedule(device: Pick<Device, 'plantProfileId'>,
   };
 }
 
-function isWithinAllowedWindow(hour: number, startHour: number, endHour: number): boolean {
+export function isWithinAllowedWindow(hour: number, startHour: number, endHour: number): boolean {
   // endHour is exclusive; a start > end range wraps past midnight (e.g. 22 -> 6).
   return startHour <= endHour ? hour >= startHour && hour < endHour : hour >= startHour || hour < endHour;
 }
 
-type DeviceForTick = Device & { plantProfile: PlantProfile | null; schedule: Schedule | null };
+export type DeviceForTick = Device & { plantProfile: PlantProfile | null; schedule: Schedule | null };
 
 async function evaluateDevice(device: DeviceForTick, provider: DeviceProvider, connectionQueue: ConnectionQueue): Promise<void> {
   const effective = resolveEffectiveSchedule(device, device.schedule);
