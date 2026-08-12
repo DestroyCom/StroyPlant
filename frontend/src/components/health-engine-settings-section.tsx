@@ -6,10 +6,12 @@ import { Button } from './ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { Input } from './ui/input';
 import { Label } from './ui/label';
+import { Switch } from './ui/switch';
 
-// Rolling baseline window and warm-up period (docs/STROYPLANT_SPEC.md section 7.3) — configured
-// here instead of env vars, same move as MqttSettingsSection and for the same reason (a single
-// source of truth, editable without a redeploy).
+// Rolling baseline window, warm-up period, and shadow mode (docs/superpowers/specs/2026-08-11-
+// inference-engine-phase-b-shadow-mode-design.md) — configured here instead of env vars, same
+// move as MqttSettingsSection and for the same reason (a single source of truth, editable without
+// a redeploy).
 export function HealthEngineSettingsSection() {
   const queryClient = useQueryClient();
   const { data: settings } = useQuery(trpc.health.getSettings.queryOptions());
@@ -17,12 +19,14 @@ export function HealthEngineSettingsSection() {
   const [baselineWindowDays, setBaselineWindowDays] = useState(14);
   const [warmupMinDays, setWarmupMinDays] = useState(3);
   const [timezone, setTimezone] = useState('UTC');
+  const [shadowModeEnabled, setShadowModeEnabled] = useState(false);
 
   useEffect(() => {
     if (!settings) return;
     setBaselineWindowDays(settings.baselineWindowDays);
     setWarmupMinDays(settings.warmupMinDays);
     setTimezone(settings.timezone);
+    setShadowModeEnabled(settings.shadowModeEnabled);
   }, [settings]);
 
   const upsertMutation = useMutation(
@@ -82,11 +86,17 @@ export function HealthEngineSettingsSection() {
             className="w-40"
           />
         </div>
+        <div className="flex flex-col gap-1">
+          <Label htmlFor="health-shadow-mode">Mode observation (moteur d'inférence)</Label>
+          <div className="flex h-9 items-center">
+            <Switch id="health-shadow-mode" checked={shadowModeEnabled} onCheckedChange={setShadowModeEnabled} />
+          </div>
+        </div>
         <Button
           variant="outline"
           size="sm"
           disabled={upsertMutation.isPending}
-          onClick={() => upsertMutation.mutate({ baselineWindowDays, warmupMinDays, timezone })}
+          onClick={() => upsertMutation.mutate({ baselineWindowDays, warmupMinDays, timezone, shadowModeEnabled })}
         >
           Enregistrer
         </Button>
