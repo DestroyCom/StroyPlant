@@ -5,6 +5,7 @@ import { env } from '../env.js';
 import { log } from '../logger.js';
 import type { DeviceProvider } from '../providers/types.js';
 import { triggerWatering } from '../watering.js';
+import { evaluateShadow } from './inferenceShadow.js';
 import { computeDeviceHealth } from './scoring.js';
 import { getHealthSettings } from './settings.js';
 import { getCalibration } from './soilConductivityCalibration.js';
@@ -87,6 +88,10 @@ async function tick(provider: DeviceProvider, connectionQueue: ConnectionQueue):
     where: { kind: 'PARROT_POT', plantProfileId: { not: null } },
     include: { plantProfile: true, schedule: true },
   });
+  // Fetched once here for the shadow-mode gate below — evaluateDevice() also fetches its own copy
+  // internally for the baseline window it needs; a second cheap read once per tick is preferable
+  // to threading this through evaluateDevice's own signature for an unrelated concern.
+  const healthSettings = await getHealthSettings();
 
   for (const device of devices) {
     try {
@@ -99,6 +104,24 @@ async function tick(provider: DeviceProvider, connectionQueue: ConnectionQueue):
         result: 'ERROR',
         detail: error instanceof Error ? error.message : String(error),
       });
+    }
+
+    // Phase B, shadow mode (docs/superpowers/specs/2026-08-11-inference-engine-phase-b-shadow-
+    // mode-design.md) — deliberately its own try/catch, never sharing one with evaluateDevice
+    // above: a shadow-evaluation failure must never affect (or be masked by) the real
+    // watering-decision path for the same device on the same tick.
+    if (healthSettings.shadowModeEnabled) {
+      try {
+        await evaluateShadow(device, healthSettings);
+      } catch (error) {
+        log({
+          direction: 'INFO',
+          label: 'Shadow evaluation failed for device',
+          deviceId: device.id,
+          result: 'ERROR',
+          detail: error instanceof Error ? error.message : String(error),
+        });
+      }
     }
   }
 }
