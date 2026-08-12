@@ -6,9 +6,9 @@ import { symptomRules } from '../inference/symptoms/index.js';
 import type { DeviceCapabilities, EnvironmentContext, OperationalConstraints } from '../inference/types.js';
 import { log } from '../logger.js';
 import { collectMainDifferences, toLegacyDeviceHealth } from './inferenceShadowMapping.js';
-import { computeDeviceHealth } from './scoring.js';
 import type { DeviceForTick } from './scheduler.js';
 import { isWithinAllowedWindow, resolveEffectiveSchedule } from './scheduler.js';
+import { computeDeviceHealth } from './scoring.js';
 import type { HealthSettingsValues } from './settings.js';
 import { getCalibration } from './soilConductivityCalibration.js';
 
@@ -65,9 +65,8 @@ export async function evaluateShadow(device: DeviceForTick, healthSettings: Heal
   const profile = device.plantProfile ? resolveReferenceProfile(device.plantProfile, device.environment) : null;
 
   const effective = resolveEffectiveSchedule(device, device.schedule);
-  const lastSuccessfulWatering = wateringEvents.filter((event) => event.success).at(-1) ?? null;
-  const cooldownActive =
-    lastSuccessfulWatering != null && Date.now() - lastSuccessfulWatering.timestamp.getTime() < effective.cooldownHours * 3600_000;
+  const lastWatering = wateringEvents.at(-1) ?? null;
+  const cooldownActive = lastWatering != null && Date.now() - lastWatering.timestamp.getTime() < effective.cooldownHours * 3600_000;
   const operational: OperationalConstraints = {
     autoWateringEnabled: effective.active,
     withinAllowedWindow: isWithinAllowedWindow(new Date().getHours(), effective.allowedStartHour, effective.allowedEndHour),
