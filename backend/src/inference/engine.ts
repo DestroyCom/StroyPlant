@@ -222,13 +222,31 @@ export function validateRegistry(registries: EngineRegistries): void {
 }
 
 export class InferenceEngine {
+  // Explicit fields + assignments rather than constructor parameter-property shorthand
+  // (`constructor(private x: T)`) — that shorthand generates a real `this.x = x` assignment, so
+  // it isn't erasable type-only syntax. frontend/tsconfig.app.json's `erasableSyntaxOnly: true`
+  // (Vite's own template default) pulls this file in via the `@stroyplant/backend/*` path alias
+  // used for the AppRouter type import, so the shorthand broke `frontend`'s `tsc -b`/`pnpm build`
+  // — never caught by `backend`'s own isolated tsc, which doesn't set that flag.
+  private indicatorDefs: IndicatorDefinition[];
+  private factDefs: FactDefinition[];
+  private symptomRules: SymptomRule[];
+  private diagnosisRules: DiagnosisRule[];
+  private recommendationRules: RecommendationRule[];
+
   constructor(
-    private indicatorDefs: IndicatorDefinition[],
-    private factDefs: FactDefinition[],
-    private symptomRules: SymptomRule[],
-    private diagnosisRules: DiagnosisRule[],
-    private recommendationRules: RecommendationRule[],
+    indicatorDefs: IndicatorDefinition[],
+    factDefs: FactDefinition[],
+    symptomRules: SymptomRule[],
+    diagnosisRules: DiagnosisRule[],
+    recommendationRules: RecommendationRule[],
   ) {
+    this.indicatorDefs = indicatorDefs;
+    this.factDefs = factDefs;
+    this.symptomRules = symptomRules;
+    this.diagnosisRules = diagnosisRules;
+    this.recommendationRules = recommendationRules;
+
     validateRegistry({
       indicators: indicatorDefs,
       facts: factDefs,
