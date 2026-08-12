@@ -996,6 +996,98 @@ production server:
     records this as the one remaining deliberately-deferred residual.
   - **Verified**: full `pnpm test` suite (all existing tests plus new determinism/staleness/
     timezone/`unavailableReason` cases) and `tsc --noEmit`/`biome check` both clean.
+- **Inference engine — Phase B, shadow mode** ✅ (2026-08-12) — the RFC's Migration Plan's first
+  real step: the new engine now runs *alongside* the legacy Health Engine on every scheduler tick,
+  for every named Parrot Pot with a species assigned, and logs+persists a structured comparison
+  whenever they disagree. The legacy engine (`computeDeviceHealth`) remains the **sole** authority
+  for the dashboard and the **sole** input to the real auto-watering trigger — nothing about real
+  watering behavior changes in this phase. Off by default (`HealthSettings.shadowModeEnabled`,
+  toggle in `/settings`'s "Moteur de santé" card). Full design in
+  `docs/superpowers/specs/2026-08-11-inference-engine-phase-b-shadow-mode-design.md`, implementation
+  plan in `docs/superpowers/plans/2026-08-11-inference-engine-phase-b-shadow-mode-plan.md` (7 tasks,
+  subagent-driven-development, one task needed a fix round, one coordinated final-review fix wave).
+  - **`backend/src/health/inferenceShadow.ts`'s `evaluateShadow(device, healthSettings)`** — the
+    only file that imports both engines. Re-fetches its own `readings`/`wateringEvents` and calls
+    `computeDeviceHealth()` a second time rather than threading `evaluateDevice`'s already-computed
+    state out to the caller — deliberate isolation over micro-optimization, since refactoring the
+    safety-critical `evaluateDevice` to expose state on every one of its early-return paths wasn't
+    worth the risk for a handful of devices evaluated once every ~5-15min. Runs **unconditionally**
+    with respect to `evaluateDevice`'s own schedule-active/allowed-window/cooldown gates — shadow
+    mode wants to see what the new engine would say even when the legacy engine wouldn't act, so
+    those only feed `OperationalConstraints` as inputs to the new engine's Recommendation
+    confidence, never as early returns. Gated (does nothing at all) only when the legacy status is
+    `'warming_up'` or `'no_profile'` — neither engine's status is meaningful yet in that state.
+  - **Wired into `scheduler.ts`'s `tick()`** as an independent step, in its own try/catch, strictly
+    *after* (never inside) the existing `evaluateDevice()` call for the same device — a
+    shadow-evaluation failure can never affect or be masked by the real watering-decision path.
+    `evaluateDevice()`'s own body and try/catch are untouched (verified byte-for-byte by two
+    separate task reviews, given the safety stakes).
+  - **`toLegacyDeviceHealth`/`collectMainDifferences`** (`backend/src/health/
+    inferenceShadowMapping.ts`) — the only two **pure** functions in this feature, with real
+    `node:test` coverage (the first automated tests anywhere outside `backend/src/inference/` in
+    this project's history; `pnpm test`'s glob widened to `'src/inference/**/*.test.ts'
+    'src/health/**/*.test.ts'`). `toLegacyDeviceHealth` maps the new engine's diagnoses to a
+    legacy-comparable status (`dominant`/`secondary` tier → `'warning'`, everything else → `'ok'`).
+    `collectMainDifferences` walks a diagnosis's evidence tree — recursively descending into a
+    symptom-sourced item's *own* evidence too, not just one level — collecting the `migrationNote`
+    of every Fact/Symptom that meaningfully contributed (a final-review fix: the one-level version
+    missed Fact-level notes nested inside Symptom evidence, since the only registered Diagnosis
+    consumes only Symptoms, never Facts directly — the strongest evidence in a real underwatered
+    scenario was going unexplained until this was caught).
+  - **`migrationNote?: string`** — new optional field on `FactDefinition`/`SymptomRule`
+    (`backend/src/inference/types.ts`), a static French explanation of what a rule newly considers
+    that the legacy engine didn't. Set on 2 of the 3 Facts and the 1 Symptom (`soil_moisture_below_
+    profile_min` has a direct legacy equivalent, so it never explains a real divergence on its own).
+  - **`ShadowDivergence`** (new Prisma model) — one row per genuine divergence, deliberately lighter
+    than the RFC's full `DiagnosisEvent`/`Contributor`/`Recommendation` schema (that's a later
+    increment for aggregate Success Metrics, not needed for manual review). **Deduped**: skips the
+    write (and the log) if the device's most recent row within one scheduler-tick interval already
+    has the same `legacyStatus`/`inferenceDiagnosisId`/`inferenceTier` — mirrors `readings.ts`'s
+    `persistSyncFailure` pattern, added in the final-review fix wave after the first pass would have
+    written a near-identical row every tick forever for any persistently-diverging device (~1,350
+    rows/week for two real pots). No UI yet — reviewed via Prisma Studio/SQL for now, matching how
+    `SyncEvent` was reviewed before the History page existed.
+  - **Deliberate deviation from the RFC's literal text**: the RFC triggers the shadow comparison on
+    the `health.deviceHealth` tRPC query (UI-driven); this phase triggers it on the scheduler's
+    periodic tick instead (DestCom's explicit choice) — needed for the RFC's own "Detection
+    metrics" (time-earlier-detection) to be measurable at all, since a query-driven trigger only
+    produces data whenever someone happens to have the dashboard open.
+  - **Two real bugs caught by task review before merge, not after**: (1) a plan-authoring mistake
+    (mine, not an implementer's) — `cooldownActive` was computed from the last *successful*
+    watering event only, diverging from `evaluateDevice`'s real semantics (any outcome, including
+    failures, extends the cooldown) — fixed to match exactly. (2) The `collectMainDifferences`
+    one-level-walk gap described above, caught only at the final whole-branch review since no
+    single task's diff-scoped review could see that Task 2's notes and Task 5's wiring didn't
+    actually meet in the middle.
+  - **Not done / deliberately out of scope**: no automated integration tests for the
+    Prisma-touching `evaluateShadow` itself (matches this project's established convention —
+    `backend/src/health/` has never had automated DB-backed tests; verified manually against a
+    scratch copy of `dev.db` instead, including a full end-to-end scheduler-tick run with the mock
+    provider). No feature flag beyond the one settings toggle (the RFC's `INFERENCE_ENGINE_ENABLED`
+    env var and per-device override are Phase C/D concerns — shadow mode never makes a real
+    decision, so an incident kill switch isn't needed yet).
+  - **Discovered, unrelated, flagged separately**: `cd frontend && pnpm typecheck`/`pnpm build`
+    currently fails on 5 `erasableSyntaxOnly` TypeScript errors in `backend/src/inference/
+    engine.ts`'s `InferenceEngine` constructor (parameter-property shorthand, e.g. `constructor(
+    private indicatorDefs: ...)`) — `frontend/tsconfig.app.json`/`tsconfig.node.json` set
+    `erasableSyntaxOnly: true` while `backend`'s own isolated `tsconfig.json` doesn't, and
+    `frontend`'s `tsc -b` project-references `backend`'s sources. Confirmed pre-existing (introduced
+    in the original V1 slice, commit `ab6efd0`, weeks before this branch) and confirmed untouched
+    by any of this branch's commits — every prior verification in this project's history only ever
+    ran `backend`'s isolated `tsc`, never `frontend`'s project-referenced build, so this has
+    apparently been silently broken since the inference engine first shipped. **This means the
+    Docker image build (`frontend/package.json`'s `tsc -b && vite build`) currently cannot succeed
+    from a clean checkout** — a real, pre-existing shipping blocker, not a cosmetic nit, tracked as
+    a separate follow-up (not fixed here — out of scope for shadow mode, and the fix itself is a
+    judgment call: rewrite the constructor to non-parameter-property style, or rescope
+    `erasableSyntaxOnly`).
+  - **Verified**: full `pnpm test` (128/128, up from 115 pre-branch) and `tsc --noEmit`/`biome
+    check` (backend's own isolated config) both clean; `evaluateShadow` manually verified against a
+    scratch `dev.db` copy (healthy-agreement → zero writes; genuine divergence → one correctly-shaped
+    row + log line); the full `scheduler.ts` wiring manually verified end-to-end (mock provider,
+    shortened tick interval, ~10 ticks, real divergences detected/logged/persisted, `evaluateDevice`
+    unaffected); the frontend toggle's save→DB→full-page-reload→still-checked round trip verified
+    directly (Playwright) after the task's own manual-verification narrative proved insufficient.
 
 ## Repo structure
 
@@ -1010,12 +1102,16 @@ backend/         API + business logic (Fastify, Prisma/SQLite, auth, BLE) — ru
   src/providers/   DeviceProvider implementations (mock, noble-bridge, node-ble) + factory
   src/health/      Health Engine (Batch 4): plant_profiles CSV import + scoring engine + settings.ts
                    (HealthSettings, DB-backed baseline/warm-up config, see Project status) — still
-                   the only code path actually consumed by the app; see src/inference/ below
-  src/inference/   Horticultural inference engine, V1 vertical slice (Phase A, isolated, not yet
-                   wired to any consumer — see Project status): Indicators/Facts/Symptoms/
+                   the only code path any real decision (dashboard, auto-watering) is based on;
+                   inferenceShadow.ts/inferenceShadowMapping.ts (Phase B, shadow mode) run the new
+                   engine alongside it for comparison only, see src/inference/ below and Project status
+  src/inference/   Horticultural inference engine, V1 vertical slice (Phase A, hardened) +
+                   Phase B shadow mode (see Project status): Indicators/Facts/Symptoms/
                    Diagnosis/Recommendations pipeline (engine.ts, evidence.ts, registry.ts),
                    never imports PlantProfile except referenceProfile.ts (mechanically enforced,
-                   scripts/checkInferenceBoundary.ts)
+                   scripts/checkInferenceBoundary.ts) — still not the source of truth for any real
+                   decision; src/health/inferenceShadow.ts is the one place outside this directory
+                   allowed to import it
   src/mqtt/        MQTT + Home Assistant auto-discovery (Batch 7): topics, discovery payloads,
                    manager.ts (live-reconfigurable client singleton, DB-backed via MqttSettings),
                    publisher (state/health/watering-result), commands (HA button → watering)
