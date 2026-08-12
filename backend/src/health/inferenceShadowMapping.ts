@@ -1,4 +1,11 @@
-import type { DiagnosisFinding, FactDefinition, InferenceResult, SymptomRule } from '../inference/types.js';
+import type {
+  DiagnosisFinding,
+  EvidenceContribution,
+  FactDefinition,
+  InferenceResult,
+  SymptomRule,
+  SymptomSnapshot,
+} from '../inference/types.js';
 import type { DeviceHealth } from './scoring.js';
 
 const WARNING_TIERS = new Set<DiagnosisFinding['tier']>(['dominant', 'secondary']);
@@ -23,26 +30,41 @@ const MIGRATION_NOTE_CONTRIBUTION_THRESHOLD = 0.05;
 // migrationNote — collecting those notes to explain, in human terms, what the new engine
 // considered that the legacy one didn't. Only fact/symptom-sourced items are considered:
 // indicators have no migrationNote slot (they're raw measurements, not horticultural reasoning).
+//
+// A symptom-sourced item is also descended into: the only registered Diagnosis
+// (chronic_underwatering) consumes only Symptoms, so every Fact-sourced evidence item actually
+// lives one level deeper, inside each Symptom's OWN severityBreakdown — never walked otherwise.
+// A weak_hypothesis-tier diagnosis is excluded entirely (same WARNING_TIERS filter as
+// toLegacyDeviceHealth above) — it isn't a real disagreement, so its evidence shouldn't be
+// surfaced as an explanation for one.
 export function collectMainDifferences(
   diagnoses: DiagnosisFinding[],
+  symptoms: SymptomSnapshot,
   factDefinitions: FactDefinition[],
   symptomRules: SymptomRule[],
 ): string[] {
   const notes = new Set<string>();
 
-  for (const diagnosis of diagnoses) {
-    for (const item of diagnosis.severityBreakdown.items) {
+  function collectFromItems(items: EvidenceContribution[]): void {
+    for (const item of items) {
       if (item.contribution <= MIGRATION_NOTE_CONTRIBUTION_THRESHOLD) continue;
 
-      const note =
-        item.source.kind === 'fact'
-          ? factDefinitions.find((fact) => fact.id === item.source.id)?.migrationNote
-          : item.source.kind === 'symptom'
-            ? symptomRules.find((symptom) => symptom.id === item.source.id)?.migrationNote
-            : undefined;
-
-      if (note) notes.add(note);
+      if (item.source.kind === 'fact') {
+        const note = factDefinitions.find((fact) => fact.id === item.source.id)?.migrationNote;
+        if (note) notes.add(note);
+      } else if (item.source.kind === 'symptom') {
+        const symptomRule = symptomRules.find((symptom) => symptom.id === item.source.id);
+        if (symptomRule?.migrationNote) notes.add(symptomRule.migrationNote);
+        // Descend one more level: this Symptom's own evidence may cite Facts with their own notes.
+        const symptomResult = symptoms.get(item.source.id);
+        if (symptomResult) collectFromItems(symptomResult.severityBreakdown.items);
+      }
     }
+  }
+
+  for (const diagnosis of diagnoses) {
+    if (!WARNING_TIERS.has(diagnosis.tier)) continue;
+    collectFromItems(diagnosis.severityBreakdown.items);
   }
 
   return [...notes];

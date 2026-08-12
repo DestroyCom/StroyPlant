@@ -1,4 +1,5 @@
 import { prisma } from '../db/client.js';
+import { env } from '../env.js';
 import { factDefinitions } from '../inference/facts/index.js';
 import { resolveReferenceProfile } from '../inference/referenceProfile.js';
 import { inferenceEngine } from '../inference/registry.js';
@@ -78,9 +79,32 @@ export async function evaluateShadow(device: DeviceForTick, healthSettings: Heal
 
   if (mappedInference.status === legacyHealth.status) return;
 
-  const primaryDiagnosis = inferenceResult.diagnoses[0] ?? null;
+  // classifyTiers (inference/engine.ts) returns diagnoses in registry order, never sorted by
+  // importance — unlike recommendations, already sorted by reconcileRecommendations, so
+  // recommendations[0] is correctly "primary" but diagnoses[0] is not. Pick the diagnosis with the
+  // highest severity*confidence*coverage instead.
+  const primaryDiagnosis =
+    [...inferenceResult.diagnoses].sort(
+      (a, b) => b.severity * b.confidence * b.coverage.ratio - a.severity * a.confidence * a.coverage.ratio,
+    )[0] ?? null;
   const primaryRecommendation = inferenceResult.recommendations[0] ?? null;
-  const mainDifferences = collectMainDifferences(inferenceResult.diagnoses, factDefinitions, symptomRules);
+  const mainDifferences = collectMainDifferences(inferenceResult.diagnoses, inferenceResult.symptoms, factDefinitions, symptomRules);
+
+  // Same dedup precedent as readings.ts's persistSyncFailure: a persistently-diverging device would
+  // otherwise write a near-identical row every scheduler tick (~15min) forever. Skip means skip, not
+  // log-but-don't-write — matching the existing precedent's behavior.
+  const recentDivergence = await prisma.shadowDivergence.findFirst({
+    where: { deviceId: device.id, timestamp: { gte: new Date(Date.now() - env.schedulerTickIntervalMs) } },
+    orderBy: { timestamp: 'desc' },
+  });
+  if (
+    recentDivergence &&
+    recentDivergence.legacyStatus === legacyHealth.status &&
+    recentDivergence.inferenceDiagnosisId === (primaryDiagnosis?.id ?? null) &&
+    recentDivergence.inferenceTier === (primaryDiagnosis?.tier ?? null)
+  ) {
+    return;
+  }
 
   await prisma.shadowDivergence.create({
     data: {
