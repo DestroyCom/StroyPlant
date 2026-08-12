@@ -76,6 +76,12 @@ export interface FactDefinition {
   id: FactId;
   needsProfile: boolean;
   requiredIndicators: IndicatorId[];
+  // Optional, static, human-readable (French) explanation of what this Fact newly considers that
+  // the legacy Health Engine didn't — collected by health/inferenceShadowMapping.ts's
+  // collectMainDifferences() whenever this Fact meaningfully contributes to a diagnosis that
+  // disagrees with the legacy engine (Phase B, shadow mode). Purely descriptive, never read by
+  // evaluate() or anything inside backend/src/inference/ itself.
+  migrationNote?: string;
   evaluate(indicators: IndicatorIndex, profile: ReferenceProfile | null): FactResult | null;
 }
 
@@ -135,6 +141,8 @@ export interface SymptomRule {
   id: SymptomId;
   requiredFacts?: FactId[];
   consumes: { facts: FactId[]; indicators: IndicatorId[] };
+  // See FactDefinition.migrationNote above — same purpose, same mechanism, one level up.
+  migrationNote?: string;
   evaluate(ctx: InferenceContext): SymptomResult | null;
 }
 

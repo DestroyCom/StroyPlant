@@ -11,6 +11,7 @@ const HEAT_CONTRIBUTION_STEEPNESS = 0.3;
 export const waterStress: SymptomRule = {
   id: 'water_stress',
   consumes: { facts: ['soil_moisture_below_profile_min', 'drying_rate_unusually_fast'], indicators: ['temperatureRollingAvg1h'] },
+  migrationNote: "Combine humidité du sol, température et régularité d'arrosage en un seul score, au lieu d'un seuil unique.",
   evaluate(ctx) {
     const items: EvidenceItem[] = [
       factEvidence(ctx.facts, 'soil_moisture_below_profile_min', 0.5),

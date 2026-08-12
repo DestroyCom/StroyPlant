@@ -6,6 +6,7 @@ export const dryingRateUnusuallyFast: FactDefinition = {
   id: 'drying_rate_unusually_fast',
   needsProfile: false,
   requiredIndicators: ['dryingRateDeviationSigma'],
+  migrationNote: 'Prend en compte la vitesse de séchage du sol, absente du calcul historique.',
   evaluate(indicators) {
     const indicator = indicators.get('dryingRateDeviationSigma');
     if (!indicator || indicator.value == null) return null;
