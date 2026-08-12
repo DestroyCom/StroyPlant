@@ -7,9 +7,11 @@ export interface HealthSettingsValues {
   warmupMinDays: number;
   // IANA timezone name, used by health/dailyLightIntegral.ts's calendar-day grouping (Part H).
   timezone: string;
+  // Inference engine Phase B (shadow mode) — off by default, see schema.prisma's comment.
+  shadowModeEnabled: boolean;
 }
 
-const DEFAULTS: HealthSettingsValues = { baselineWindowDays: 14, warmupMinDays: 3, timezone: 'UTC' };
+const DEFAULTS: HealthSettingsValues = { baselineWindowDays: 14, warmupMinDays: 3, timezone: 'UTC', shadowModeEnabled: false };
 
 // Validates a string is a real IANA timezone the JS Intl API accepts — the one place this matters,
 // since an invalid value would silently make health/dailyLightIntegral.ts's Intl.DateTimeFormat
@@ -28,7 +30,12 @@ function isValidTimezone(timezone: string): boolean {
 export async function getHealthSettings(): Promise<HealthSettingsValues> {
   const settings = await prisma.healthSettings.findUnique({ where: { id: SETTINGS_ID } });
   return settings
-    ? { baselineWindowDays: settings.baselineWindowDays, warmupMinDays: settings.warmupMinDays, timezone: settings.timezone }
+    ? {
+        baselineWindowDays: settings.baselineWindowDays,
+        warmupMinDays: settings.warmupMinDays,
+        timezone: settings.timezone,
+        shadowModeEnabled: settings.shadowModeEnabled,
+      }
     : DEFAULTS;
 }
 
@@ -41,5 +48,10 @@ export async function upsertHealthSettings(values: HealthSettingsValues): Promis
     create: { id: SETTINGS_ID, ...values },
     update: values,
   });
-  return { baselineWindowDays: settings.baselineWindowDays, warmupMinDays: settings.warmupMinDays, timezone: settings.timezone };
+  return {
+    baselineWindowDays: settings.baselineWindowDays,
+    warmupMinDays: settings.warmupMinDays,
+    timezone: settings.timezone,
+    shadowModeEnabled: settings.shadowModeEnabled,
+  };
 }

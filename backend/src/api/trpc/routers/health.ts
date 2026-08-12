@@ -17,6 +17,7 @@ export const healthRouter = router({
         baselineWindowDays: z.number().int().min(1).max(365),
         warmupMinDays: z.number().int().min(0).max(365),
         timezone: z.string().min(1),
+        shadowModeEnabled: z.boolean(),
       }),
     )
     .mutation(({ input }) => upsertHealthSettings(input)),

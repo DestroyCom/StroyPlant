@@ -35,10 +35,11 @@ model Device {
   plantProfileId Int?
   plantProfile   PlantProfile? @relation(fields: [plantProfileId], references: [id])
 
-  readings       Reading[]
-  wateringEvents WateringEvent[]
-  syncEvents     SyncEvent[]
-  schedule       Schedule?
+  readings          Reading[]
+  wateringEvents    WateringEvent[]
+  syncEvents        SyncEvent[]
+  schedule          Schedule?
+  shadowDivergences ShadowDivergence[]
 }
 
 // Auto-watering scheduler (Batch 5, docs/STROYPLANT_SPEC.md section 7.4) — one optional row per
@@ -87,6 +88,10 @@ model HealthSettings {
   // addition). Defaults to UTC — the server's own timezone, and this project's convention everywhere
   // else (no other file has ever needed timezone awareness before this).
   timezone           String   @default("UTC")
+  // Inference engine Phase B (shadow mode, docs/superpowers/specs/2026-08-11-inference-engine-
+  // phase-b-shadow-mode-design.md) — off by default so the new engine doesn't start evaluating on
+  // every scheduler tick the moment this ships; DestCom enables it deliberately from /settings.
+  shadowModeEnabled  Boolean  @default(false)
   updatedAt          DateTime @updatedAt
 }
 
@@ -244,6 +249,29 @@ model WateringEvent {
   triggerSource TriggerSource
   success       Boolean
   errorDetail   String?
+
+  @@index([deviceId, timestamp])
+}
+
+// Inference engine Phase B (shadow mode) — one row per real disagreement between the legacy
+// Health Engine and the new inference engine, written by backend/src/health/inferenceShadow.ts.
+// Deliberately lighter than a full DiagnosisEvent/Contributor/Recommendation schema (that's a
+// later increment for aggregate Success Metrics, not needed for manual divergence review) — one
+// row per divergence, mainDifferences as a plain JSON string array rather than normalized child
+// rows, since nothing here needs cross-device SQL aggregation yet. No retention/pruning policy —
+// same open-ended stance as SyncEvent/RawSensorLog.
+model ShadowDivergence {
+  id                    Int      @id @default(autoincrement())
+  deviceId              String
+  device                Device   @relation(fields: [deviceId], references: [id])
+  timestamp             DateTime @default(now())
+  legacyStatus          String
+  inferenceDiagnosisId  String?
+  inferenceTier         String?
+  inferenceSeverity     Float?
+  inferenceConfidence   Float?
+  recommendationAction  String?
+  mainDifferences       Json
 
   @@index([deviceId, timestamp])
 }
