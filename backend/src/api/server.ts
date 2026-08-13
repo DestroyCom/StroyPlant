@@ -26,7 +26,7 @@ export async function buildServer(provider: DeviceProvider, connectionQueue: Con
   // frontend's build output though: this repo's Docker image is published publicly, and baking it
   // in would embed this deployment's error-tracking domain in that public artifact permanently.
   // Fetched live instead by frontend/src/instrument.ts on boot.
-  app.get('/api/public-config', async () => ({ sentryDsn: env.sentryDsn ?? null }));
+  app.get('/api/public-config', async () => ({ sentryDsn: env.sentryDsn ?? null, gitSha: env.gitSha }));
 
   // BetterAuth handler (login/logout/session/...) — never behind requireAuth, it manages
   // its own access logic (official pattern, see docs/integrations/fastify).

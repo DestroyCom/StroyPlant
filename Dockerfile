@@ -52,6 +52,12 @@ COPY --from=build /prod/backend .
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 ENV NODE_ENV=production
+# Set by .github/workflows/docker-publish.yml from github.sha — surfaced read-only via
+# GET /api/public-config so the Settings page can show which commit is actually running and warn
+# when GitHub's main has moved past it (see frontend/src/components/version-settings-section.tsx).
+# Empty for a local `docker build` with no --build-arg (env.ts treats "" the same as unset).
+ARG GIT_SHA=""
+ENV GIT_SHA=$GIT_SHA
 EXPOSE 3000
 ENTRYPOINT ["docker-entrypoint.sh"]
 CMD ["node", "dist/index.js"]

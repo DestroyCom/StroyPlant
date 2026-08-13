@@ -33,4 +33,10 @@ export const env = {
   // (.github/workflows/docker-publish.yml), so this instance's DSN/domain must never end up
   // embedded in that published artifact.
   sentryDsn: process.env.SENTRY_DSN,
+  // Baked into the image at build time (Dockerfile's GIT_SHA build arg, set from github.sha by
+  // .github/workflows/docker-publish.yml) — never set in local `pnpm dev` (null there, the
+  // frontend's Version card treats that as "local development build"). A commit SHA isn't a
+  // secret (this repo is public), unlike sentryDsn above — safe to bake directly rather than
+  // fetch at runtime.
+  gitSha: process.env.GIT_SHA || null,
 };

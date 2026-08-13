@@ -61,5 +61,9 @@ jobs:
           platforms: linux/amd64,linux/arm64
           tags: ${{ steps.metadata.outputs.tags }}
           labels: ${{ steps.metadata.outputs.labels }}
+          # Surfaced read-only by the running container via GET /api/public-config — lets the
+          # Settings page show which commit is deployed and warn when it's behind main.
+          build-args: |
+            GIT_SHA=${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max

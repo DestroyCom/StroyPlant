@@ -7,6 +7,7 @@ import { PollSettingsSection } from '@/components/poll-settings-section';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { VersionSettingsSection } from '@/components/version-settings-section';
 import { authClient } from '@/lib/auth-client';
 
 export const Route = createFileRoute('/_authenticated/settings')({
@@ -49,6 +50,8 @@ function SettingsPage() {
             <CardDescription>{session?.user.email}</CardDescription>
           </CardHeader>
         </Card>
+
+        <VersionSettingsSection />
 
         <Card>
           <CardHeader>
