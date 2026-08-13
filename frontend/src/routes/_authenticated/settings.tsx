@@ -42,7 +42,7 @@ function SettingsPage() {
         <p className="mt-1.5 text-sm text-muted-foreground">Compte et préférences de StroyPlant.</p>
       </div>
 
-      <div className="flex max-w-xl flex-col gap-4">
+      <div className="grid max-w-5xl grid-cols-1 items-start gap-4 lg:grid-cols-2">
         <Card>
           <CardHeader>
             <CardTitle>Compte</CardTitle>
