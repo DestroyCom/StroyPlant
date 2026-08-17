@@ -872,6 +872,35 @@ production server:
     **Not yet re-validated against the real production Parrot Pots** (the 5-day dataset that
     motivated this fix predates the fix itself) — next deploy should be followed by checking both
     real pots' luminosity status once a few real calendar days have accumulated under the new logic.
+- **Settings page: 2-column layout + running-version display** (2026-08-13) — two small,
+  unrelated fixes bundled together after DestCom noticed both while checking whether the Phase B
+  shadow-mode toggle had reached production:
+  - **Layout**: `/settings` was capped at `max-w-xl` and stacked every card in a single column
+    regardless of viewport, wasting most of the screen on desktop. Switched to a CSS grid
+    (`grid-cols-1 lg:grid-cols-2`, `max-w-5xl`) — single column below `lg`, unchanged on mobile.
+  - **Version card** (`frontend/src/components/version-settings-section.tsx`) — surfaces which
+    commit is actually running and warns when GitHub's `main` has moved past it, prompted directly
+    by that same incident: the code was already merged and pushed to `origin/main`, but the
+    production container was still serving the old image with no way to notice from the UI.
+    - The Docker image now bakes the git SHA at build time: `Dockerfile`'s new `GIT_SHA` build
+      arg (empty by default for a local `docker build`) is set from `github.sha` by
+      `.github/workflows/docker-publish.yml`, exposed to the running container via `env.gitSha`
+      (`backend/src/env.ts`), and surfaced read-only through the existing unauthenticated
+      `GET /api/public-config` endpoint (same pattern already established for `sentryDsn` — see
+      the GlitchTip entry above — not a secret, this repo is public).
+    - The frontend card fetches `/api/public-config` for the running SHA and, separately,
+      GitHub's public REST API directly from the browser (`GET
+      /repos/DestroyCom/StroyPlant/commits/main`, unauthenticated, no backend involvement) for the
+      latest `main` HEAD. A mismatch shows a warning badge + a reminder to `docker compose pull &&
+      up -d` — purely informational, never blocking: a local dev build (`GIT_SHA` unset) or a
+      failed/rate-limited GitHub fetch both silently show no warning rather than an error.
+    - **Deliberately no automated "check for updates" polling or push notification** — this is a
+      single-admin tool, checked whenever `/settings` happens to be open, not a monitored fleet.
+  - **Verified**: `pnpm typecheck`/`pnpm build` (frontend) and `tsc --noEmit` (backend) both clean,
+    repo-wide `pnpm lint` clean. **Not yet verified**: an actual mismatched-version render (would
+    need a real stale production container or a deliberately wrong `GIT_SHA` build) — the
+    match/no-warning case was confirmed via a local dev build (`gitSha: null` → no badge, "build
+    de développement local" message).
 - **Next batch**: Batch 10 (extension to other devices — Flower Power, Flower Care).
 - **`noble-bridge` validated with real hardware** ✅ (2026-07-27) — a real Parrot Pot
   (`PARROT-A073`) connected and read end-to-end (scan → connect → activate → read
