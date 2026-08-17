@@ -1,3 +1,5 @@
+import helmet from '@fastify/helmet';
+import rateLimit from '@fastify/rate-limit';
 import websocketPlugin from '@fastify/websocket';
 import * as Sentry from '@sentry/node';
 import { fastifyTRPCPlugin } from '@trpc/server/adapters/fastify';
@@ -15,6 +17,34 @@ import { registerRawBodyParser, sendWebResponse, toWebRequest } from './webBridg
 export async function buildServer(provider: DeviceProvider, connectionQueue: ConnectionQueue) {
   const app = Fastify({ logger: false });
   await app.register(websocketPlugin);
+
+  // CSP scoped to what this SPA actually needs: 'unsafe-inline' on styleSrc only (Radix/shadcn
+  // components set inline `style` attributes for popover/dropdown positioning — script-src stays
+  // strict). api.github.com is the version-check card's direct browser-side fetch
+  // (version-settings-section.tsx); everything else this app talks to is same-origin.
+  await app.register(helmet, {
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        scriptSrc: ["'self'"],
+        styleSrc: ["'self'", "'unsafe-inline'"],
+        imgSrc: ["'self'", 'data:'],
+        connectSrc: ["'self'", 'https://api.github.com'],
+        frameAncestors: ["'none'"],
+        baseUri: ["'self'"],
+        formAction: ["'self'"],
+      },
+    },
+    // Would block the SPA's own same-origin asset loading without a per-asset review this pass
+    // didn't scope; X-Frame-Options/frame-ancestors above already closes the clickjacking gap.
+    crossOriginEmbedderPolicy: false,
+  });
+
+  // Global floor across the whole API surface — the MCP discovery/tool-call routes below have no
+  // rate limiting of their own otherwise. BetterAuth's own limiter separately covers /api/auth/*
+  // (including the MCP OAuth register/authorize/token endpoints, all under /api/auth/mcp/*).
+  await app.register(rateLimit, { global: true, max: 100, timeWindow: '1 minute' });
+
   registerRawBodyParser(app);
 
   // Must be registered before routes (unlike Express) — captures unhandled route/handler errors

@@ -1,7 +1,11 @@
 import { initTRPC, TRPCError } from '@trpc/server';
 import type { Context } from './context.js';
 
-const t = initTRPC.context<Context>().create();
+const t = initTRPC.context<Context>().create({
+  // tRPC's own default shape includes error.stack — never useful to a client, and reveals file
+  // paths/internal structure to anyone hitting a procedure that throws.
+  errorFormatter: ({ shape }) => ({ ...shape, data: { ...shape.data, stack: undefined } }),
+});
 
 export const router = t.router;
 export const publicProcedure = t.procedure;
