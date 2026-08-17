@@ -12,5 +12,11 @@
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.5"
+  },
+  "pnpm": {
+    "overrides": {
+      "hono": ">=4.12.34",
+      "fast-uri": ">=4.1.2"
+    }
   }
 }
