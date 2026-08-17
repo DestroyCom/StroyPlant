@@ -14,3 +14,9 @@ backend/prisma/dev.db-journal
 *.db-journal
 .DS_Store
 .superpowers/
+
+# === Added by security-skill ===
+.env.local
+*.key
+*.pem
+secrets/

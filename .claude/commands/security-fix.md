@@ -1,0 +1,1 @@
+Read `.skills/security/skill.md`, `memory-security.md`, and `security-report.md` (if present), then apply fixes from the last audit. Follow the intervention level ladder: ask before modifying existing files, show exact diffs, wait for approval on risky changes.

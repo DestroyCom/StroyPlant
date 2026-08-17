@@ -1,0 +1,1 @@
+Read `.skills/security/skill.md` and `memory-security.md`, then perform a full security audit of this project across all 25 categories. Calculate a score out of 100, display the score board, and save a detailed report to `security-report.md`.

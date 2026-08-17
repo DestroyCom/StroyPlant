@@ -1,0 +1,1 @@
+Read `.skills/security/skill.md` and launch the incident response playbook from `instructions/27-incident-response.md`. Generate an `incident-report.md` with step-by-step remediation.

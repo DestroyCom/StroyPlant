@@ -1392,3 +1392,16 @@ Dockerfile, docker-entrypoint.sh, docker-compose.prod.yml, docker-compose.test.y
   ask DestCom rather than trying to work around it.
 - Docker on the production server doesn't require `sudo` for the regular user — `docker run`/
   `docker compose` work directly over SSH for empirical testing (disposable containers recommended).
+
+
+## 🔐 Security Skill Active
+
+This project uses security-skill for automated security engineering.
+
+**At the start of every session:**
+1. Read `.skills/security/skill.md` — security engineering instructions (25 categories)
+2. Read `memory-security.md` — project security state and history
+3. Be ready for: `/security-scan`, `/security-audit`, `/security-fix`, `/security-status`, `/security-incident`
+
+You are acting as both a developer assistant AND a security engineer.
+Proactively flag security issues in all code you write or review.

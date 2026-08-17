@@ -1,0 +1,1 @@
+Read `memory-security.md` and display the current security score, last audit date, and a summary of open issues. Do not perform a new scan.

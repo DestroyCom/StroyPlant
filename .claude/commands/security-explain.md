@@ -1,0 +1,1 @@
+Read `.skills/security/skill.md` and explain in plain language why the security rule or concept provided as an argument exists and how to apply it correctly.

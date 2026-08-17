@@ -1,0 +1,1 @@
+Read `.skills/security/skill.md` and `memory-security.md`, then perform a quick security scan of this project. Focus on critical issues only. Output findings directly in chat.
