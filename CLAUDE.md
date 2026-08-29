@@ -52,6 +52,13 @@ production server:
 - 2x Parrot Pot: `A0:14:3D:CD:A3:D3` and `A0:14:3D:CD:A0:73`
 - Xiaomi LYWSD03MMC: `A4:C1:38:51:3B:54` (+ at least 2 more nearby, probably neighbors':
   `A4:C1:38:E1:D1:49`, `A4:C1:38:AA:29:49`)
+- **3 more Parrot Pots acquired 2026-08-29** (DestCom, secondhand): 2x brick-colored on firmware
+  `VE0.29.1` (same version already validated by this project, see `advertisement.ts`/
+  `STROYPLANT_SPEC.md:135`) + 1x black on `VE0.28.5` (older, never tested by this project — no
+  known reason it should behave differently given `node-ble`'s existing defensive per-characteristic
+  best-effort reads, but not empirically confirmed). Only one MAC identified so far: one of the
+  brick ones is `A0:14:3D:CD:87:33`, already added to production as `Parrot pot 8733` (no species/
+  location set yet). The other 2 units' MACs aren't recorded here yet.
 
 ## Project status (by batch)
 
@@ -901,6 +908,45 @@ production server:
     need a real stale production container or a deliberately wrong `GIT_SHA` build) — the
     match/no-warning case was confirmed via a local dev build (`gitSha: null` → no badge, "build
     de développement local" message).
+- **`plantDr.calibrateWet` made non-blocking — Cloudflare 502 root-caused** (2026-08-29) — DestCom
+  ran a real wet-point capture on `PARROT-A073` (Pot blanc) after acquiring 3 more secondhand
+  Parrot Pots and revisiting the still-never-calibrated device flagged in the soil-conductivity
+  work; the UI showed "Échec de la calibration" with a description mentioning "DOCTYPE" every time.
+  Root-caused with real evidence rather than guessed (systematic-debugging): first hypothesis
+  (SWAG's reverse-proxy timeout) was checked directly against `/config/nginx/proxy.conf` on the
+  server and **falsified** (240s, far more than needed) before being ruled out — the real cause,
+  confirmed from the browser's own Network tab, was **Cloudflare** (`plant.stroyco.eu` sits behind
+  it, in front of SWAG) returning its own 502 HTML page once its origin timeout (~100s, not
+  configurable on a standard plan) elapsed, which the tRPC client then failed to `JSON.parse`,
+  surfacing as `Unexpected token '<', "<!DOCTYPE "... is not valid JSON`. `calibrateWet` ran 2
+  sequential `connectionQueue`-serialized BLE operations (read then write), each with its own
+  up-to-3-attempt/backoff/adapter-restart retry policy — easily exceeding ~100s when queued behind
+  another device's poll, exactly as seen in `docker logs` at the time. Confirmed the device itself
+  had actually been calibrated correctly on at least one of the failed-looking attempts (the
+  displayed wet threshold kept changing between retries, e.g. 22.5%→22.8%) — the backend was doing
+  its job, only the HTTP response was getting lost.
+  - **Fix**: `calibrateWet` no longer blocks on the full sequence — it validates synchronously
+    (species/dry-threshold check, unchanged, still fails immediately with a real error), then kicks
+    off the read+validate+write chain in the background and returns `{status: 'started'}`
+    immediately. New module `backend/src/plantDrCalibrationSession.ts` tracks per-device run state
+    (`idle`/`running`/`success`/`error`), exposed via a new `plantDr.calibrationRunStatus` query —
+    same module-singleton-plus-polled-status shape as `liveSession`/`discoverySession`, chosen over
+    `forceSyncAll`'s "fire and rely on an existing DB-persisted side effect" pattern since a
+    calibration write has no DB row to piggyback on (the device is the only source of truth, section
+    7.11). Frontend (`devices.$deviceId_.calibration.tsx`) polls the new status query
+    (`refetchInterval`, 1.5s while running) instead of reading the mutation's own result, showing
+    "Calibration en cours…" until it resolves — this also means a page reload no longer loses track
+    of an in-flight capture the way a single blocking request would have. A second click while one
+    is already running now gets a clean `CONFLICT` instead of silently overlapping.
+  - **Verified against the mock provider**: `tsc --noEmit`/`tsc -b` (backend + frontend) and
+    `biome check` on the touched files clean, all 128 pre-existing backend tests still passing
+    (untouched code path), and a live curl-driven run — `calibrateWet` returns `{status:'started'}`
+    immediately, `calibrationRunStatus` reflects `running` then `success` with the correct written
+    values, `getCalibration` reflects them afterward, and the synchronous no-species-assigned guard
+    still fails immediately as before (not deferred into the async path). **Not yet re-verified
+    against the real Cloudflare/SWAG path in production** — next real capture attempt on Pot blanc
+    (or any future manual BLE action) should confirm the button now returns instantly with no
+    DOCTYPE error, regardless of how long the actual BLE sequence takes underneath.
 - **Next batch**: Batch 10 (extension to other devices — Flower Power, Flower Care).
 - **`noble-bridge` validated with real hardware** ✅ (2026-07-27) — a real Parrot Pot
   (`PARROT-A073`) connected and read end-to-end (scan → connect → activate → read
@@ -1358,6 +1404,16 @@ Dockerfile, docker-entrypoint.sh, docker-compose.prod.yml, docker-compose.test.y
 
 ## Gotchas already encountered (so as not to rediscover them)
 
+- **Cloudflare's origin timeout (~100s) is shorter than SWAG's own `proxy_read_timeout` (240s,
+  `/config/nginx/proxy.conf`)** — `plant.stroyco.eu` sits behind Cloudflare in front of SWAG. Any
+  mutation whose worst-case duration can exceed ~100s (e.g. 2+ sequential `connectionQueue`-
+  serialized BLE operations, each with its own up-to-3-attempt/backoff/adapter-restart retry
+  policy, especially if queued behind another device's poll) gets Cloudflare's own 502 HTML error
+  page instead of the real backend response — surfacing to the frontend as an unparseable-JSON
+  "`Unexpected token '<', "<!DOCTYPE "... is not valid JSON`" error, even on runs where the backend
+  went on to complete successfully afterward (found 2026-08-29 on `plantDr.calibrateWet`, see the
+  entry below). Not fixable by raising a timeout we don't control — the real fix is to never hold
+  the HTTP response open for a slow BLE sequence in the first place.
 - Prisma `DATABASE_URL` is relative to `prisma/schema.prisma`, not the cwd (see above).
 - Xiaomi LYWSD03MMC: GATT is mandatory, no passive reading possible on stock firmware (see above).
 - `noble-bridge` (macOS) never exposes the real MAC (see above).

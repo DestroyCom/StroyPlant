@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient, useSuspenseQuery } from '@tanstack/react-query';
 import { createFileRoute, Link, notFound } from '@tanstack/react-router';
 import { ArrowLeft, Droplet } from 'lucide-react';
+import { useEffect, useRef } from 'react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { trpc } from '@/lib/trpc';
@@ -23,16 +24,37 @@ function CalibrationPage() {
   const { data: calibration, isLoading } = useQuery(trpc.plantDr.getCalibration.queryOptions({ deviceId }));
   const dryVwcPercent = device.plantProfile?.soilMoistureMinPercent;
 
+  // The mutation itself only confirms the calibration run was queued (see the backend's
+  // calibrateWet doc comment — its 2 sequential BLE operations can take longer than Cloudflare's
+  // origin timeout, so the result is no longer carried by the mutation's own HTTP response).
+  // Actual completion is observed by polling calibrationRunStatus, same shape as
+  // live-mode-section.tsx's precedent for discoverySession/liveSession status.
+  const { data: runState } = useQuery({
+    ...trpc.plantDr.calibrationRunStatus.queryOptions({ deviceId }),
+    refetchInterval: (query) => (query.state.data?.status === 'running' ? 1500 : false),
+  });
+  const isRunning = runState?.status === 'running';
+  const lastHandledFinishRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (!runState || runState.status === 'idle' || runState.status === 'running') return;
+    if (lastHandledFinishRef.current === runState.finishedAt) return;
+    lastHandledFinishRef.current = runState.finishedAt;
+
+    if (runState.status === 'success') {
+      void queryClient.invalidateQueries({ queryKey: trpc.plantDr.getCalibration.queryKey({ deviceId }) });
+      toast.success('Calibration écrite sur le pot', {
+        description: `Seuil sec ${runState.dryVwcPercent}% · seuil humide ${runState.wetVwcPercent.toFixed(1)}%`,
+      });
+    } else {
+      toast.error('Échec de la calibration', { description: runState.message });
+    }
+  }, [runState, queryClient, deviceId]);
+
   const calibrateMutation = useMutation(
     trpc.plantDr.calibrateWet.mutationOptions({
-      onSuccess: (result) => {
-        void queryClient.invalidateQueries({ queryKey: trpc.plantDr.getCalibration.queryKey({ deviceId }) });
-        toast.success('Calibration écrite sur le pot', {
-          description: `Seuil sec ${result.dryVwcPercent}% · seuil humide ${result.wetVwcPercent.toFixed(1)}%`,
-        });
-      },
       onError: (error) => {
-        toast.error('Échec de la calibration', { description: error.message });
+        toast.error('Échec du lancement de la calibration', { description: error.message });
       },
     }),
   );
@@ -85,11 +107,11 @@ function CalibrationPage() {
             <Button
               variant="accent"
               className="mt-3.5"
-              disabled={calibrateMutation.isPending}
+              disabled={calibrateMutation.isPending || isRunning}
               onClick={() => calibrateMutation.mutate({ deviceId })}
             >
               <Droplet size={16} />
-              {calibrateMutation.isPending ? 'Calibration en cours…' : 'Capturer le point humide maintenant'}
+              {calibrateMutation.isPending || isRunning ? 'Calibration en cours…' : 'Capturer le point humide maintenant'}
             </Button>
           </>
         )}
