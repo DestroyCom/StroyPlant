@@ -49,7 +49,7 @@ covering 8090 species vs. the 3404 currently imported from WatchFlower's CSV
   them.** `buildParrotPlantRow` stores `dli_max`/`ec_min` unit-converted exactly as given, sentinel
   or not — `soilMoistureMinPercent`/`lightMaxMmol`/`soilConductivityMinUsCm` etc. are populated
   straight from the source with no special-casing. **Known, accepted consequence**: for the
-  ~5300 affected species (dli_max sentinel ∪ ec_min sentinel), the Health Engine's range check for
+  7313 affected species (dli_max sentinel ∪ ec_min sentinel), the Health Engine's range check for
   that one parameter becomes practically always-satisfied — `soilConductivityMinUsCm = -1000` is
   trivially below any real reading, `lightMaxMmol = 99000` (99 mol/day) is above any real Parrot
   Pot reading — functionally similar to nulling the constraint, but stored as if it were a literal
@@ -385,4 +385,4 @@ union remains unaccounted for.
 - **`dli_max`/`ec_min` sentinel-like values are kept raw, not nulled** — DestCom's explicit choice
   after reviewing the sun/water-category correlation evidence above, accepting the documented
   consequence that the Health Engine's range check becomes practically toothless (not literally
-  absent) for the affected parameter on the ~5300 affected species.
+  absent) for the affected parameter on the 7313 affected species.

@@ -1233,8 +1233,7 @@ production server:
     acted on: `backend/src/plantDr.ts`'s `calibrateWet` still writes `n=0` unchanged, this is a lead
     for the separately-planned BLE-sniff phase (understanding the official app's real protocol
     behavior), not this batch's job.
-  - **Sentinel values kept raw, not nulled**: `dli_max=99` (7240/8090 species) and `ec_min=-1`
-    (~5300 species combined with the above) are Parrot's own generic per-sun/water-category
+  - **Sentinel values kept raw, not nulled**: `dli_max=99` (7239/8090 species) and `ec_min=-1` (432/8090 species, 358 of them overlapping with the dli_max sentinel — 7313/8090 species affected by at least one) are Parrot's own generic per-sun/water-category
     defaults, not real per-species measurements — confirmed by cross-checking against the
     `sun`/`water` ordinal categories rather than assumed from the value alone. DestCom's explicit
     choice to keep them raw rather than null them: accepted consequence is that the Health Engine's
