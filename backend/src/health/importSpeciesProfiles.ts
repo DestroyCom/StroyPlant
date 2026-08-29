@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { gunzipSync } from 'node:zlib';
 import { prisma } from '../db/client.js';
 import { normalizeLatinName, parseParrotCsvLine, resolveMatchId } from './parrotPlantData.js';
 
@@ -213,7 +214,7 @@ interface ParrotPlantTranslationRow {
   orderIndexForSorting: number | null;
 }
 
-const PARROT_TRANSLATIONS_PATH = fileURLToPath(new URL('../../prisma/seed-data/parrot_plant_translations.json', import.meta.url));
+const PARROT_TRANSLATIONS_PATH = fileURLToPath(new URL('../../prisma/seed-data/parrot_plant_translations.json.gz', import.meta.url));
 
 // Independently idempotent, same reasoning as importParrotOverlay: gated on this table already
 // having rows, not on plant_profiles being non-empty. Must run after importParrotOverlay, which is
@@ -236,7 +237,7 @@ async function importParrotTranslations(): Promise<void> {
   });
   const profileIdBySpeciesId = new Map(profiles.map((p) => [p.parrotSpeciesId as number, p.id]));
 
-  const rows: ParrotPlantTranslationRow[] = JSON.parse(readFileSync(PARROT_TRANSLATIONS_PATH, 'utf-8'));
+  const rows: ParrotPlantTranslationRow[] = JSON.parse(gunzipSync(readFileSync(PARROT_TRANSLATIONS_PATH)).toString('utf-8'));
 
   let imported = 0;
   let skippedNoProfile = 0;

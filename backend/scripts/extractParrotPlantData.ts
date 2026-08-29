@@ -12,6 +12,7 @@
 import { execFileSync } from 'node:child_process';
 import { writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { gzipSync } from 'node:zlib';
 import {
   buildParrotPlantRow,
   formatParrotCsvRow,
@@ -21,7 +22,10 @@ import {
 
 const DEFAULT_APP_DIR = '/Applications/Flower Power.app/Wrapper/Flower Power.app';
 const PROFILES_OUTPUT_PATH = fileURLToPath(new URL('../prisma/seed-data/parrot_plant_profiles.csv', import.meta.url));
-const TRANSLATIONS_OUTPUT_PATH = fileURLToPath(new URL('../prisma/seed-data/parrot_plant_translations.json', import.meta.url));
+// Gzipped, unlike the other 6 outputs: at 150MB+ raw JSON, the plain file exceeds GitHub's 100MB
+// per-file limit (confirmed empirically when pushing this branch) — gzip shrinks it to ~11MB
+// (~14x, this text compresses extremely well) with no new dependency (node:zlib is built-in).
+const TRANSLATIONS_OUTPUT_PATH = fileURLToPath(new URL('../prisma/seed-data/parrot_plant_translations.json.gz', import.meta.url));
 const ATTRIBUTES_OUTPUT_PATH = fileURLToPath(new URL('../prisma/seed-data/parrot_plant_attributes.json', import.meta.url));
 const FERTILIZER_TYPES_OUTPUT_PATH = fileURLToPath(new URL('../prisma/seed-data/parrot_plant_fertilizer_types.json', import.meta.url));
 const SEARCH_NAMES_OUTPUT_PATH = fileURLToPath(new URL('../prisma/seed-data/parrot_plant_search_names.json', import.meta.url));
@@ -212,7 +216,7 @@ function extractLocaleDependentData(appDir: string): void {
     console.log(`Read ${encyclopedia.plants.length} ${locale} entries.`);
   }
 
-  writeFileSync(TRANSLATIONS_OUTPUT_PATH, JSON.stringify(translations), 'utf-8');
+  writeFileSync(TRANSLATIONS_OUTPUT_PATH, gzipSync(JSON.stringify(translations)));
   console.log(`Wrote ${translations.length} translation rows to ${TRANSLATIONS_OUTPUT_PATH}.`);
   writeFileSync(SEARCH_NAMES_OUTPUT_PATH, JSON.stringify(searchNames), 'utf-8');
   console.log(`Wrote ${searchNames.length} search name rows to ${SEARCH_NAMES_OUTPUT_PATH}.`);
