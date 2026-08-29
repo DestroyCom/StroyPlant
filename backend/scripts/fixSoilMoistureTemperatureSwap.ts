@@ -1,6 +1,7 @@
-// One-off data fix, run manually exactly once against the real production database — NOT wired
-// into docker-entrypoint.sh (that runs on every boot; a fix re-applied twice would corrupt data
-// further).
+// One-off data fix, run manually against the real production database — deliberately NOT wired
+// into docker-entrypoint.sh (that runs on every boot). Naturally idempotent: both update queries
+// are scoped to rows where the source column is still non-null, so a second accidental run finds
+// 0 matching rows and does nothing — safe to re-run, though there is no reason to.
 //
 // Confirmed via real BLE sniffing of the official Flower Power app on real hardware (2026-08-29,
 // docs/superpowers/specs/2026-08-29-parrot-official-app-ble-sniffing-findings.md): the Parrot Pot
@@ -96,7 +97,7 @@ async function main(): Promise<void> {
   }
   console.log(`RawSensorLog rows fixed: ${rawUpdated}`);
 
-  console.log('Done. This script is not idempotent by design — do not run it a second time.');
+  console.log('Done.');
 }
 
 main()
