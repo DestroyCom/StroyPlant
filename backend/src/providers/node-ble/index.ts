@@ -15,6 +15,7 @@ import {
   WATER_TRIGGER_PAYLOAD,
   WATERING_SERVICE_UUID,
 } from '../../ble/parrot/uuids.js';
+import type { WateringConfigRaw, WateringConfigWrite } from '../../ble/parrot/wateringConfig.js';
 import { parseTempHumidityPayload } from '../../ble/xiaomi/parser.js';
 import {
   LYWSD03MMC_NAME,
@@ -1171,6 +1172,86 @@ export function createNodeBleProvider(): DeviceProvider {
             // already dropped off, that call can throw and .catch() below only swallows it at our
             // level, leaving the match rule registered. releaseDbusListeners is an idempotent
             // backstop, safe to call whether or not disconnect()'s own cleanup already ran.
+            await withTimeout(device.disconnect(), CONNECT_TIMEOUT_MS, 'disconnect').catch(() => {});
+            releaseDbusListeners(device);
+          }
+        },
+      });
+    },
+
+    async readWateringConfig(deviceId: string): Promise<WateringConfigRaw> {
+      return withGattRetry({
+        label: 'readWateringConfig',
+        deviceId,
+        isGattError133,
+        restartAdapter,
+        attempt: async () => {
+          const device = await connectDevice(deviceId);
+          const characteristics: GattCharacteristic[] = [];
+          try {
+            const gatt = await withTimeout(device.gatt(), CONNECT_TIMEOUT_MS, 'gatt');
+            const wateringService = await gatt.getPrimaryService(WATERING_SERVICE_UUID);
+            const readU16Value = async (uuid: string) =>
+              (await (await trackedCharacteristic(wateringService, uuid, characteristics)).readValue()).readUInt16LE(0);
+            const readU8Value = async (uuid: string) =>
+              (await (await trackedCharacteristic(wateringService, uuid, characteristics)).readValue()).readUInt8(0);
+
+            const vwcIrrRaw = await readU16Value(UUIDS.watering.vwcIrr);
+            const vwcCmdRaw = await readU16Value(UUIDS.watering.vwcCmd);
+            const nIrr = await readU16Value(UUIDS.watering.nIrr);
+            const algorithmEnabledRaw = await readU8Value(UUIDS.watering.pumpDutyCycle);
+
+            const config: WateringConfigRaw = { vwcIrrRaw, vwcCmdRaw, nIrr, algorithmEnabled: algorithmEnabledRaw === 1 };
+            log({ direction: 'READ', label: 'Watering config read', deviceId, result: 'OK', detail: JSON.stringify(config) });
+            return config;
+          } finally {
+            for (const characteristic of characteristics) releaseDbusListeners(characteristic);
+            await withTimeout(device.disconnect(), CONNECT_TIMEOUT_MS, 'disconnect').catch(() => {});
+            releaseDbusListeners(device);
+          }
+        },
+      });
+    },
+
+    async writeWateringConfig(deviceId: string, write: WateringConfigWrite): Promise<void> {
+      await withGattRetry({
+        label: 'writeWateringConfig',
+        deviceId,
+        isGattError133,
+        restartAdapter,
+        attempt: async () => {
+          const device = await connectDevice(deviceId);
+          const characteristics: GattCharacteristic[] = [];
+          try {
+            const gatt = await withTimeout(device.gatt(), CONNECT_TIMEOUT_MS, 'gatt');
+            const wateringService = await gatt.getPrimaryService(WATERING_SERVICE_UUID);
+
+            const writeU16 = async (uuid: string, value: number, label: string) => {
+              const characteristic = await trackedCharacteristic(wateringService, uuid, characteristics);
+              const payload = Buffer.alloc(2);
+              payload.writeUInt16LE(value & 0xffff, 0);
+              await characteristic.writeValueWithResponse(payload);
+              log({ direction: 'WRITE', label, uuid, deviceId, payloadHex: payload.toString('hex'), result: 'OK' });
+            };
+            const writeU8 = async (uuid: string, value: number, label: string) => {
+              const characteristic = await trackedCharacteristic(wateringService, uuid, characteristics);
+              const payload = Buffer.from([value & 0xff]);
+              await characteristic.writeValueWithResponse(payload);
+              log({ direction: 'WRITE', label, uuid, deviceId, payloadHex: payload.toString('hex'), result: 'OK' });
+            };
+
+            if (write.mode === 'enable') {
+              // f908 (algorithm enable) is written last — a failure partway through never leaves
+              // the algorithm active with a half-applied config.
+              await writeU16(UUIDS.watering.vwcIrr, write.values.vwcIrrRaw, 'Watering config VWC_IRR');
+              await writeU16(UUIDS.watering.vwcCmd, write.values.vwcCmdRaw, 'Watering config VWC_CMD');
+              await writeU16(UUIDS.watering.nIrr, write.values.nIrr, 'Watering config N_IRR');
+              await writeU8(UUIDS.watering.pumpDutyCycle, 1, 'Watering config algorithm enable');
+            } else {
+              await writeU8(UUIDS.watering.pumpDutyCycle, 0, 'Watering config algorithm disable');
+            }
+          } finally {
+            for (const characteristic of characteristics) releaseDbusListeners(characteristic);
             await withTimeout(device.disconnect(), CONNECT_TIMEOUT_MS, 'disconnect').catch(() => {});
             releaseDbusListeners(device);
           }
