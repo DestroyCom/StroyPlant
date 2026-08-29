@@ -23,6 +23,27 @@ assistant's memory file for this investigation; this document is the settled con
   properties and with the code's own existing (but only-ever-read) `waterTankLevel` label for a
   neighboring characteristic. `f906` is very likely a status/level characteristic StroyPlant
   happens to also be able to write to, not a second official trigger path.
+- **Update, 2026-08-30 — f90c switch attempted and reverted, real mystery found.** Confirmed 7+
+  times via real sniffing (including 3 consecutive repeats and one dedicated verification capture)
+  that the app's "ARROSAGE" button always writes exactly `[0x0a, 0x00]` to `f90c` and nothing else.
+  The code was changed to use `f90c`/`[0x0a, 0x00]` and empirically tested on real hardware — but
+  replaying the exact same write from a bare standalone script produced an ATT-level write
+  acknowledgment with **no physical watering**, reproducibly, across every variant tried: via
+  `node-ble`/BlueZ on the real production server, and via `@abandonware/noble`/CoreBluetooth on the
+  Mac (matching the app's own stack) — the latter tested with the official app fully closed and
+  StroyPlant's production container stopped, to rule out any connection contention. The write
+  genuinely reaches the device (confirmed via a dedicated verification capture showing my script's
+  connection/discovery/write sequence directly) but the pump never activates. **Change reverted —
+  `trigger` stays `f906`/`[0x08, 0x00]`**, the mechanism already confirmed working in production for
+  months, despite its own paradoxical GATT declaration (Read+Notify only, no Write bit). Leading
+  hypothesis, unverified: the device may require an actual BLE bond/pairing or an app-specific
+  authentication handshake before honoring a write to `f90c` specifically, as a safety measure
+  against an arbitrary nearby BLE client remotely triggering a real watering. Not resolvable with
+  the tooling available this session (no way found to inspect BLE bond state for a generic GATT
+  peripheral on macOS). **Do not attempt this switch again without a real plan to test the
+  bonding/authentication hypothesis specifically** — this cost 4 real watering-trigger attempts
+  across 2 real pots for no resolved answer, and repeating the same trial-and-error will just cost
+  more of the same.
 - The BLE **write acknowledgment itself is near-instant** (~59ms, measured directly). The
   *physical* watering/moisture-settling process takes a comparable ~20-25s regardless of which
   characteristic triggers it. The most likely explanation for the perceived speed difference:
@@ -152,10 +173,13 @@ the backend or its BLE connection is ever down, unlike an official-app-configure
 
 ## Summary of concrete action items (none acted on yet — for DestCom to prioritize)
 
-1. **Fix the `fa07`/`fa09` sensor swap** in `uuids.ts` (Finding 3) — the highest-confidence, most
-   consequential bug found. Needs a decision on historical data handling.
-2. Decide whether to also fix `f906` (currently used as StroyPlant's trigger despite being a
-   status/tank-level characteristic) to use `f90c` instead, matching the real app.
+1. ✅ **Done (2026-08-30)** — fixed the `fa07`/`fa09` sensor swap in `uuids.ts` (both backend and
+   `noble-bridge`), plus a one-off migration script for historical `Reading`/`RawSensorLog` rows.
+2. ❌ **Attempted and reverted (2026-08-30)** — switching `trigger` to `f90c` (matching the real
+   app) was tried and empirically tested on real hardware, but the write has no physical effect
+   when sent from our own code (see the Update under Finding 1 above for the full story). Reverted
+   to `f906`, which works. Needs a real plan (likely investigating BLE bonding/authentication) before
+   trying again — not another ad-hoc trial-and-error session.
 3. Decide whether species assignment should push `fd8x`/`f903`/`f904` to the device (Finding 2),
    moving StroyPlant's calibration model closer to the official app's.
 4. Decide whether StroyPlant should ever program the pot's own `f900` algorithm (Finding 4) for

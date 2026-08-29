@@ -25,6 +25,13 @@ export const UUIDS = {
     soilMoistureRaw: '39e1fa05-84a8-11e2-afba-0002a5d5c51b',
   },
   watering: {
+    // KEPT AS f906 — see docs/superpowers/specs/2026-08-29-parrot-official-app-ble-sniffing-findings.md.
+    // The official app's real trigger write target is f90c ([0x0a, 0x00], confirmed 7+ times via
+    // real sniffing), but replaying that exact write from a bare script (both node-ble/BlueZ and
+    // @abandonware/noble/CoreBluetooth, app closed, StroyPlant backend stopped) gets a write
+    // acknowledgment with no physical watering. f906 is what actually works in production, despite
+    // its own Read+Notify-only GATT declaration on real hardware. Do not switch without resolving
+    // this first — leading hypothesis is a required BLE bond/app-specific auth step.
     trigger: '39e1f906-84a8-11e2-afba-0002a5d5c51b',
     waterTankLevel: '39e1f907-84a8-11e2-afba-0002a5d5c51b',
   },
