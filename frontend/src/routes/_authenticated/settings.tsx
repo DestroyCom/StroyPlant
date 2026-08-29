@@ -89,9 +89,9 @@ function SettingsPage() {
         <HealthEngineSettingsSection />
         <ComingSoonSection
           icon={<Bell size={18} className="text-muted-foreground" />}
-          title="Notifications"
-          description="Alertes réservoir bas, appareil hors ligne ou score de santé dégradé."
-          batch="Non planifié"
+          title="Notifications push / e-mail"
+          description="Réservoir bas, appareil hors ligne ou score de santé dégradé sont déjà visibles via la cloche en haut du menu — ceci concerne une alerte reçue même sans avoir StroyPlant ouvert."
+          batch="Lot futur"
         />
         <ComingSoonSection
           icon={<Bot size={18} className="text-muted-foreground" />}

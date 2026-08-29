@@ -947,6 +947,42 @@ production server:
     against the real Cloudflare/SWAG path in production** — next real capture attempt on Pot blanc
     (or any future manual BLE action) should confirm the button now returns instantly with no
     DOCTYPE error, regardless of how long the actual BLE sequence takes underneath.
+- **In-app notification bell** ✅ (2026-08-29) — the first, minimal piece of the "alertes réservoir
+  bas, appareil hors ligne ou score de santé dégradée" promise the Settings page's "Notifications"
+  card has always described (see the entry below for that card's own status). Real-time push
+  notifications are still out of scope (separate, unplanned batch) — this is an always-visible,
+  in-app substitute: a bell icon in `app-shell.tsx` (both the mobile header and the desktop
+  sidebar, so it's visible on every authenticated page, not just the dashboard) with a count badge,
+  opening a `Dialog` listing each alert with a link to the relevant device. No dismiss — an alert
+  stays until the underlying condition clears, DestCom's explicit choice over a localStorage-backed
+  "seen" state, to never risk hiding a real ongoing problem.
+  - **No new backend endpoint**: `frontend/src/lib/notifications.ts`'s `computeDeviceAlerts` is a
+    pure function reusing `format.ts`'s existing `isDeviceOnline`/`isTankLow`/`statusHeadline` —
+    same priority order as the dashboard card badge (hors ligne > réservoir bas > santé "warning"),
+    so the two can never disagree about what counts as a real issue. One additional, independent
+    line fires on `health.deviceHealth`'s `luminosityRecentDaysTooLow` even when the primary status
+    is otherwise `ok`, since that's deliberately a separate advisory (Part H), not a substitute for
+    the per-parameter check.
+  - **Real bug found and fixed while verifying this in a browser** (not just typechecked/linted —
+    see the "Fastify's router caps..." entry in Gotchas below for the full detail): mounting
+    `NotificationBell` app-wide meant every page now fires one `health.deviceHealth` query per
+    named device on top of whatever that page already queries, and tRPC's batch link joins every
+    simultaneous query's procedure *name* into one URL path segment — routinely exceeding Fastify's
+    default 100-char cap on a single dynamic segment (`FST_ERR_MAX_PARAM_LENGTH` → 414), breaking
+    data loading for that whole batch on any page with enough devices. Fixed at the source
+    (`Fastify({ maxParamLength: 2000 })`, `api/server.ts`) rather than by reducing how many queries
+    the bell fires. Also switched `httpBatchLink` to `methodOverride: 'POST'`
+    (`frontend/src/lib/trpc.ts`, paired with the new `allowMethodOverride: true` the Fastify tRPC
+    plugin needs server-side to accept it) — an independent, correct hardening even though it
+    turned out not to be the actual fix for this specific bug — batched GET queries were still
+    putting every input in the URL query string, which has the same kind of length ceiling as the
+    path did.
+  - **Verified**: `tsc --noEmit`/`tsc -b` (backend + frontend) and `biome check` on every touched
+    file clean, all 128 pre-existing backend tests still passing. Manually verified in a real
+    browser (Playwright) against the mock provider: the bell renders with the correct count on the
+    dashboard, the dialog lists every alert with the right message and links to the right device,
+    and — after the maxParamLength/methodOverride fixes — the device detail page (the specific
+    route that surfaced the 414) loads with zero console errors.
 - **Next batch**: Batch 10 (extension to other devices — Flower Power, Flower Care).
 - **`noble-bridge` validated with real hardware** ✅ (2026-07-27) — a real Parrot Pot
   (`PARROT-A073`) connected and read end-to-end (scan → connect → activate → read
@@ -1404,6 +1440,16 @@ Dockerfile, docker-entrypoint.sh, docker-compose.prod.yml, docker-compose.test.y
 
 ## Gotchas already encountered (so as not to rediscover them)
 
+- **Fastify's router caps a single dynamic path segment at 100 chars by default
+  (`FST_ERR_MAX_PARAM_LENGTH`, → HTTP 414)** — the tRPC Fastify plugin registers its whole route as
+  one such segment (`/:path`, everything after the `/api/trpc` prefix), and a batched call's path is
+  every procedure name joined by commas. A page firing several distinct queries at once (or several
+  components each firing their own) can exceed 100 chars purely from procedure *names* repeating —
+  nothing to do with payload size or GET vs POST. Found 2026-08-29 when the notification bell (one
+  `health.deviceHealth` call per device, on every page) got batched alongside a normal page's own
+  handful of queries. Fixed by raising it explicitly: `Fastify({ maxParamLength: 2000 })` in
+  `api/server.ts`. If this ever gets hit again as more simultaneous queries get added, raise it
+  further rather than treating 100 as a real constraint — it never reflected sound API design.
 - **Cloudflare's origin timeout (~100s) is shorter than SWAG's own `proxy_read_timeout` (240s,
   `/config/nginx/proxy.conf`)** — `plant.stroyco.eu` sits behind Cloudflare in front of SWAG. Any
   mutation whose worst-case duration can exceed ~100s (e.g. 2+ sequential `connectionQueue`-

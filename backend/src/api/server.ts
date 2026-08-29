@@ -15,7 +15,14 @@ import { appRouter } from './trpc/router.js';
 import { registerRawBodyParser, sendWebResponse, toWebRequest } from './webBridge.js';
 
 export async function buildServer(provider: DeviceProvider, connectionQueue: ConnectionQueue) {
-  const app = Fastify({ logger: false });
+  // Fastify's router caps a single dynamic path segment at 100 chars by default
+  // (FST_ERR_MAX_PARAM_LENGTH) — the tRPC plugin registers its whole route as one such segment
+  // (`/:path`, matching everything after the /api/trpc prefix), and a batched call's path is every
+  // procedure name joined by commas. Found 2026-08-29: the notification bell fires one
+  // health.deviceHealth call per device on every page, and once batched alongside a page's own
+  // handful of queries the joined path routinely exceeds 100 chars — a real, expected shape for
+  // this app now, not a pathological one, so the limit is raised rather than avoided.
+  const app = Fastify({ logger: false, maxParamLength: 2000 });
   await app.register(websocketPlugin);
 
   // CSP scoped to what this SPA actually needs: 'unsafe-inline' on styleSrc only (Radix/shadcn
@@ -81,7 +88,17 @@ export async function buildServer(provider: DeviceProvider, connectionQueue: Con
   await app.register(fastifyTRPCPlugin, {
     prefix: '/api/trpc',
     useWSS: true,
-    trpcOptions: { router: appRouter, createContext: createContextFactory({ provider, connectionQueue }) },
+    trpcOptions: {
+      router: appRouter,
+      createContext: createContextFactory({ provider, connectionQueue }),
+      // The frontend's httpBatchLink sets methodOverride: 'POST' (avoids a batched GET's input
+      // ending up in the URL query string, which can exceed URI length limits — found 2026-08-29
+      // once the notification bell added several always-on health.deviceHealth queries on top of
+      // whatever a given route already fires). @trpc/server rejects POST for query procedures
+      // unless explicitly opted in server-side — this is that opt-in; mutations are unaffected,
+      // they were already POST-only.
+      allowMethodOverride: true,
+    },
   });
 
   // Registered last: its SPA-fallback notFoundHandler must never shadow the API/MCP/auth routes

@@ -6,6 +6,7 @@ import logo from '@/assets/logo.svg';
 import { authClient } from '@/lib/auth-client';
 import { useLiveReadings } from '@/lib/use-live-readings';
 import { cn } from '@/lib/utils';
+import { NotificationBell } from './notification-bell';
 
 export function AppShell({ children }: { children: ReactNode }) {
   const navigate = useNavigate();
@@ -19,15 +20,21 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   return (
     <div className="flex h-svh flex-col overflow-hidden md:flex-row">
-      <header className="flex shrink-0 items-center gap-2.5 border-b border-sidebar-border bg-sidebar px-4 py-3 text-sidebar-foreground md:hidden">
-        <img src={logo} alt="" className="h-6.5 w-6.5" />
-        <span className="text-[17px] font-black tracking-tight">StroyPlant</span>
+      <header className="flex shrink-0 items-center justify-between gap-2.5 border-b border-sidebar-border bg-sidebar px-4 py-3 text-sidebar-foreground md:hidden">
+        <div className="flex items-center gap-2.5">
+          <img src={logo} alt="" className="h-6.5 w-6.5" />
+          <span className="text-[17px] font-black tracking-tight">StroyPlant</span>
+        </div>
+        <NotificationBell />
       </header>
 
       <aside className="hidden w-54 shrink-0 flex-col gap-7 overflow-y-auto border-r border-sidebar-border bg-sidebar px-4 py-6 text-sidebar-foreground md:flex">
-        <div className="flex items-center gap-2.5 px-2">
-          <img src={logo} alt="" className="h-6.5 w-6.5" />
-          <span className="text-[17px] font-black tracking-tight">StroyPlant</span>
+        <div className="flex items-center justify-between gap-2.5 px-2">
+          <div className="flex items-center gap-2.5">
+            <img src={logo} alt="" className="h-6.5 w-6.5" />
+            <span className="text-[17px] font-black tracking-tight">StroyPlant</span>
+          </div>
+          <NotificationBell />
         </div>
         <nav className="flex flex-col gap-1">
           <Link
