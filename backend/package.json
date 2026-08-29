@@ -10,6 +10,7 @@
     "prisma:migrate": "prisma migrate dev",
     "seed:admin": "tsx src/auth/seed-admin.ts",
     "import:species": "tsx src/health/importSpeciesProfiles.ts",
+    "extract:parrot-plants": "tsx scripts/extractParrotPlantData.ts",
     "test": "tsx --test 'src/inference/**/*.test.ts' 'src/health/**/*.test.ts'"
   },
   "dependencies": {
