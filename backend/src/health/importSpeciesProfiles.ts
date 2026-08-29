@@ -170,9 +170,85 @@ async function importParrotOverlay(): Promise<void> {
   console.log(`Parrot overlay finished: ${updated} existing profiles updated, ${created} new profiles created.`);
 }
 
+interface ParrotPlantTranslationRow {
+  parrotSpeciesId: number;
+  locale: string;
+  commonName: string | null;
+  description: string | null;
+  planting: string | null;
+  growth: string | null;
+  pruning: string | null;
+  harvesting: string | null;
+  interesting: string | null;
+  soilIrr: string | null;
+  pests: string | null;
+  blooming: string | null;
+  hardinessZoneMinText: string | null;
+  hardinessZoneMaxText: string | null;
+  heatZoneMinText: string | null;
+  heatZoneMaxText: string | null;
+  lightMinText: string | null;
+  lightMaxText: string | null;
+  fertilizerText: string | null;
+  detailCare: string | null;
+  nameFirstLetter: string | null;
+  orderIndexForSorting: number | null;
+}
+
+const PARROT_TRANSLATIONS_PATH = fileURLToPath(
+  new URL('../../prisma/seed-data/parrot_plant_translations.json', import.meta.url),
+);
+
+// Independently idempotent, same reasoning as importParrotOverlay: gated on this table already
+// having rows, not on plant_profiles being non-empty. Must run after importParrotOverlay, which is
+// what actually populates parrotSpeciesId on every matched/created PlantProfile row.
+async function importParrotTranslations(): Promise<void> {
+  const existingCount = await prisma.plantProfileTranslation.count();
+  if (existingCount > 0) {
+    console.log(`plant_profile_translations already has ${existingCount} rows — skipping Parrot translations import.`);
+    return;
+  }
+
+  if (!existsSync(PARROT_TRANSLATIONS_PATH)) {
+    console.log(`No Parrot translations file at ${PARROT_TRANSLATIONS_PATH} — skipping.`);
+    return;
+  }
+
+  const profiles = await prisma.plantProfile.findMany({
+    where: { parrotSpeciesId: { not: null } },
+    select: { id: true, parrotSpeciesId: true },
+  });
+  const profileIdBySpeciesId = new Map(profiles.map((p) => [p.parrotSpeciesId as number, p.id]));
+
+  const rows: ParrotPlantTranslationRow[] = JSON.parse(readFileSync(PARROT_TRANSLATIONS_PATH, 'utf-8'));
+
+  let imported = 0;
+  let skippedNoProfile = 0;
+  for (const row of rows) {
+    const plantProfileId = profileIdBySpeciesId.get(row.parrotSpeciesId);
+    if (plantProfileId === undefined) {
+      skippedNoProfile++;
+      continue;
+    }
+    // Same destructuring approach as importParrotOverlay (Task 4) and for the same reason —
+    // parrotSpeciesId/locale are handled explicitly (key lookup / unique constraint), everything
+    // else on the row is a PlantProfileTranslation column and flows through automatically.
+    const { parrotSpeciesId, locale, ...fields } = row;
+    await prisma.plantProfileTranslation.upsert({
+      where: { plantProfileId_locale: { plantProfileId, locale } },
+      update: fields,
+      create: { plantProfileId, locale, ...fields },
+    });
+    imported++;
+  }
+
+  console.log(`Parrot translations import finished: ${imported} rows imported, ${skippedNoProfile} skipped (no matching profile).`);
+}
+
 async function main(): Promise<void> {
   await importWatchFlowerProfiles();
   await importParrotOverlay();
+  await importParrotTranslations();
 }
 
 main()
