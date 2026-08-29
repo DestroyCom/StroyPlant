@@ -23,10 +23,16 @@ export const UUIDS = {
     // the firmware doesn't refresh its values (readings silently frozen). Write 0 at the end of the
     // session. See docs/STROYPLANT_SPEC.md section 8.
     measurePeriod: '39e1fa06-84a8-11e2-afba-0002a5d5c51b',
-    // Characteristics actually used by the official app (NOT fa01-05, vestigial) —
     // float32 LE, already calibrated by the firmware, no conversion formula needed.
-    soilMoisturePercent: '39e1fa09-84a8-11e2-afba-0002a5d5c51b',
-    temperatureC: '39e1fa0a-84a8-11e2-afba-0002a5d5c51b',
+    // Confirmed via real BLE sniffing of the official app on real hardware (2026-08-29,
+    // docs/superpowers/specs/2026-08-29-parrot-official-app-ble-sniffing-findings.md) — fa07 rises
+    // in real time during an actual watering, fa09 rises/falls in real time under a controlled
+    // heat stimulus. Previously assumed fa09=moisture/fa0a=temperature (this project's own docs
+    // and the transcribed official PDF both said so); both were wrong, swapped here after two
+    // independent real-hardware confirmations. fa0b (luminosity) unchanged — not re-verified this
+    // pass, fa0a itself is confirmed light-reactive (not luminosity's official slot) and unused.
+    soilMoisturePercent: '39e1fa07-84a8-11e2-afba-0002a5d5c51b',
+    temperatureC: '39e1fa09-84a8-11e2-afba-0002a5d5c51b',
     luminosity: '39e1fa0b-84a8-11e2-afba-0002a5d5c51b',
     // Soil conductivity (fertility index) — RAW characteristic, confirmed "Certain" in
     // docs/PARROT_BLE_REVERSE_ENGINEERING.md. This project originally tried the "calibrated"

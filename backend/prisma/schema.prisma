@@ -341,8 +341,8 @@ model RawSensorLog {
   soilTempRaw            Int?
   airTempRaw             Int?
   soilMoistureRaw        Int?
-  soilMoistureCalibrated Float? // fa09, duplicated from Reading.soilMoisturePercent
-  airTempCalibrated      Float? // fa0a, duplicated from Reading.temperatureC
+  soilMoistureCalibrated Float? // fa07, duplicated from Reading.soilMoisturePercent
+  airTempCalibrated      Float? // fa09, duplicated from Reading.temperatureC
   luminosityCalibrated   Float? // fa0b, duplicated from Reading.luminosity
   eaRaw                  Float? // fa0c — expected null, characteristic confirmed absent on real hardware
   ecbRaw                 Float? // fa0d — expected null, same

@@ -5,8 +5,12 @@
 export const UUIDS = {
   live: {
     measurePeriod: '39e1fa06-84a8-11e2-afba-0002a5d5c51b',
-    soilMoisturePercent: '39e1fa09-84a8-11e2-afba-0002a5d5c51b',
-    temperatureC: '39e1fa0a-84a8-11e2-afba-0002a5d5c51b',
+    // Confirmed via real BLE sniffing of the official app (2026-08-29,
+    // docs/superpowers/specs/2026-08-29-parrot-official-app-ble-sniffing-findings.md) — fa07 is
+    // real soil moisture, fa09 is real temperature. Previously swapped (fa09=moisture/fa0a=temp),
+    // matching this project's own docs and the transcribed official PDF, both wrong.
+    soilMoisturePercent: '39e1fa07-84a8-11e2-afba-0002a5d5c51b',
+    temperatureC: '39e1fa09-84a8-11e2-afba-0002a5d5c51b',
     luminosity: '39e1fa0b-84a8-11e2-afba-0002a5d5c51b',
     // Soil conductivity (fertility index) — RAW characteristic, same one WatchFlower's own Parrot
     // Pot driver reads (github.com/emericg/WatchFlower, device_parrotpot.cpp). parrot.ts only reads
