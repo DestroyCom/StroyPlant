@@ -13,7 +13,7 @@ export interface HistoryEntry {
   deviceName: string;
   timestamp: string;
   success: boolean; // SyncEvent rows are always false — see Task 1's model comment
-  triggerLabel: 'MANUAL' | 'CRON' | 'POLL';
+  triggerLabel: 'MANUAL' | 'CRON' | 'POLL' | 'CONFIG_PUSH';
   errorDetail: string | null;
 }
 
