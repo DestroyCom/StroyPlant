@@ -1,4 +1,5 @@
 import type { PlantDrCalibration, PlantDrWriteValues } from '../ble/parrot/plantDr.js';
+import type { WateringConfigRaw, WateringConfigWrite } from '../ble/parrot/wateringConfig.js';
 
 export type DeviceKind = 'PARROT_POT' | 'XIAOMI_LYWSD03MMC';
 
@@ -123,4 +124,11 @@ export interface DeviceProvider {
   // ble/parrot/plantDr.ts, callers pass already-computed write values.
   readPlantDrCalibration(deviceId: string): Promise<PlantDrCalibration>;
   writePlantDrCalibration(deviceId: string, values: PlantDrWriteValues): Promise<void>;
+
+  // Device-side autonomous watering (docs/superpowers/specs/2026-08-30-parrot-device-side-
+  // autonomous-watering-design.md), Parrot Pot only. Same "dumb provider" pattern as Plant Dr
+  // above — backend/src/wateringConfigPush.ts decides eligibility and computes the values,
+  // providers just read/write the f900 characteristics.
+  readWateringConfig(deviceId: string): Promise<WateringConfigRaw>;
+  writeWateringConfig(deviceId: string, write: WateringConfigWrite): Promise<void>;
 }

@@ -1,4 +1,5 @@
 import type { PlantDrCalibration, PlantDrWriteValues } from '../../ble/parrot/plantDr.js';
+import type { WateringConfigRaw, WateringConfigWrite } from '../../ble/parrot/wateringConfig.js';
 import { log } from '../../logger.js';
 import type { DeviceProvider, DiscoveredDevice, SensorReading } from '../types.js';
 
@@ -21,6 +22,7 @@ interface MockPotState {
   declinePerMinute: number;
   lastUpdate: number;
   plantDr: PlantDrCalibration;
+  wateringConfig: WateringConfigRaw;
 }
 
 // Factory-default calibration observed on a real, never-manually-calibrated Parrot Pot
@@ -28,6 +30,14 @@ interface MockPotState {
 // WET_VWC=22.5%, CONFIG_ID=78 (verified against computePlantDrConfigId()).
 function defaultPlantDrCalibration(): PlantDrCalibration {
   return { dryN: 0, dryVwcPercent: 17.5, wetN: 0, wetVwcPercent: 22.5, configId: 78 };
+}
+
+// "Never configured" starting state — unlike Plant Dr, no real factory default has been captured
+// for f903/f904/f905/f908 (this project has never been the first writer of these fields on real
+// hardware), so null/false is the honest starting point for a pot nobody has pushed a config to
+// yet.
+function defaultWateringConfig(): WateringConfigRaw {
+  return { vwcIrrRaw: null, vwcCmdRaw: null, nIrr: null, algorithmEnabled: false };
 }
 
 interface MockXiaomiState {
@@ -61,6 +71,7 @@ function createInitialPots(): MockPotState[] {
       declinePerMinute: 0.05,
       lastUpdate: now,
       plantDr: defaultPlantDrCalibration(),
+      wateringConfig: defaultWateringConfig(),
     },
     {
       id: 'MOCK-POT-DECLINE',
@@ -73,6 +84,7 @@ function createInitialPots(): MockPotState[] {
       declinePerMinute: 1.2, // drops noticeably faster than MOCK-POT-NORMAL
       lastUpdate: now,
       plantDr: defaultPlantDrCalibration(),
+      wateringConfig: defaultWateringConfig(),
     },
   ];
 }
@@ -339,6 +351,34 @@ export function createMockProvider(): DeviceProvider {
         deviceId,
         result: 'OK',
         detail: `dry=${pot.plantDr.dryVwcPercent}% wet=${pot.plantDr.wetVwcPercent}% configId=${pot.plantDr.configId}`,
+      });
+    },
+
+    async readWateringConfig(deviceId: string): Promise<WateringConfigRaw> {
+      const pot = pots.get(deviceId);
+      if (!pot) throw new Error(`Mock device ${deviceId} inconnu`);
+      return pot.wateringConfig;
+    },
+
+    async writeWateringConfig(deviceId: string, write: WateringConfigWrite): Promise<void> {
+      const pot = pots.get(deviceId);
+      if (!pot) throw new Error(`Mock device ${deviceId} inconnu`);
+      if (write.mode === 'enable') {
+        pot.wateringConfig = {
+          vwcIrrRaw: write.values.vwcIrrRaw,
+          vwcCmdRaw: write.values.vwcCmdRaw,
+          nIrr: write.values.nIrr,
+          algorithmEnabled: true,
+        };
+      } else {
+        pot.wateringConfig = { ...pot.wateringConfig, algorithmEnabled: false };
+      }
+      log({
+        direction: 'WRITE',
+        label: 'Watering config written (mock)',
+        deviceId,
+        result: 'OK',
+        detail: JSON.stringify(pot.wateringConfig),
       });
     },
   };
