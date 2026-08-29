@@ -296,11 +296,164 @@ async function importParrotAttributes(): Promise<void> {
   console.log(`Parrot attributes import finished: ${imported} rows imported, ${skippedNoProfile} skipped (no matching profile).`);
 }
 
+interface ParrotPlantFertilizerTypeRow {
+  parrotSpeciesId: number;
+  code: number;
+}
+
+interface ParrotPlantSearchNameRow {
+  parrotSpeciesId: number;
+  locale: string;
+  name: string;
+  type: number;
+}
+
+interface ParrotAttributeNumberMappingRow {
+  locale: string;
+  code: string;
+  number: number;
+}
+
+interface ParrotPlantAttributeNumberRow {
+  parrotSpeciesId: number;
+  locale: string;
+  number: number;
+}
+
+const PARROT_FERTILIZER_TYPES_PATH = fileURLToPath(
+  new URL('../../prisma/seed-data/parrot_plant_fertilizer_types.json', import.meta.url),
+);
+const PARROT_SEARCH_NAMES_PATH = fileURLToPath(
+  new URL('../../prisma/seed-data/parrot_plant_search_names.json', import.meta.url),
+);
+const PARROT_ATTRIBUTE_NUMBER_MAPPING_PATH = fileURLToPath(
+  new URL('../../prisma/seed-data/parrot_attribute_number_mapping.json', import.meta.url),
+);
+const PARROT_ATTRIBUTE_NUMBERS_PATH = fileURLToPath(
+  new URL('../../prisma/seed-data/parrot_plant_attribute_numbers.json', import.meta.url),
+);
+
+async function loadProfileIdBySpeciesId(): Promise<Map<number, number>> {
+  const profiles = await prisma.plantProfile.findMany({
+    where: { parrotSpeciesId: { not: null } },
+    select: { id: true, parrotSpeciesId: true },
+  });
+  return new Map(profiles.map((p) => [p.parrotSpeciesId as number, p.id]));
+}
+
+async function importParrotFertilizerTypes(): Promise<void> {
+  const existingCount = await prisma.plantProfileFertilizerType.count();
+  if (existingCount > 0) {
+    console.log(`plant_profile_fertilizer_types already has ${existingCount} rows — skipping.`);
+    return;
+  }
+  if (!existsSync(PARROT_FERTILIZER_TYPES_PATH)) {
+    console.log(`No Parrot fertilizer types file at ${PARROT_FERTILIZER_TYPES_PATH} — skipping.`);
+    return;
+  }
+
+  const profileIdBySpeciesId = await loadProfileIdBySpeciesId();
+  const rows: ParrotPlantFertilizerTypeRow[] = JSON.parse(readFileSync(PARROT_FERTILIZER_TYPES_PATH, 'utf-8'));
+
+  let imported = 0;
+  for (const row of rows) {
+    const plantProfileId = profileIdBySpeciesId.get(row.parrotSpeciesId);
+    if (plantProfileId === undefined) continue;
+    await prisma.plantProfileFertilizerType.upsert({
+      where: { plantProfileId_code: { plantProfileId, code: row.code } },
+      update: {},
+      create: { plantProfileId, code: row.code },
+    });
+    imported++;
+  }
+  console.log(`Parrot fertilizer types import finished: ${imported} rows imported.`);
+}
+
+async function importParrotSearchNames(): Promise<void> {
+  const existingCount = await prisma.plantProfileSearchName.count();
+  if (existingCount > 0) {
+    console.log(`plant_profile_search_names already has ${existingCount} rows — skipping.`);
+    return;
+  }
+  if (!existsSync(PARROT_SEARCH_NAMES_PATH)) {
+    console.log(`No Parrot search names file at ${PARROT_SEARCH_NAMES_PATH} — skipping.`);
+    return;
+  }
+
+  const profileIdBySpeciesId = await loadProfileIdBySpeciesId();
+  const rows: ParrotPlantSearchNameRow[] = JSON.parse(readFileSync(PARROT_SEARCH_NAMES_PATH, 'utf-8'));
+
+  let imported = 0;
+  for (const row of rows) {
+    const plantProfileId = profileIdBySpeciesId.get(row.parrotSpeciesId);
+    if (plantProfileId === undefined) continue;
+    await prisma.plantProfileSearchName.upsert({
+      where: {
+        plantProfileId_locale_type_name: { plantProfileId, locale: row.locale, type: row.type, name: row.name },
+      },
+      update: {},
+      create: { plantProfileId, locale: row.locale, name: row.name, type: row.type },
+    });
+    imported++;
+  }
+  console.log(`Parrot search names import finished: ${imported} rows imported.`);
+}
+
+// Archival only — see PlantAttributeNumberMapping/PlantProfileAttributeNumber's schema.prisma
+// comments (Task 1). Imported so the raw data isn't lost, never read by any other code.
+async function importParrotAttributeNumbers(): Promise<void> {
+  const existingMappingCount = await prisma.plantAttributeNumberMapping.count();
+  if (existingMappingCount === 0 && existsSync(PARROT_ATTRIBUTE_NUMBER_MAPPING_PATH)) {
+    const mappingRows: ParrotAttributeNumberMappingRow[] = JSON.parse(
+      readFileSync(PARROT_ATTRIBUTE_NUMBER_MAPPING_PATH, 'utf-8'),
+    );
+    for (const row of mappingRows) {
+      await prisma.plantAttributeNumberMapping.upsert({
+        where: { locale_code: { locale: row.locale, code: row.code } },
+        update: { number: row.number },
+        create: row,
+      });
+    }
+    console.log(`Parrot attribute-number mapping import finished: ${mappingRows.length} rows imported (archival only).`);
+  } else {
+    console.log(`plant_attribute_number_mapping already has ${existingMappingCount} rows — skipping.`);
+  }
+
+  const existingNumberCount = await prisma.plantProfileAttributeNumber.count();
+  if (existingNumberCount > 0) {
+    console.log(`plant_profile_attribute_numbers already has ${existingNumberCount} rows — skipping.`);
+    return;
+  }
+  if (!existsSync(PARROT_ATTRIBUTE_NUMBERS_PATH)) {
+    console.log(`No Parrot attribute numbers file at ${PARROT_ATTRIBUTE_NUMBERS_PATH} — skipping.`);
+    return;
+  }
+
+  const profileIdBySpeciesId = await loadProfileIdBySpeciesId();
+  const rows: ParrotPlantAttributeNumberRow[] = JSON.parse(readFileSync(PARROT_ATTRIBUTE_NUMBERS_PATH, 'utf-8'));
+
+  let imported = 0;
+  for (const row of rows) {
+    const plantProfileId = profileIdBySpeciesId.get(row.parrotSpeciesId);
+    if (plantProfileId === undefined) continue;
+    await prisma.plantProfileAttributeNumber.upsert({
+      where: { plantProfileId_locale_number: { plantProfileId, locale: row.locale, number: row.number } },
+      update: {},
+      create: { plantProfileId, locale: row.locale, number: row.number },
+    });
+    imported++;
+  }
+  console.log(`Parrot plant attribute-numbers import finished: ${imported} rows imported (archival only).`);
+}
+
 async function main(): Promise<void> {
   await importWatchFlowerProfiles();
   await importParrotOverlay();
   await importParrotTranslations();
   await importParrotAttributes();
+  await importParrotFertilizerTypes();
+  await importParrotSearchNames();
+  await importParrotAttributeNumbers();
 }
 
 main()
