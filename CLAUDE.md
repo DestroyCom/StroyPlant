@@ -1199,6 +1199,97 @@ production server:
     shortened tick interval, ~10 ticks, real divergences detected/logged/persisted, `evaluateDevice`
     unaffected); the frontend toggle's save→DB→full-page-reload→still-checked round trip verified
     directly (Playwright) after the task's own manual-verification narrative proved insufficient.
+- **Parrot plant database import** ✅ (2026-08-29, on branch `feature/parrot-plant-database-import`,
+  not yet merged to `main`) — `PlantProfile` gains a second, higher-priority data source: the
+  official "Flower Power" iOS app's own bundled plant database (8090 species,
+  manufacturer-calibrated for this exact sensor hardware), extracted from the app bundle on
+  DestCom's Mac (`/Applications/Flower Power.app`) and overlaid onto the existing 3404-row
+  WatchFlower import on every container boot. Full design rationale and every decision below in
+  `docs/superpowers/specs/2026-08-29-parrot-plant-database-import-design.md`, implementation plan
+  in `docs/superpowers/plans/2026-08-29-parrot-plant-database-import-plan.md` (9 tasks,
+  subagent-driven-development with a task review + fix loop, plus a coordinated final perf fix).
+  - **Source priority, confirmed live with DestCom**: for the ~3400 species present in both
+    datasets, Parrot's values win for every field it actually provides (soil moisture via
+    `vwc_dry`/`vwc_wet`, temperature, light, conductivity) — WatchFlower remains the *only* source
+    for soil pH and air humidity, since Parrot's dataset has no equivalent there. Made with full
+    awareness this immediately changes the Health Engine's live status and the Batch 5
+    auto-watering trigger condition for already-assigned real devices the moment this import runs
+    against production. **Real-hardware consequence, confirmed on a scratch copy of the real
+    production `dev.db`**: `PARROT-A073` (species Alcea rosea, already assigned from earlier
+    testing) saw its soil moisture range shift from 15-60% to 32-51% and its soil conductivity
+    range from 350-2000 to 1000-3000 µS/cm — proof the overlay actually took effect on an
+    already-assigned real device, not just on paper.
+  - **Stored ahead of the consumer, nothing wired to read it yet** — same posture this project
+    already uses for Plant Dr calibration fields (Batch 6): multi-locale (7 languages: DE/EN/ES/
+    FR/IT/JA/ZH) free text (`PlantProfileTranslation`, 56490 rows), filter-taxonomy attribute codes
+    (`PlantProfileAttribute`, 77641 rows), fertilizer types (`PlantProfileFertilizerType`, 9308
+    rows), search names (`PlantProfileSearchName`, 201305 rows), and an archival, deliberately
+    locale-scoped attribute-number mapping (`PlantAttributeNumberMapping`, 630 rows = 90 codes × 7
+    locales; `PlantProfileAttributeNumber`, 641165 rows) — the last one confirmed to differ between
+    locales for the same code, so it's stored but must never be read as if it were universal.
+    Irrigation/command soil-moisture thresholds (`vwc_irr`/`vwc_cmd` + eco variants) and calibration
+    sample counts (`n_wet`/`n_irr`/`n_irr_eco`) are stored the same way — a real anomaly was found
+    here (`n_wet=288` on 8089/8090 species, plus `n_irr`/`n_irr_eco` varying 0/384/672) but not
+    acted on: `backend/src/plantDr.ts`'s `calibrateWet` still writes `n=0` unchanged, this is a lead
+    for the separately-planned BLE-sniff phase (understanding the official app's real protocol
+    behavior), not this batch's job.
+  - **Sentinel values kept raw, not nulled**: `dli_max=99` (7240/8090 species) and `ec_min=-1`
+    (~5300 species combined with the above) are Parrot's own generic per-sun/water-category
+    defaults, not real per-species measurements — confirmed by cross-checking against the
+    `sun`/`water` ordinal categories rather than assumed from the value alone. DestCom's explicit
+    choice to keep them raw rather than null them: accepted consequence is that the Health Engine's
+    range check becomes practically always-satisfied (not literally absent) for the affected
+    parameter on those species — flagged explicitly since a future direct query (Prisma Studio, an
+    admin UI) could otherwise mistake a sentinel for a real threshold.
+  - **Real duplicate-name data-quality finding, ruled not fixed**: Parrot's own source data has 10
+    duplicate `fullname` values among its 8090 species (e.g. "Abelia hybrids" under two different
+    `parrotSpeciesId`s, one of them the generic-catch-all-looking `99999`), orphaning ~20 species
+    (~0.25%) across every downstream Parrot table via last-write-wins on the name-based upsert —
+    confirmed by `PlantProfileTranslation`'s skip count (140, not the expected 0) and
+    `PlantProfile`'s total (9120, not the ~9138 a clean 1:1 join would produce). Accepted as a
+    narrow, upstream-data-quality-caused limitation — no real assigned device is among the affected
+    species, and re-deriving the match key from name to `parrotSpeciesId` would be a larger
+    architecture change disproportionate to the value.
+  - **Real performance finding + fix**: the full import (`pnpm import:species`) initially took 8
+    minutes 9 seconds against the real data, dominated by ~641,165 individual unbatched sequential
+    `upsert()` calls in `importParrotAttributeNumbers()`, each an implicit SQLite auto-commit with
+    its own fsync — a genuine operational risk, not just slowness, since `docker-entrypoint.sh` runs
+    this import on every container boot and each import function's idempotency gate ("any rows
+    exist → skip entirely") can't distinguish a complete run from one interrupted mid-import by a
+    deploy timeout or crash. Fixed by batching all 5 JSON-file-driven import functions' per-row
+    upserts into chunks of 500 rows per `prisma.$transaction([...])` call (commit `768d0bd`) —
+    `importWatchFlowerProfiles()`/`importParrotOverlay()` deliberately left untouched (much smaller
+    row counts, not the bottleneck). Result: 2 minutes 30 seconds, a 3.26x wall-clock speedup; the
+    `time` breakdown shows system/fsync time specifically dropped 98% (237.69s → 4.40s), confirming
+    the fsync bottleneck was the real cause — the remaining ~2.5 minutes is CPU-bound JSON parsing
+    of the 150MB translations file, not reducible by transaction batching, and not pursued further
+    (disproportionate for a personal single-admin project's one-time cost).
+  - **Committed data volume**: `backend/prisma/seed-data/` is ~204MB across 7 files (dominated by
+    `parrot_plant_translations.json` at ~150MB, 7-locale free text) — a deliberate, explicit choice
+    (DestCom's own "extract literally everything except images" instruction, confirmed multiple
+    times during design) over the more minimal scope the existing WatchFlower CSV import
+    represents.
+  - **Known follow-up, not this batch**: the `locationsDatabase.sqlite`/
+    `ZSENSORAUTOWATERINGCFGENTITY`/`ZCALIBRATIONDATA` findings from the same investigation (the
+    official app's real per-device auto-watering config shape, and a real `39e1fe01` calibration
+    blob to attempt decoding against) remain a separate, not-yet-started lead for the
+    already-sequenced next BLE-sniff phase — full detail in the design doc, not re-derived here.
+  - **Test coverage**: `backend/src/health/parrotPlantData.ts` (pure logic — normalization,
+    sentinel/unit conversion, CSV parse/format, match resolution) has 29 dedicated tests; the six
+    `importSpeciesProfiles.ts` orchestration functions have no dedicated automated tests (matches
+    this project's established convention for Prisma I/O orchestration, verified manually instead)
+    but were verified end-to-end against real data as described above. Full workspace: 144/144
+    tests passing, `tsc --noEmit` clean.
+  - **Verified**: against a scratch copy of the real production `backend/prisma/dev.db` (which
+    already had the 3404 pre-existing WatchFlower rows) — `PlantProfile` 9120, `PlantProfileTranslation`
+    56490, `PlantProfileAttribute` 77641, `PlantProfileFertilizerType` 9308, `PlantProfileSearchName`
+    201305, `PlantAttributeNumberMapping` 630 (exactly 90 codes × 7 locales), `PlantProfileAttributeNumber`
+    641165 — plus the `PARROT-A073` before/after confirmation above.
+  - **Not yet done**: this has **not** been deployed to the real production server — only verified
+    against a scratch copy of local `dev.db`. Running it for real will apply the Parrot-priority
+    overlay to the two real production Parrot Pots' assigned species (known from this project's
+    history to include at least `PARROT-A073`), changing their live Health Engine status/
+    auto-watering behavior the moment it runs, exactly as the design's own stated intent.
 
 ## Repo structure
 
