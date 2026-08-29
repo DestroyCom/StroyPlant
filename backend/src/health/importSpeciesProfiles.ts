@@ -245,10 +245,62 @@ async function importParrotTranslations(): Promise<void> {
   console.log(`Parrot translations import finished: ${imported} rows imported, ${skippedNoProfile} skipped (no matching profile).`);
 }
 
+interface ParrotPlantAttributeRow {
+  parrotSpeciesId: number;
+  category: string;
+  value: string;
+}
+
+const PARROT_ATTRIBUTES_PATH = fileURLToPath(
+  new URL('../../prisma/seed-data/parrot_plant_attributes.json', import.meta.url),
+);
+
+// Independently idempotent, same reasoning as importParrotOverlay/importParrotTranslations. Must
+// run after importParrotOverlay (parrotSpeciesId source of truth).
+async function importParrotAttributes(): Promise<void> {
+  const existingCount = await prisma.plantProfileAttribute.count();
+  if (existingCount > 0) {
+    console.log(`plant_profile_attributes already has ${existingCount} rows — skipping Parrot attributes import.`);
+    return;
+  }
+
+  if (!existsSync(PARROT_ATTRIBUTES_PATH)) {
+    console.log(`No Parrot attributes file at ${PARROT_ATTRIBUTES_PATH} — skipping.`);
+    return;
+  }
+
+  const profiles = await prisma.plantProfile.findMany({
+    where: { parrotSpeciesId: { not: null } },
+    select: { id: true, parrotSpeciesId: true },
+  });
+  const profileIdBySpeciesId = new Map(profiles.map((p) => [p.parrotSpeciesId as number, p.id]));
+
+  const rows: ParrotPlantAttributeRow[] = JSON.parse(readFileSync(PARROT_ATTRIBUTES_PATH, 'utf-8'));
+
+  let imported = 0;
+  let skippedNoProfile = 0;
+  for (const row of rows) {
+    const plantProfileId = profileIdBySpeciesId.get(row.parrotSpeciesId);
+    if (plantProfileId === undefined) {
+      skippedNoProfile++;
+      continue;
+    }
+    await prisma.plantProfileAttribute.upsert({
+      where: { plantProfileId_category_value: { plantProfileId, category: row.category, value: row.value } },
+      update: {},
+      create: { plantProfileId, category: row.category, value: row.value },
+    });
+    imported++;
+  }
+
+  console.log(`Parrot attributes import finished: ${imported} rows imported, ${skippedNoProfile} skipped (no matching profile).`);
+}
+
 async function main(): Promise<void> {
   await importWatchFlowerProfiles();
   await importParrotOverlay();
   await importParrotTranslations();
+  await importParrotAttributes();
 }
 
 main()
