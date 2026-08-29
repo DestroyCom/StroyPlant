@@ -1,4 +1,7 @@
+import { existsSync, readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { prisma } from '../db/client.js';
+import { normalizeLatinName, parseParrotCsvLine, resolveMatchId } from './parrotPlantData.js';
 
 // Source: assets/plants/watchflower_plantdb.csv from the emericg/WatchFlower repo (GPLv3). The
 // file is never committed to StroyPlant (third-party data under a different license) — it is
@@ -43,10 +46,10 @@ function parseRange(rawMin: string | undefined, rawMax: string | undefined): [nu
 // download+parse pass (not just the upsert) once any profile exists — a full re-import was
 // previously a manual, easy-to-forget step; production ran with 0 rows in plant_profiles until this
 // was actually run once by hand (found empirically on the production server, 2026-07-29).
-async function main() {
+async function importWatchFlowerProfiles(): Promise<void> {
   const existingCount = await prisma.plantProfile.count();
   if (existingCount > 0) {
-    console.log(`plant_profiles already has ${existingCount} rows — skipping download/import.`);
+    console.log(`plant_profiles already has ${existingCount} rows — skipping WatchFlower download/import.`);
     return;
   }
 
@@ -107,7 +110,69 @@ async function main() {
     imported++;
   }
 
-  console.log(`Import finished: ${imported} profiles imported, ${skipped} rows skipped (missing name).`);
+  console.log(`WatchFlower import finished: ${imported} profiles imported, ${skipped} rows skipped (missing name).`);
+}
+
+const PARROT_CSV_PATH = fileURLToPath(new URL('../../prisma/seed-data/parrot_plant_profiles.csv', import.meta.url));
+
+// Independently idempotent from importWatchFlowerProfiles: gated on whether the overlay has ever
+// run (parrotSpeciesId set on at least one row), not on plant_profiles being non-empty overall —
+// otherwise this would never run at all against a production database that already has WatchFlower
+// rows from before this feature existed. See
+// docs/superpowers/specs/2026-08-29-parrot-plant-database-import-design.md for why Parrot's values
+// take priority over WatchFlower's on every field it provides.
+async function importParrotOverlay(): Promise<void> {
+  const alreadyApplied = await prisma.plantProfile.count({ where: { parrotSpeciesId: { not: null } } });
+  if (alreadyApplied > 0) {
+    console.log(`${alreadyApplied} profiles already carry Parrot data — skipping Parrot overlay.`);
+    return;
+  }
+
+  if (!existsSync(PARROT_CSV_PATH)) {
+    console.log(`No Parrot plant data file at ${PARROT_CSV_PATH} — skipping Parrot overlay.`);
+    return;
+  }
+
+  const existingProfiles = await prisma.plantProfile.findMany({ select: { id: true, name: true } });
+  const existingByNormalizedName = new Map(existingProfiles.map((p) => [normalizeLatinName(p.name), p.id]));
+
+  const lines = readFileSync(PARROT_CSV_PATH, 'utf-8')
+    .split('\n')
+    .filter((line) => line.trim().length > 0);
+
+  let updated = 0;
+  let created = 0;
+
+  for (const line of lines) {
+    const row = parseParrotCsvLine(line);
+    // Destructure out the two fields handled separately (name drives the where/create key,
+    // commonName is intentionally left untouched on an update — see below) so every OTHER field
+    // on ParrotPlantRow flows into `data` automatically. Enumerating each field by hand here was
+    // tried first and silently dropped a whole batch of newly-added columns during this plan's own
+    // drafting (caught in self-review, see the note at the bottom of this plan) — with a field list
+    // now in the 40s and still growing, destructuring is the version of this that can't go stale.
+    const { name, commonName, ...data } = row;
+
+    const matchedId = resolveMatchId(name, existingByNormalizedName);
+    if (matchedId !== undefined) {
+      await prisma.plantProfile.update({ where: { id: matchedId }, data });
+      updated++;
+    } else {
+      await prisma.plantProfile.upsert({
+        where: { name },
+        update: data,
+        create: { name, commonName, ...data },
+      });
+      created++;
+    }
+  }
+
+  console.log(`Parrot overlay finished: ${updated} existing profiles updated, ${created} new profiles created.`);
+}
+
+async function main(): Promise<void> {
+  await importWatchFlowerProfiles();
+  await importParrotOverlay();
 }
 
 main()
