@@ -5,6 +5,7 @@ frontend/src/routeTree.gen.ts
 frontend/.tanstack/
 frontend/README.md
 docs/fonts/
+docs/images/
 .env
 .env.*
 !.env.example
@@ -20,3 +21,4 @@ backend/prisma/dev.db-journal
 *.key
 *.pem
 secrets/
+/docs/flowerpower_screenshot
