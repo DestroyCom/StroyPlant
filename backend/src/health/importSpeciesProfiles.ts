@@ -3,6 +3,11 @@ import { fileURLToPath } from 'node:url';
 import { prisma } from '../db/client.js';
 import { normalizeLatinName, parseParrotCsvLine, resolveMatchId } from './parrotPlantData.js';
 
+// Batches the 5 large per-row upsert loops below into chunked transactions instead of one
+// auto-commit per row — SQLite's per-statement fsync overhead made the unbatched version of
+// importParrotAttributeNumbers()'s 641,165-row loop alone dominate an 8m9s real import run.
+const IMPORT_CHUNK_SIZE = 500;
+
 // Source: assets/plants/watchflower_plantdb.csv from the emericg/WatchFlower repo (GPLv3). The
 // file is never committed to StroyPlant (third-party data under a different license) — it is
 // downloaded when this script runs. URL pinned to a specific commit (not `master`) so a
@@ -224,22 +229,31 @@ async function importParrotTranslations(): Promise<void> {
 
   let imported = 0;
   let skippedNoProfile = 0;
-  for (const row of rows) {
-    const plantProfileId = profileIdBySpeciesId.get(row.parrotSpeciesId);
-    if (plantProfileId === undefined) {
-      skippedNoProfile++;
-      continue;
+  for (let i = 0; i < rows.length; i += IMPORT_CHUNK_SIZE) {
+    const chunk = rows.slice(i, i + IMPORT_CHUNK_SIZE);
+    const operations = [];
+    for (const row of chunk) {
+      const plantProfileId = profileIdBySpeciesId.get(row.parrotSpeciesId);
+      if (plantProfileId === undefined) {
+        skippedNoProfile++;
+        continue;
+      }
+      // Same destructuring approach as importParrotOverlay (Task 4) and for the same reason —
+      // parrotSpeciesId/locale are handled explicitly (key lookup / unique constraint), everything
+      // else on the row is a PlantProfileTranslation column and flows through automatically.
+      const { parrotSpeciesId, locale, ...fields } = row;
+      operations.push(
+        prisma.plantProfileTranslation.upsert({
+          where: { plantProfileId_locale: { plantProfileId, locale } },
+          update: fields,
+          create: { plantProfileId, locale, ...fields },
+        }),
+      );
     }
-    // Same destructuring approach as importParrotOverlay (Task 4) and for the same reason —
-    // parrotSpeciesId/locale are handled explicitly (key lookup / unique constraint), everything
-    // else on the row is a PlantProfileTranslation column and flows through automatically.
-    const { parrotSpeciesId, locale, ...fields } = row;
-    await prisma.plantProfileTranslation.upsert({
-      where: { plantProfileId_locale: { plantProfileId, locale } },
-      update: fields,
-      create: { plantProfileId, locale, ...fields },
-    });
-    imported++;
+    if (operations.length > 0) {
+      await prisma.$transaction(operations);
+    }
+    imported += operations.length;
   }
 
   console.log(`Parrot translations import finished: ${imported} rows imported, ${skippedNoProfile} skipped (no matching profile).`);
@@ -279,18 +293,27 @@ async function importParrotAttributes(): Promise<void> {
 
   let imported = 0;
   let skippedNoProfile = 0;
-  for (const row of rows) {
-    const plantProfileId = profileIdBySpeciesId.get(row.parrotSpeciesId);
-    if (plantProfileId === undefined) {
-      skippedNoProfile++;
-      continue;
+  for (let i = 0; i < rows.length; i += IMPORT_CHUNK_SIZE) {
+    const chunk = rows.slice(i, i + IMPORT_CHUNK_SIZE);
+    const operations = [];
+    for (const row of chunk) {
+      const plantProfileId = profileIdBySpeciesId.get(row.parrotSpeciesId);
+      if (plantProfileId === undefined) {
+        skippedNoProfile++;
+        continue;
+      }
+      operations.push(
+        prisma.plantProfileAttribute.upsert({
+          where: { plantProfileId_category_value: { plantProfileId, category: row.category, value: row.value } },
+          update: {},
+          create: { plantProfileId, category: row.category, value: row.value },
+        }),
+      );
     }
-    await prisma.plantProfileAttribute.upsert({
-      where: { plantProfileId_category_value: { plantProfileId, category: row.category, value: row.value } },
-      update: {},
-      create: { plantProfileId, category: row.category, value: row.value },
-    });
-    imported++;
+    if (operations.length > 0) {
+      await prisma.$transaction(operations);
+    }
+    imported += operations.length;
   }
 
   console.log(`Parrot attributes import finished: ${imported} rows imported, ${skippedNoProfile} skipped (no matching profile).`);
@@ -356,15 +379,24 @@ async function importParrotFertilizerTypes(): Promise<void> {
   const rows: ParrotPlantFertilizerTypeRow[] = JSON.parse(readFileSync(PARROT_FERTILIZER_TYPES_PATH, 'utf-8'));
 
   let imported = 0;
-  for (const row of rows) {
-    const plantProfileId = profileIdBySpeciesId.get(row.parrotSpeciesId);
-    if (plantProfileId === undefined) continue;
-    await prisma.plantProfileFertilizerType.upsert({
-      where: { plantProfileId_code: { plantProfileId, code: row.code } },
-      update: {},
-      create: { plantProfileId, code: row.code },
-    });
-    imported++;
+  for (let i = 0; i < rows.length; i += IMPORT_CHUNK_SIZE) {
+    const chunk = rows.slice(i, i + IMPORT_CHUNK_SIZE);
+    const operations = [];
+    for (const row of chunk) {
+      const plantProfileId = profileIdBySpeciesId.get(row.parrotSpeciesId);
+      if (plantProfileId === undefined) continue;
+      operations.push(
+        prisma.plantProfileFertilizerType.upsert({
+          where: { plantProfileId_code: { plantProfileId, code: row.code } },
+          update: {},
+          create: { plantProfileId, code: row.code },
+        }),
+      );
+    }
+    if (operations.length > 0) {
+      await prisma.$transaction(operations);
+    }
+    imported += operations.length;
   }
   console.log(`Parrot fertilizer types import finished: ${imported} rows imported.`);
 }
@@ -384,17 +416,26 @@ async function importParrotSearchNames(): Promise<void> {
   const rows: ParrotPlantSearchNameRow[] = JSON.parse(readFileSync(PARROT_SEARCH_NAMES_PATH, 'utf-8'));
 
   let imported = 0;
-  for (const row of rows) {
-    const plantProfileId = profileIdBySpeciesId.get(row.parrotSpeciesId);
-    if (plantProfileId === undefined) continue;
-    await prisma.plantProfileSearchName.upsert({
-      where: {
-        plantProfileId_locale_type_name: { plantProfileId, locale: row.locale, type: row.type, name: row.name },
-      },
-      update: {},
-      create: { plantProfileId, locale: row.locale, name: row.name, type: row.type },
-    });
-    imported++;
+  for (let i = 0; i < rows.length; i += IMPORT_CHUNK_SIZE) {
+    const chunk = rows.slice(i, i + IMPORT_CHUNK_SIZE);
+    const operations = [];
+    for (const row of chunk) {
+      const plantProfileId = profileIdBySpeciesId.get(row.parrotSpeciesId);
+      if (plantProfileId === undefined) continue;
+      operations.push(
+        prisma.plantProfileSearchName.upsert({
+          where: {
+            plantProfileId_locale_type_name: { plantProfileId, locale: row.locale, type: row.type, name: row.name },
+          },
+          update: {},
+          create: { plantProfileId, locale: row.locale, name: row.name, type: row.type },
+        }),
+      );
+    }
+    if (operations.length > 0) {
+      await prisma.$transaction(operations);
+    }
+    imported += operations.length;
   }
   console.log(`Parrot search names import finished: ${imported} rows imported.`);
 }
@@ -407,12 +448,17 @@ async function importParrotAttributeNumbers(): Promise<void> {
     const mappingRows: ParrotAttributeNumberMappingRow[] = JSON.parse(
       readFileSync(PARROT_ATTRIBUTE_NUMBER_MAPPING_PATH, 'utf-8'),
     );
-    for (const row of mappingRows) {
-      await prisma.plantAttributeNumberMapping.upsert({
-        where: { locale_code: { locale: row.locale, code: row.code } },
-        update: { number: row.number },
-        create: row,
-      });
+    for (let i = 0; i < mappingRows.length; i += IMPORT_CHUNK_SIZE) {
+      const chunk = mappingRows.slice(i, i + IMPORT_CHUNK_SIZE);
+      await prisma.$transaction(
+        chunk.map((row) =>
+          prisma.plantAttributeNumberMapping.upsert({
+            where: { locale_code: { locale: row.locale, code: row.code } },
+            update: { number: row.number },
+            create: row,
+          }),
+        ),
+      );
     }
     console.log(`Parrot attribute-number mapping import finished: ${mappingRows.length} rows imported (archival only).`);
   } else {
@@ -433,15 +479,24 @@ async function importParrotAttributeNumbers(): Promise<void> {
   const rows: ParrotPlantAttributeNumberRow[] = JSON.parse(readFileSync(PARROT_ATTRIBUTE_NUMBERS_PATH, 'utf-8'));
 
   let imported = 0;
-  for (const row of rows) {
-    const plantProfileId = profileIdBySpeciesId.get(row.parrotSpeciesId);
-    if (plantProfileId === undefined) continue;
-    await prisma.plantProfileAttributeNumber.upsert({
-      where: { plantProfileId_locale_number: { plantProfileId, locale: row.locale, number: row.number } },
-      update: {},
-      create: { plantProfileId, locale: row.locale, number: row.number },
-    });
-    imported++;
+  for (let i = 0; i < rows.length; i += IMPORT_CHUNK_SIZE) {
+    const chunk = rows.slice(i, i + IMPORT_CHUNK_SIZE);
+    const operations = [];
+    for (const row of chunk) {
+      const plantProfileId = profileIdBySpeciesId.get(row.parrotSpeciesId);
+      if (plantProfileId === undefined) continue;
+      operations.push(
+        prisma.plantProfileAttributeNumber.upsert({
+          where: { plantProfileId_locale_number: { plantProfileId, locale: row.locale, number: row.number } },
+          update: {},
+          create: { plantProfileId, locale: row.locale, number: row.number },
+        }),
+      );
+    }
+    if (operations.length > 0) {
+      await prisma.$transaction(operations);
+    }
+    imported += operations.length;
   }
   console.log(`Parrot plant attribute-numbers import finished: ${imported} rows imported (archival only).`);
 }
