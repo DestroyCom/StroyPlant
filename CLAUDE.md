@@ -1233,7 +1233,9 @@ production server:
     acted on: `backend/src/plantDr.ts`'s `calibrateWet` still writes `n=0` unchanged, this is a lead
     for the separately-planned BLE-sniff phase (understanding the official app's real protocol
     behavior), not this batch's job.
-  - **Sentinel values kept raw, not nulled**: `dli_max=99` (7239/8090 species) and `ec_min=-1` (432/8090 species, 358 of them overlapping with the dli_max sentinel — 7313/8090 species affected by at least one) are Parrot's own generic per-sun/water-category
+  - **Sentinel values kept raw, not nulled**: `dli_max=99` (7239/8090 species) and `ec_min=-1`
+    (432/8090 species, 358 of them overlapping with the dli_max sentinel — 7313/8090 species
+    affected by at least one) are Parrot's own generic per-sun/water-category
     defaults, not real per-species measurements — confirmed by cross-checking against the
     `sun`/`water` ordinal categories rather than assumed from the value alone. DestCom's explicit
     choice to keep them raw rather than null them: accepted consequence is that the Health Engine's
@@ -1255,19 +1257,50 @@ production server:
     its own fsync — a genuine operational risk, not just slowness, since `docker-entrypoint.sh` runs
     this import on every container boot and each import function's idempotency gate ("any rows
     exist → skip entirely") can't distinguish a complete run from one interrupted mid-import by a
-    deploy timeout or crash. Fixed by batching all 5 JSON-file-driven import functions' per-row
-    upserts into chunks of 500 rows per `prisma.$transaction([...])` call (commit `768d0bd`) —
-    `importWatchFlowerProfiles()`/`importParrotOverlay()` deliberately left untouched (much smaller
-    row counts, not the bottleneck). Result: 2 minutes 30 seconds, a 3.26x wall-clock speedup; the
-    `time` breakdown shows system/fsync time specifically dropped 98% (237.69s → 4.40s), confirming
-    the fsync bottleneck was the real cause — the remaining ~2.5 minutes is CPU-bound JSON parsing
-    of the 150MB translations file, not reducible by transaction batching, and not pursued further
-    (disproportionate for a personal single-admin project's one-time cost).
+    deploy timeout or crash. Fixed by batching all 6 JSON/CSV-driven import functions' per-row
+    upserts into chunks of 500 rows per `prisma.$transaction([...])` call (commit `768d0bd`, plus a
+    follow-up batching `importParrotOverlay()` too during the final whole-branch review —
+    `importWatchFlowerProfiles()` is the only one deliberately left unbatched, 3404 rows, not a
+    contributor). Result: 2 minutes 30 seconds, a 3.26x wall-clock speedup; the `time` breakdown
+    shows system/fsync time specifically dropped 98% (237.69s → 4.40s), confirming the fsync
+    bottleneck was the real cause. **Correction from an earlier draft of this entry**: the remaining
+    ~2.5 minutes is NOT JSON-parsing cost (`JSON.parse` on the 150MB translations file measured at
+    0.36s during the final review) — it's Prisma/query-engine per-upsert overhead (~148s user CPU),
+    confirmed by the `time` breakdown itself (148s user vs 4.3s system). The real further lever, not
+    pursued here, would be `createMany({ skipDuplicates: true })` on these append-only tables rather
+    than per-row `upsert()`.
+  - **Deploy plan for the first boot after this branch merges** (added after the final whole-branch
+    review measured the real cost directly): this import runs once, automatically, the first time
+    `docker-entrypoint.sh` boots against a database that doesn't have it yet — no manual step needed
+    — but expect it to genuinely block: `docker-entrypoint.sh` runs it before the HTTP server starts
+    listening, so the app is unreachable (502s through SWAG/Cloudflare) for the full ~2.5 minutes
+    measured locally, plausibly longer on the production server's CPU (the cost is CPU-bound, not
+    I/O-bound, so it doesn't parallelize with anything else happening at boot). **Do not interrupt
+    this first boot** (no `docker compose down`, no reboot) — each import step's idempotency gate
+    can't tell a complete run from an interrupted one, so an interruption leaves that table
+    permanently, silently half-populated with no automatic repair; recovery would be manual SQL.
+    The import also peaks around 800MB RSS (measured: `JSON.parse`-ing the 150MB translations file
+    alone peaks at ~806MB including the source string and intermediates) — confirm the production
+    server has meaningfully more than that free before this first boot, or the OOM-killer creates
+    exactly the same unrecoverable-partial-state risk. After it completes, confirm success with
+    `SELECT COUNT(*) FROM PlantProfile WHERE parrotSpeciesId IS NOT NULL` (expect 8070, not 8090 —
+    the 20 orphaned duplicates from the finding above) before trusting the six downstream tables.
+  - **Real physical-world consequence for `PARROT-A073` specifically, not just a display change**:
+    its species (Alcea rosea) soil moisture band moves from WatchFlower's 15-60% to Parrot's
+    32-51%. The device's own most recent real POLL reading in production is 31.2% — just below the
+    new floor — meaning the very first Health Engine evaluation after this import flips that
+    parameter from `ok` to `too_low`, which is exactly Batch 5's auto-watering trigger condition.
+    **The first scheduler tick after this import may trigger a real watering on a real, currently
+    fine, pot** — not a bug, this is the approved Parrot-priority decision working exactly as
+    designed (see "Decisions" above), but it's the one change in this batch with a physical actuator
+    behind it and is called out here so it isn't a surprise when it happens.
   - **Committed data volume**: `backend/prisma/seed-data/` is ~204MB across 7 files (dominated by
     `parrot_plant_translations.json` at ~150MB, 7-locale free text) — a deliberate, explicit choice
     (DestCom's own "extract literally everything except images" instruction, confirmed multiple
     times during design) over the more minimal scope the existing WatchFlower CSV import
-    represents.
+    represents. This also means `pnpm deploy`'s prod-only backend copy includes `seed-data/` (needed
+    at runtime for the import above to work at all) — the published GHCR image grows by roughly this
+    same ~204MB, per architecture (amd64 + arm64 are both built).
   - **Known follow-up, not this batch**: the `locationsDatabase.sqlite`/
     `ZSENSORAUTOWATERINGCFGENTITY`/`ZCALIBRATIONDATA` findings from the same investigation (the
     official app's real per-device auto-watering config shape, and a real `39e1fe01` calibration
@@ -1283,7 +1316,10 @@ production server:
     already had the 3404 pre-existing WatchFlower rows) — `PlantProfile` 9120, `PlantProfileTranslation`
     56490, `PlantProfileAttribute` 77641, `PlantProfileFertilizerType` 9308, `PlantProfileSearchName`
     201305, `PlantAttributeNumberMapping` 630 (exactly 90 codes × 7 locales), `PlantProfileAttributeNumber`
-    641165 — plus the `PARROT-A073` before/after confirmation above.
+    641165 — plus the `PARROT-A073` before/after confirmation above. The final whole-branch review
+    independently re-ran the full import end-to-end a second time (post-batching) and reproduced
+    every one of these figures exactly, and confirmed a second run completes in 0.5s (full
+    idempotency holds across all 8 steps).
   - **Not yet done**: this has **not** been deployed to the real production server — only verified
     against a scratch copy of local `dev.db`. Running it for real will apply the Parrot-priority
     overlay to the two real production Parrot Pots' assigned species (known from this project's

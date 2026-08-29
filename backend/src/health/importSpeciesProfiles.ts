@@ -148,28 +148,41 @@ async function importParrotOverlay(): Promise<void> {
   let updated = 0;
   let created = 0;
 
-  for (const line of lines) {
-    const row = parseParrotCsvLine(line);
-    // Destructure out the two fields handled separately (name drives the where/create key,
-    // commonName is intentionally left untouched on an update — see below) so every OTHER field
-    // on ParrotPlantRow flows into `data` automatically. Enumerating each field by hand here was
-    // tried first and silently dropped a whole batch of newly-added columns during this plan's own
-    // drafting (caught in self-review, see the note at the bottom of this plan) — with a field list
-    // now in the 40s and still growing, destructuring is the version of this that can't go stale.
-    const { name, commonName, ...data } = row;
+  for (let i = 0; i < lines.length; i += IMPORT_CHUNK_SIZE) {
+    const chunk = lines.slice(i, i + IMPORT_CHUNK_SIZE);
+    const operations = [];
+    let chunkUpdated = 0;
+    let chunkCreated = 0;
+    for (const line of chunk) {
+      const row = parseParrotCsvLine(line);
+      // Destructure out the two fields handled separately (name drives the where/create key,
+      // commonName is intentionally left untouched on an update — see below) so every OTHER field
+      // on ParrotPlantRow flows into `data` automatically. Enumerating each field by hand here was
+      // tried first and silently dropped a whole batch of newly-added columns during this plan's own
+      // drafting (caught in self-review, see the note at the bottom of this plan) — with a field list
+      // now in the 40s and still growing, destructuring is the version of this that can't go stale.
+      const { name, commonName, ...data } = row;
 
-    const matchedId = resolveMatchId(name, existingByNormalizedName);
-    if (matchedId !== undefined) {
-      await prisma.plantProfile.update({ where: { id: matchedId }, data });
-      updated++;
-    } else {
-      await prisma.plantProfile.upsert({
-        where: { name },
-        update: data,
-        create: { name, commonName, ...data },
-      });
-      created++;
+      const matchedId = resolveMatchId(name, existingByNormalizedName);
+      if (matchedId !== undefined) {
+        operations.push(prisma.plantProfile.update({ where: { id: matchedId }, data }));
+        chunkUpdated++;
+      } else {
+        operations.push(
+          prisma.plantProfile.upsert({
+            where: { name },
+            update: data,
+            create: { name, commonName, ...data },
+          }),
+        );
+        chunkCreated++;
+      }
     }
+    if (operations.length > 0) {
+      await prisma.$transaction(operations);
+    }
+    updated += chunkUpdated;
+    created += chunkCreated;
   }
 
   console.log(`Parrot overlay finished: ${updated} existing profiles updated, ${created} new profiles created.`);
@@ -200,9 +213,7 @@ interface ParrotPlantTranslationRow {
   orderIndexForSorting: number | null;
 }
 
-const PARROT_TRANSLATIONS_PATH = fileURLToPath(
-  new URL('../../prisma/seed-data/parrot_plant_translations.json', import.meta.url),
-);
+const PARROT_TRANSLATIONS_PATH = fileURLToPath(new URL('../../prisma/seed-data/parrot_plant_translations.json', import.meta.url));
 
 // Independently idempotent, same reasoning as importParrotOverlay: gated on this table already
 // having rows, not on plant_profiles being non-empty. Must run after importParrotOverlay, which is
@@ -265,9 +276,7 @@ interface ParrotPlantAttributeRow {
   value: string;
 }
 
-const PARROT_ATTRIBUTES_PATH = fileURLToPath(
-  new URL('../../prisma/seed-data/parrot_plant_attributes.json', import.meta.url),
-);
+const PARROT_ATTRIBUTES_PATH = fileURLToPath(new URL('../../prisma/seed-data/parrot_plant_attributes.json', import.meta.url));
 
 // Independently idempotent, same reasoning as importParrotOverlay/importParrotTranslations. Must
 // run after importParrotOverlay (parrotSpeciesId source of truth).
@@ -343,18 +352,12 @@ interface ParrotPlantAttributeNumberRow {
   number: number;
 }
 
-const PARROT_FERTILIZER_TYPES_PATH = fileURLToPath(
-  new URL('../../prisma/seed-data/parrot_plant_fertilizer_types.json', import.meta.url),
-);
-const PARROT_SEARCH_NAMES_PATH = fileURLToPath(
-  new URL('../../prisma/seed-data/parrot_plant_search_names.json', import.meta.url),
-);
+const PARROT_FERTILIZER_TYPES_PATH = fileURLToPath(new URL('../../prisma/seed-data/parrot_plant_fertilizer_types.json', import.meta.url));
+const PARROT_SEARCH_NAMES_PATH = fileURLToPath(new URL('../../prisma/seed-data/parrot_plant_search_names.json', import.meta.url));
 const PARROT_ATTRIBUTE_NUMBER_MAPPING_PATH = fileURLToPath(
   new URL('../../prisma/seed-data/parrot_attribute_number_mapping.json', import.meta.url),
 );
-const PARROT_ATTRIBUTE_NUMBERS_PATH = fileURLToPath(
-  new URL('../../prisma/seed-data/parrot_plant_attribute_numbers.json', import.meta.url),
-);
+const PARROT_ATTRIBUTE_NUMBERS_PATH = fileURLToPath(new URL('../../prisma/seed-data/parrot_plant_attribute_numbers.json', import.meta.url));
 
 async function loadProfileIdBySpeciesId(): Promise<Map<number, number>> {
   const profiles = await prisma.plantProfile.findMany({
@@ -445,9 +448,7 @@ async function importParrotSearchNames(): Promise<void> {
 async function importParrotAttributeNumbers(): Promise<void> {
   const existingMappingCount = await prisma.plantAttributeNumberMapping.count();
   if (existingMappingCount === 0 && existsSync(PARROT_ATTRIBUTE_NUMBER_MAPPING_PATH)) {
-    const mappingRows: ParrotAttributeNumberMappingRow[] = JSON.parse(
-      readFileSync(PARROT_ATTRIBUTE_NUMBER_MAPPING_PATH, 'utf-8'),
-    );
+    const mappingRows: ParrotAttributeNumberMappingRow[] = JSON.parse(readFileSync(PARROT_ATTRIBUTE_NUMBER_MAPPING_PATH, 'utf-8'));
     for (let i = 0; i < mappingRows.length; i += IMPORT_CHUNK_SIZE) {
       const chunk = mappingRows.slice(i, i + IMPORT_CHUNK_SIZE);
       await prisma.$transaction(

@@ -21,26 +21,16 @@ import {
 
 const DEFAULT_APP_DIR = '/Applications/Flower Power.app/Wrapper/Flower Power.app';
 const PROFILES_OUTPUT_PATH = fileURLToPath(new URL('../prisma/seed-data/parrot_plant_profiles.csv', import.meta.url));
-const TRANSLATIONS_OUTPUT_PATH = fileURLToPath(
-  new URL('../prisma/seed-data/parrot_plant_translations.json', import.meta.url),
-);
-const ATTRIBUTES_OUTPUT_PATH = fileURLToPath(
-  new URL('../prisma/seed-data/parrot_plant_attributes.json', import.meta.url),
-);
-const FERTILIZER_TYPES_OUTPUT_PATH = fileURLToPath(
-  new URL('../prisma/seed-data/parrot_plant_fertilizer_types.json', import.meta.url),
-);
-const SEARCH_NAMES_OUTPUT_PATH = fileURLToPath(
-  new URL('../prisma/seed-data/parrot_plant_search_names.json', import.meta.url),
-);
+const TRANSLATIONS_OUTPUT_PATH = fileURLToPath(new URL('../prisma/seed-data/parrot_plant_translations.json', import.meta.url));
+const ATTRIBUTES_OUTPUT_PATH = fileURLToPath(new URL('../prisma/seed-data/parrot_plant_attributes.json', import.meta.url));
+const FERTILIZER_TYPES_OUTPUT_PATH = fileURLToPath(new URL('../prisma/seed-data/parrot_plant_fertilizer_types.json', import.meta.url));
+const SEARCH_NAMES_OUTPUT_PATH = fileURLToPath(new URL('../prisma/seed-data/parrot_plant_search_names.json', import.meta.url));
 // Archival only — see the PlantAttributeNumberMapping/PlantProfileAttributeNumber model comments
 // in schema.prisma (Task 1) for why nothing may ever read these two files' imported data back out.
 const ATTRIBUTE_NUMBER_MAPPING_OUTPUT_PATH = fileURLToPath(
   new URL('../prisma/seed-data/parrot_attribute_number_mapping.json', import.meta.url),
 );
-const ATTRIBUTE_NUMBERS_OUTPUT_PATH = fileURLToPath(
-  new URL('../prisma/seed-data/parrot_plant_attribute_numbers.json', import.meta.url),
-);
+const ATTRIBUTE_NUMBERS_OUTPUT_PATH = fileURLToPath(new URL('../prisma/seed-data/parrot_plant_attribute_numbers.json', import.meta.url));
 
 // The 7 locale dumps actually present in the bundle (confirmed by listing it directly) — other
 // .lproj folders in the app exist for UI chrome translation only, with no matching plant-content dump.
@@ -160,9 +150,7 @@ function extractNumericProfiles(appDir: string): ParrotEncyclopediaEntry[] {
   }
 
   writeFileSync(PROFILES_OUTPUT_PATH, `${lines.join('\n')}\n`, 'utf-8');
-  console.log(
-    `Wrote ${lines.length} rows to ${PROFILES_OUTPUT_PATH} (${skippedNoProfile} plants had no scientific profile).`,
-  );
+  console.log(`Wrote ${lines.length} rows to ${PROFILES_OUTPUT_PATH} (${skippedNoProfile} plants had no scientific profile).`);
   return encyclopedia.plants;
 }
 
@@ -188,8 +176,7 @@ function extractLocaleDependentData(appDir: string): void {
     }
 
     for (const entry of encyclopedia.plants) {
-      const preferredCommonName =
-        entry.common_names?.find((c) => c.preferred)?.common_name ?? entry.common_names?.[0]?.common_name ?? null;
+      const preferredCommonName = entry.common_names?.find((c) => c.preferred)?.common_name ?? entry.common_names?.[0]?.common_name ?? null;
       translations.push({
         parrotSpeciesId: entry.id,
         locale,
@@ -230,7 +217,9 @@ function extractLocaleDependentData(appDir: string): void {
   writeFileSync(SEARCH_NAMES_OUTPUT_PATH, JSON.stringify(searchNames), 'utf-8');
   console.log(`Wrote ${searchNames.length} search name rows to ${SEARCH_NAMES_OUTPUT_PATH}.`);
   writeFileSync(ATTRIBUTE_NUMBER_MAPPING_OUTPUT_PATH, JSON.stringify(attributeNumberMappings), 'utf-8');
-  console.log(`Wrote ${attributeNumberMappings.length} attribute-number mapping rows (archival only) to ${ATTRIBUTE_NUMBER_MAPPING_OUTPUT_PATH}.`);
+  console.log(
+    `Wrote ${attributeNumberMappings.length} attribute-number mapping rows (archival only) to ${ATTRIBUTE_NUMBER_MAPPING_OUTPUT_PATH}.`,
+  );
   writeFileSync(ATTRIBUTE_NUMBERS_OUTPUT_PATH, JSON.stringify(attributeNumbers), 'utf-8');
   console.log(`Wrote ${attributeNumbers.length} plant attribute-number rows (archival only) to ${ATTRIBUTE_NUMBERS_OUTPUT_PATH}.`);
 }
@@ -239,11 +228,7 @@ function extractLocaleDependentData(appDir: string): void {
 // structural, not translated text — reading the EN dump once is enough, the same codes appear
 // identically in every locale's dump (confirmed empirically, unlike attributes_numeric above).
 function extractAttributes(appDir: string): void {
-  const encyclopedia = readZippedJson<{ plants: ParrotEncyclopediaEntryWithAttributes[] }>(
-    appDir,
-    'EN_dump.json.zip',
-    'EN_dump.json',
-  );
+  const encyclopedia = readZippedJson<{ plants: ParrotEncyclopediaEntryWithAttributes[] }>(appDir, 'EN_dump.json.zip', 'EN_dump.json');
 
   const rows: ParrotPlantAttribute[] = [];
   for (const entry of encyclopedia.plants) {
@@ -260,11 +245,7 @@ function extractAttributes(appDir: string): void {
 }
 
 function extractFertilizerTypes(appDir: string): void {
-  const encyclopedia = readZippedJson<{ plants: ParrotEncyclopediaEntryWithFertilizerType[] }>(
-    appDir,
-    'EN_dump.json.zip',
-    'EN_dump.json',
-  );
+  const encyclopedia = readZippedJson<{ plants: ParrotEncyclopediaEntryWithFertilizerType[] }>(appDir, 'EN_dump.json.zip', 'EN_dump.json');
 
   const rows: ParrotPlantFertilizerType[] = [];
   for (const entry of encyclopedia.plants) {

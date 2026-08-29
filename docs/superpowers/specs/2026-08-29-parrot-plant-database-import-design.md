@@ -34,7 +34,7 @@ covering 8090 species vs. the 3404 currently imported from WatchFlower's CSV
 
 ## Two anomalies found — resolved after empirical cross-checking, discussed live with DestCom
 
-- **`dli_max == 99` on 7240/8090 species (89.5%)**. Initial read: "clearly a sentinel." Checked
+- **`dli_max == 99` on 7239/8090 species (89.5%)**. Initial read: "clearly a sentinel." Checked
   against `characteristics.sun` (the encyclopedia dump's own 1-4 sun-tolerance category) before
   finalizing that call: **100%** of `sun=4` (full-sun) species show `dli_max=99`, but so do
   **55.7%** of `sun=1` (shade) species — a shade plant "tolerating up to 99 mol/m²/day" has no
