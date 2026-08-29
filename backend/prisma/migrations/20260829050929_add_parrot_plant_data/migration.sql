@@ -1,38 +1,40 @@
 -- AlterTable
-ALTER TABLE "PlantProfile" ADD COLUMN "soilMoistureIrrigatePercent" REAL,
-ADD COLUMN "soilMoistureCommandPercent" REAL,
-ADD COLUMN "soilMoistureIrrigateEcoPercent" REAL,
-ADD COLUMN "soilMoistureCommandEcoPercent" REAL,
-ADD COLUMN "wetCalibrationSampleCount" INTEGER,
-ADD COLUMN "irrigateCalibrationSampleCount" INTEGER,
-ADD COLUMN "irrigateEcoCalibrationSampleCount" INTEGER,
-ADD COLUMN "parrotSpeciesId" INTEGER,
-ADD COLUMN "heightMinCm" REAL,
-ADD COLUMN "heightMaxCm" REAL,
-ADD COLUMN "spreadMinCm" REAL,
-ADD COLUMN "spreadMaxCm" REAL,
-ADD COLUMN "hardinessZoneMinValue" TEXT,
-ADD COLUMN "hardinessZoneMaxValue" TEXT,
-ADD COLUMN "heatZoneMinValue" TEXT,
-ADD COLUMN "heatZoneMaxValue" TEXT,
-ADD COLUMN "tDyingC" REAL,
-ADD COLUMN "popularity" INTEGER,
-ADD COLUMN "genusName" TEXT,
-ADD COLUMN "speciesName" TEXT,
-ADD COLUMN "subspeciesName" TEXT,
-ADD COLUMN "latinName" TEXT,
-ADD COLUMN "taxonomyGroupId" INTEGER,
-ADD COLUMN "isTaxonomyGroupHead" BOOLEAN,
-ADD COLUMN "taxonomyGroupSubelementsCount" INTEGER,
-ADD COLUMN "tags" INTEGER,
-ADD COLUMN "noFert" BOOLEAN,
-ADD COLUMN "hidden" BOOLEAN,
-ADD COLUMN "synonyms" TEXT,
-ADD COLUMN "nameFirstLetterLatin" TEXT,
-ADD COLUMN "orderIndexForSortingLatin" INTEGER,
-ADD COLUMN "sunCategory" INTEGER,
-ADD COLUMN "waterCategory" INTEGER,
-ADD COLUMN "fertilizerCategory" INTEGER;
+-- SQLite only allows exactly one ADD COLUMN per ALTER TABLE statement (unlike Postgres/MySQL),
+-- so each new PlantProfile column below is its own statement.
+ALTER TABLE "PlantProfile" ADD COLUMN "soilMoistureIrrigatePercent" REAL;
+ALTER TABLE "PlantProfile" ADD COLUMN "soilMoistureCommandPercent" REAL;
+ALTER TABLE "PlantProfile" ADD COLUMN "soilMoistureIrrigateEcoPercent" REAL;
+ALTER TABLE "PlantProfile" ADD COLUMN "soilMoistureCommandEcoPercent" REAL;
+ALTER TABLE "PlantProfile" ADD COLUMN "wetCalibrationSampleCount" INTEGER;
+ALTER TABLE "PlantProfile" ADD COLUMN "irrigateCalibrationSampleCount" INTEGER;
+ALTER TABLE "PlantProfile" ADD COLUMN "irrigateEcoCalibrationSampleCount" INTEGER;
+ALTER TABLE "PlantProfile" ADD COLUMN "parrotSpeciesId" INTEGER;
+ALTER TABLE "PlantProfile" ADD COLUMN "heightMinCm" REAL;
+ALTER TABLE "PlantProfile" ADD COLUMN "heightMaxCm" REAL;
+ALTER TABLE "PlantProfile" ADD COLUMN "spreadMinCm" REAL;
+ALTER TABLE "PlantProfile" ADD COLUMN "spreadMaxCm" REAL;
+ALTER TABLE "PlantProfile" ADD COLUMN "hardinessZoneMinValue" TEXT;
+ALTER TABLE "PlantProfile" ADD COLUMN "hardinessZoneMaxValue" TEXT;
+ALTER TABLE "PlantProfile" ADD COLUMN "heatZoneMinValue" TEXT;
+ALTER TABLE "PlantProfile" ADD COLUMN "heatZoneMaxValue" TEXT;
+ALTER TABLE "PlantProfile" ADD COLUMN "tDyingC" REAL;
+ALTER TABLE "PlantProfile" ADD COLUMN "popularity" INTEGER;
+ALTER TABLE "PlantProfile" ADD COLUMN "genusName" TEXT;
+ALTER TABLE "PlantProfile" ADD COLUMN "speciesName" TEXT;
+ALTER TABLE "PlantProfile" ADD COLUMN "subspeciesName" TEXT;
+ALTER TABLE "PlantProfile" ADD COLUMN "latinName" TEXT;
+ALTER TABLE "PlantProfile" ADD COLUMN "taxonomyGroupId" INTEGER;
+ALTER TABLE "PlantProfile" ADD COLUMN "isTaxonomyGroupHead" BOOLEAN;
+ALTER TABLE "PlantProfile" ADD COLUMN "taxonomyGroupSubelementsCount" INTEGER;
+ALTER TABLE "PlantProfile" ADD COLUMN "tags" INTEGER;
+ALTER TABLE "PlantProfile" ADD COLUMN "noFert" BOOLEAN;
+ALTER TABLE "PlantProfile" ADD COLUMN "hidden" BOOLEAN;
+ALTER TABLE "PlantProfile" ADD COLUMN "synonyms" TEXT;
+ALTER TABLE "PlantProfile" ADD COLUMN "nameFirstLetterLatin" TEXT;
+ALTER TABLE "PlantProfile" ADD COLUMN "orderIndexForSortingLatin" INTEGER;
+ALTER TABLE "PlantProfile" ADD COLUMN "sunCategory" INTEGER;
+ALTER TABLE "PlantProfile" ADD COLUMN "waterCategory" INTEGER;
+ALTER TABLE "PlantProfile" ADD COLUMN "fertilizerCategory" INTEGER;
 
 -- CreateIndex
 CREATE UNIQUE INDEX "PlantProfile_parrotSpeciesId_key" ON "PlantProfile"("parrotSpeciesId");
