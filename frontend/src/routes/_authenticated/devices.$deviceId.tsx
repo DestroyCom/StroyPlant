@@ -4,6 +4,7 @@ import { ArrowLeft, BatteryMedium, Check, ChevronDown, Droplets, Info, Pencil, R
 import { useState } from 'react';
 import { toast } from 'sonner';
 import { AutoWateringSection } from '@/components/auto-watering-section';
+import { AutonomousWateringSection } from '@/components/autonomous-watering-section';
 import { DeviceKindIcon } from '@/components/device-kind-icon';
 import { EditDeviceDialog } from '@/components/edit-device-dialog';
 import { HistoryChart, type HistoryReferenceLine } from '@/components/history-chart';
@@ -283,6 +284,13 @@ function DeviceDetailPage() {
       )}
 
       {canWater && <AutoWateringSection deviceId={deviceId} hasSpeciesAssigned={device.plantProfile != null} />}
+      {canWater && (
+        <AutonomousWateringSection
+          deviceId={deviceId}
+          plantProfile={device.plantProfile}
+          autonomousWateringActive={device.autonomousWateringActive}
+        />
+      )}
 
       <LiveModeSection deviceId={deviceId} kind={device.kind} />
 
