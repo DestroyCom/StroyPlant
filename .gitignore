@@ -24,3 +24,4 @@ secrets/
 /docs/flowerpower_screenshot
 /docs/ble-captures
 /.playwright-mcp
+.grepai/
