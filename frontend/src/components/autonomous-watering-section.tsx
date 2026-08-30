@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef } from 'react';
 import { toast } from 'sonner';
 import { trpc } from '@/lib/trpc';
+import { Badge } from './ui/badge';
 import { Button } from './ui/button';
 
 interface AutonomousWateringSectionProps {
@@ -67,13 +68,7 @@ export function AutonomousWateringSection({ deviceId, plantProfile, autonomousWa
                 : "Le pot suit encore StroyPlant pour toute décision d'arrosage."}
           </div>
         </div>
-        <span
-          className={`rounded-full px-2.5 py-1 text-xs font-medium ${
-            autonomousWateringActive ? 'bg-emerald-100 text-emerald-800' : 'bg-muted text-muted-foreground'
-          }`}
-        >
-          {autonomousWateringActive ? 'Actif' : 'Inactif'}
-        </span>
+        <Badge variant={autonomousWateringActive ? 'success' : 'secondary'}>{autonomousWateringActive ? 'Actif' : 'Inactif'}</Badge>
       </div>
 
       {hasParrotData && (
