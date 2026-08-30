@@ -56,6 +56,16 @@ scoring engine would flag a false "too high" alert on any positive measurement.
 /api/devices/:id/plant-profile`). Optional and non-blocking — a device with no assigned profile
 simply never gets scored (`status: 'no_profile'`), which doesn't block anything else in the app.
 
+**Update (2026-08-29) — Parrot's own official plant database added as a second, higher-priority
+source**: `PlantProfile` is now also populated from Parrot's own "Flower Power" app bundle (8090
+species, manufacturer-calibrated for this exact sensor hardware), overlaid onto the WatchFlower
+import on every boot. For the ~3400 species present in both datasets, Parrot's values win for soil
+moisture/temperature/light/conductivity — WatchFlower remains the only source for soil pH and air
+humidity, which Parrot's dataset doesn't cover. Full extraction/import design, the source-priority
+decision, and known limitations (sentinel `dli_max`/`ec_min` values kept raw rather than nulled,
+exact-name matching only, etc.) are in
+`docs/superpowers/specs/2026-08-29-parrot-plant-database-import-design.md` — not duplicated here.
+
 ## Source #2 — the per-device rolling baseline
 
 **The idea**: instead of relying solely on a generic species range (which may not exactly

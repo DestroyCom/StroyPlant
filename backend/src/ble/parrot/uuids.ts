@@ -23,10 +23,16 @@ export const UUIDS = {
     // the firmware doesn't refresh its values (readings silently frozen). Write 0 at the end of the
     // session. See docs/STROYPLANT_SPEC.md section 8.
     measurePeriod: '39e1fa06-84a8-11e2-afba-0002a5d5c51b',
-    // Characteristics actually used by the official app (NOT fa01-05, vestigial) —
     // float32 LE, already calibrated by the firmware, no conversion formula needed.
-    soilMoisturePercent: '39e1fa09-84a8-11e2-afba-0002a5d5c51b',
-    temperatureC: '39e1fa0a-84a8-11e2-afba-0002a5d5c51b',
+    // Confirmed via real BLE sniffing of the official app on real hardware (2026-08-29,
+    // docs/superpowers/specs/2026-08-29-parrot-official-app-ble-sniffing-findings.md) — fa07 rises
+    // in real time during an actual watering, fa09 rises/falls in real time under a controlled
+    // heat stimulus. Previously assumed fa09=moisture/fa0a=temperature (this project's own docs
+    // and the transcribed official PDF both said so); both were wrong, swapped here after two
+    // independent real-hardware confirmations. fa0b (luminosity) unchanged — not re-verified this
+    // pass, fa0a itself is confirmed light-reactive (not luminosity's official slot) and unused.
+    soilMoisturePercent: '39e1fa07-84a8-11e2-afba-0002a5d5c51b',
+    temperatureC: '39e1fa09-84a8-11e2-afba-0002a5d5c51b',
     luminosity: '39e1fa0b-84a8-11e2-afba-0002a5d5c51b',
     // Soil conductivity (fertility index) — RAW characteristic, confirmed "Certain" in
     // docs/PARROT_BLE_REVERSE_ENGINEERING.md. This project originally tried the "calibrated"
@@ -49,6 +55,18 @@ export const UUIDS = {
     ecPorousCal: '39e1fa0e-84a8-11e2-afba-0002a5d5c51b',
   },
   watering: {
+    // KEPT AS f906 — see docs/superpowers/specs/2026-08-29-parrot-official-app-ble-sniffing-findings.md
+    // for the full story. The official app's "ARROSAGE" button reproducibly writes [0x0a, 0x00] to
+    // f90c (39e1f90c), confirmed 7+ times via real BLE sniffing — but writing the exact same bytes
+    // to f90c from a bare standalone script (both via node-ble/BlueZ on the real production server
+    // AND via @abandonware/noble/CoreBluetooth on the Mac, with the official app closed and
+    // StroyPlant's own backend stopped to rule out any interference) gets an ATT-level write
+    // acknowledgment but produces NO physical watering. f906 remains what StroyPlant actually uses
+    // — a real, working mechanism for months of production waterings, despite its own GATT
+    // declaration showing Read+Notify only (no Write bit) on real hardware. Leading hypothesis for
+    // f90c's silent no-op: the device may require an actual BLE bond/pairing or an app-specific
+    // authentication sequence before honoring this specific write, not verifiable with the tooling
+    // available this session. Do not switch to f90c without resolving this first.
     trigger: '39e1f906-84a8-11e2-afba-0002a5d5c51b', // write [0x08, 0x00] (uint16 LE), write-with-response
     waterTankLevel: '39e1f907-84a8-11e2-afba-0002a5d5c51b', // notify, uint8 %
     vwcIrr: '39e1f903-84a8-11e2-afba-0002a5d5c51b',
@@ -57,6 +75,10 @@ export const UUIDS = {
     pumpDutyCycle: '39e1f908-84a8-11e2-afba-0002a5d5c51b',
     vwcIrrEco: '39e1f90a-84a8-11e2-afba-0002a5d5c51b',
     vwcCmdEco: '39e1f90b-84a8-11e2-afba-0002a5d5c51b',
+    // Confirmed via real BLE sniffing to be the official app's actual manual-watering write target
+    // (write [0x0a, 0x00]) — but see the comment on `trigger` above: writing this from our own code
+    // does NOT produce a real watering, unlike the app. Kept under its CSV-import name (nIrrEco)
+    // since that's still its best-known role for our own read/log purposes; `trigger` stays f906.
     nIrrEco: '39e1f90c-84a8-11e2-afba-0002a5d5c51b',
     mode: '39e1f90d-84a8-11e2-afba-0002a5d5c51b',
     timeSlotStart: '39e1f90e-84a8-11e2-afba-0002a5d5c51b',

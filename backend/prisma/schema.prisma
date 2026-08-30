@@ -129,7 +129,156 @@ model PlantProfile {
   lightMinMmol            Float?
   lightMaxMmol            Float?
 
-  devices Device[]
+  // Parrot-specific Plant Dr / watering-mode calibration data (source: the official Flower Power
+  // app's scientific_data.json, see docs/superpowers/specs/2026-08-29-parrot-plant-database-import-design.md).
+  // Not yet consumed by backend/src/plantDr.ts — stored ahead of time so a future BLE-sniff-informed
+  // change doesn't need to re-extract this data.
+  soilMoistureIrrigatePercent    Float?
+  soilMoistureCommandPercent     Float?
+  soilMoistureIrrigateEcoPercent Float?
+  soilMoistureCommandEcoPercent  Float?
+  wetCalibrationSampleCount      Int?
+  irrigateCalibrationSampleCount    Int?
+  irrigateEcoCalibrationSampleCount Int?
+  parrotSpeciesId                Int?    @unique
+
+  // Structural/taxonomic facts, identical across locales — from the encyclopedia dump directly
+  // (not scientific_data.json). Found while confirming ZPLANTDESCRIPTIONENTITY.ZDESCRIPTIONDATA's
+  // content was fully captured — that Core Data blob turned out to hold the entire per-plant JSON
+  // object, not just its description fields — and then via an exhaustive key-by-key audit of both
+  // source files after DestCom asked to confirm nothing was still missing. See the spec's "Two
+  // anomalies" and "Final field audit" sections.
+  heightMinCm                   Float?
+  heightMaxCm                   Float?
+  spreadMinCm                   Float?
+  spreadMaxCm                   Float?
+  hardinessZoneMinValue         String?
+  hardinessZoneMaxValue         String?
+  heatZoneMinValue              String?
+  heatZoneMaxValue              String?
+  tDyingC                       Float?
+  popularity                    Int?
+  genusName                     String?
+  speciesName                   String?
+  subspeciesName                String?
+  latinName                     String?
+  taxonomyGroupId                  Int?
+  isTaxonomyGroupHead              Boolean?
+  taxonomyGroupSubelementsCount    Int?
+  tags                          Int?
+  noFert                         Boolean?
+  hidden                         Boolean?
+  synonyms                       String?
+  nameFirstLetterLatin           String?
+  orderIndexForSortingLatin      Int?
+  sunCategory                    Int?
+  waterCategory                  Int?
+  fertilizerCategory             Int?
+
+  devices          Device[]
+  translations     PlantProfileTranslation[]
+  attributes       PlantProfileAttribute[]
+  fertilizerTypes  PlantProfileFertilizerType[]
+  searchNames      PlantProfileSearchName[]
+  attributeNumbers PlantProfileAttributeNumber[]
+}
+
+// Multi-locale free text from the same Flower Power app source (planting/growth/pruning/
+// harvesting/interesting/description advice, common name per language) — stored ahead of a future
+// frontend i18n effort, no consumer yet. See docs/superpowers/specs/2026-08-29-parrot-plant-database-import-design.md.
+model PlantProfileTranslation {
+  id                   Int          @id @default(autoincrement())
+  plantProfileId       Int
+  locale               String
+  commonName           String?
+  description          String?
+  planting             String?
+  growth               String?
+  pruning              String?
+  harvesting           String?
+  interesting          String?
+  soilIrr              String?
+  pests                String?
+  blooming             String?
+  hardinessZoneMinText String?
+  hardinessZoneMaxText String?
+  heatZoneMinText      String?
+  heatZoneMaxText      String?
+  lightMinText         String?
+  lightMaxText         String?
+  fertilizerText       String?
+  detailCare           String?
+  nameFirstLetter      String?
+  orderIndexForSorting Int?
+  plantProfile         PlantProfile @relation(fields: [plantProfileId], references: [id])
+
+  @@unique([plantProfileId, locale])
+}
+
+// Filter-taxonomy codes (plant type, special features, bloom color, shape, foliage type, height
+// category) from the same encyclopedia dump's `attributes` field — raw 2-letter codes only, no
+// human-readable label resolution yet (lives in FilterValues.plist/Localizable.strings, a
+// different file format, deferred until a consumer needs it). See the spec's "Filter-taxonomy
+// codes" section.
+model PlantProfileAttribute {
+  id             Int          @id @default(autoincrement())
+  plantProfileId Int
+  category       String
+  value          String
+  plantProfile   PlantProfile @relation(fields: [plantProfileId], references: [id])
+
+  @@unique([plantProfileId, category, value])
+  @@index([category, value])
+}
+
+// `fertilizer_type` — a small array of category codes per plant, confirmed identical across
+// locales, same shape/reasoning as PlantProfileAttribute above.
+model PlantProfileFertilizerType {
+  id             Int          @id @default(autoincrement())
+  plantProfileId Int
+  code           Int
+  plantProfile   PlantProfile @relation(fields: [plantProfileId], references: [id])
+
+  @@unique([plantProfileId, code])
+}
+
+// `searchNames` — confirmed locale-dependent (the "name" text differs per language), unlike every
+// other array-of-codes field above. `type`: 0 = common name, 1 = Latin name, 2 = cultivar,
+// 3 = synonym (inferred from the data, not documented by Parrot).
+model PlantProfileSearchName {
+  id             Int          @id @default(autoincrement())
+  plantProfileId Int
+  locale         String
+  name           String
+  type           Int
+  plantProfile   PlantProfile @relation(fields: [plantProfileId], references: [id])
+
+  @@unique([plantProfileId, locale, type, name])
+}
+
+// Archival only, per the spec's "attributes_numeric/attribute_to_number" decision:
+// attribute_to_number is confirmed locale-relative (64/90 codes have a different number between
+// EN and FR), so PlantProfileAttributeNumber's `number` column is only meaningful when decoded
+// against THIS SAME table's matching `locale` row — nothing may ever read either of these two
+// models. PlantProfileAttribute (locale-independent string codes) is the only supported way to
+// read a plant's attributes; these two exist solely so the raw data isn't lost.
+model PlantAttributeNumberMapping {
+  id     Int    @id @default(autoincrement())
+  locale String
+  code   String
+  number Int
+
+  @@unique([locale, code])
+}
+
+model PlantProfileAttributeNumber {
+  id             Int          @id @default(autoincrement())
+  plantProfileId Int
+  locale         String
+  number         Int
+  plantProfile   PlantProfile @relation(fields: [plantProfileId], references: [id])
+
+  @@unique([plantProfileId, locale, number])
 }
 
 enum ReadingSource {
@@ -192,8 +341,8 @@ model RawSensorLog {
   soilTempRaw            Int?
   airTempRaw             Int?
   soilMoistureRaw        Int?
-  soilMoistureCalibrated Float? // fa09, duplicated from Reading.soilMoisturePercent
-  airTempCalibrated      Float? // fa0a, duplicated from Reading.temperatureC
+  soilMoistureCalibrated Float? // fa07, duplicated from Reading.soilMoisturePercent
+  airTempCalibrated      Float? // fa09, duplicated from Reading.temperatureC
   luminosityCalibrated   Float? // fa0b, duplicated from Reading.luminosity
   eaRaw                  Float? // fa0c — expected null, characteristic confirmed absent on real hardware
   ecbRaw                 Float? // fa0d — expected null, same

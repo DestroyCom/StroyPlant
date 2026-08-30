@@ -1199,6 +1199,132 @@ production server:
     shortened tick interval, ~10 ticks, real divergences detected/logged/persisted, `evaluateDevice`
     unaffected); the frontend toggle's save→DB→full-page-reload→still-checked round trip verified
     directly (Playwright) after the task's own manual-verification narrative proved insufficient.
+- **Parrot plant database import** ✅ (2026-08-29, on branch `feature/parrot-plant-database-import`,
+  not yet merged to `main`) — `PlantProfile` gains a second, higher-priority data source: the
+  official "Flower Power" iOS app's own bundled plant database (8090 species,
+  manufacturer-calibrated for this exact sensor hardware), extracted from the app bundle on
+  DestCom's Mac (`/Applications/Flower Power.app`) and overlaid onto the existing 3404-row
+  WatchFlower import on every container boot. Full design rationale and every decision below in
+  `docs/superpowers/specs/2026-08-29-parrot-plant-database-import-design.md`, implementation plan
+  in `docs/superpowers/plans/2026-08-29-parrot-plant-database-import-plan.md` (9 tasks,
+  subagent-driven-development with a task review + fix loop, plus a coordinated final perf fix).
+  - **Source priority, confirmed live with DestCom**: for the ~3400 species present in both
+    datasets, Parrot's values win for every field it actually provides (soil moisture via
+    `vwc_dry`/`vwc_wet`, temperature, light, conductivity) — WatchFlower remains the *only* source
+    for soil pH and air humidity, since Parrot's dataset has no equivalent there. Made with full
+    awareness this immediately changes the Health Engine's live status and the Batch 5
+    auto-watering trigger condition for already-assigned real devices the moment this import runs
+    against production. **Real-hardware consequence, confirmed on a scratch copy of the real
+    production `dev.db`**: `PARROT-A073` (species Alcea rosea, already assigned from earlier
+    testing) saw its soil moisture range shift from 15-60% to 32-51% and its soil conductivity
+    range from 350-2000 to 1000-3000 µS/cm — proof the overlay actually took effect on an
+    already-assigned real device, not just on paper.
+  - **Stored ahead of the consumer, nothing wired to read it yet** — same posture this project
+    already uses for Plant Dr calibration fields (Batch 6): multi-locale (7 languages: DE/EN/ES/
+    FR/IT/JA/ZH) free text (`PlantProfileTranslation`, 56490 rows), filter-taxonomy attribute codes
+    (`PlantProfileAttribute`, 77641 rows), fertilizer types (`PlantProfileFertilizerType`, 9308
+    rows), search names (`PlantProfileSearchName`, 201305 rows), and an archival, deliberately
+    locale-scoped attribute-number mapping (`PlantAttributeNumberMapping`, 630 rows = 90 codes × 7
+    locales; `PlantProfileAttributeNumber`, 641165 rows) — the last one confirmed to differ between
+    locales for the same code, so it's stored but must never be read as if it were universal.
+    Irrigation/command soil-moisture thresholds (`vwc_irr`/`vwc_cmd` + eco variants) and calibration
+    sample counts (`n_wet`/`n_irr`/`n_irr_eco`) are stored the same way — a real anomaly was found
+    here (`n_wet=288` on 8089/8090 species, plus `n_irr`/`n_irr_eco` varying 0/384/672) but not
+    acted on: `backend/src/plantDr.ts`'s `calibrateWet` still writes `n=0` unchanged, this is a lead
+    for the separately-planned BLE-sniff phase (understanding the official app's real protocol
+    behavior), not this batch's job.
+  - **Sentinel values kept raw, not nulled**: `dli_max=99` (7239/8090 species) and `ec_min=-1`
+    (432/8090 species, 358 of them overlapping with the dli_max sentinel — 7313/8090 species
+    affected by at least one) are Parrot's own generic per-sun/water-category
+    defaults, not real per-species measurements — confirmed by cross-checking against the
+    `sun`/`water` ordinal categories rather than assumed from the value alone. DestCom's explicit
+    choice to keep them raw rather than null them: accepted consequence is that the Health Engine's
+    range check becomes practically always-satisfied (not literally absent) for the affected
+    parameter on those species — flagged explicitly since a future direct query (Prisma Studio, an
+    admin UI) could otherwise mistake a sentinel for a real threshold.
+  - **Real duplicate-name data-quality finding, ruled not fixed**: Parrot's own source data has 10
+    duplicate `fullname` values among its 8090 species (e.g. "Abelia hybrids" under two different
+    `parrotSpeciesId`s, one of them the generic-catch-all-looking `99999`), orphaning ~20 species
+    (~0.25%) across every downstream Parrot table via last-write-wins on the name-based upsert —
+    confirmed by `PlantProfileTranslation`'s skip count (140, not the expected 0) and
+    `PlantProfile`'s total (9120, not the ~9138 a clean 1:1 join would produce). Accepted as a
+    narrow, upstream-data-quality-caused limitation — no real assigned device is among the affected
+    species, and re-deriving the match key from name to `parrotSpeciesId` would be a larger
+    architecture change disproportionate to the value.
+  - **Real performance finding + fix**: the full import (`pnpm import:species`) initially took 8
+    minutes 9 seconds against the real data, dominated by ~641,165 individual unbatched sequential
+    `upsert()` calls in `importParrotAttributeNumbers()`, each an implicit SQLite auto-commit with
+    its own fsync — a genuine operational risk, not just slowness, since `docker-entrypoint.sh` runs
+    this import on every container boot and each import function's idempotency gate ("any rows
+    exist → skip entirely") can't distinguish a complete run from one interrupted mid-import by a
+    deploy timeout or crash. Fixed by batching all 6 JSON/CSV-driven import functions' per-row
+    upserts into chunks of 500 rows per `prisma.$transaction([...])` call (commit `768d0bd`, plus a
+    follow-up batching `importParrotOverlay()` too during the final whole-branch review —
+    `importWatchFlowerProfiles()` is the only one deliberately left unbatched, 3404 rows, not a
+    contributor). Result: 2 minutes 30 seconds, a 3.26x wall-clock speedup; the `time` breakdown
+    shows system/fsync time specifically dropped 98% (237.69s → 4.40s), confirming the fsync
+    bottleneck was the real cause. **Correction from an earlier draft of this entry**: the remaining
+    ~2.5 minutes is NOT JSON-parsing cost (`JSON.parse` on the 150MB translations file measured at
+    0.36s during the final review) — it's Prisma/query-engine per-upsert overhead (~148s user CPU),
+    confirmed by the `time` breakdown itself (148s user vs 4.3s system). The real further lever, not
+    pursued here, would be `createMany({ skipDuplicates: true })` on these append-only tables rather
+    than per-row `upsert()`.
+  - **Deploy plan for the first boot after this branch merges** (added after the final whole-branch
+    review measured the real cost directly): this import runs once, automatically, the first time
+    `docker-entrypoint.sh` boots against a database that doesn't have it yet — no manual step needed
+    — but expect it to genuinely block: `docker-entrypoint.sh` runs it before the HTTP server starts
+    listening, so the app is unreachable (502s through SWAG/Cloudflare) for the full ~2.5 minutes
+    measured locally, plausibly longer on the production server's CPU (the cost is CPU-bound, not
+    I/O-bound, so it doesn't parallelize with anything else happening at boot). **Do not interrupt
+    this first boot** (no `docker compose down`, no reboot) — each import step's idempotency gate
+    can't tell a complete run from an interrupted one, so an interruption leaves that table
+    permanently, silently half-populated with no automatic repair; recovery would be manual SQL.
+    The import also peaks around 800MB RSS (measured: `JSON.parse`-ing the 150MB translations file
+    alone peaks at ~806MB including the source string and intermediates) — confirm the production
+    server has meaningfully more than that free before this first boot, or the OOM-killer creates
+    exactly the same unrecoverable-partial-state risk. After it completes, confirm success with
+    `SELECT COUNT(*) FROM PlantProfile WHERE parrotSpeciesId IS NOT NULL` (expect 8070, not 8090 —
+    the 20 orphaned duplicates from the finding above) before trusting the six downstream tables.
+  - **Real physical-world consequence for `PARROT-A073` specifically, not just a display change**:
+    its species (Alcea rosea) soil moisture band moves from WatchFlower's 15-60% to Parrot's
+    32-51%. The device's own most recent real POLL reading in production is 31.2% — just below the
+    new floor — meaning the very first Health Engine evaluation after this import flips that
+    parameter from `ok` to `too_low`, which is exactly Batch 5's auto-watering trigger condition.
+    **The first scheduler tick after this import may trigger a real watering on a real, currently
+    fine, pot** — not a bug, this is the approved Parrot-priority decision working exactly as
+    designed (see "Decisions" above), but it's the one change in this batch with a physical actuator
+    behind it and is called out here so it isn't a surprise when it happens.
+  - **Committed data volume**: `backend/prisma/seed-data/` is ~204MB across 7 files (dominated by
+    `parrot_plant_translations.json` at ~150MB, 7-locale free text) — a deliberate, explicit choice
+    (DestCom's own "extract literally everything except images" instruction, confirmed multiple
+    times during design) over the more minimal scope the existing WatchFlower CSV import
+    represents. This also means `pnpm deploy`'s prod-only backend copy includes `seed-data/` (needed
+    at runtime for the import above to work at all) — the published GHCR image grows by roughly this
+    same ~204MB, per architecture (amd64 + arm64 are both built).
+  - **Known follow-up, not this batch**: the `locationsDatabase.sqlite`/
+    `ZSENSORAUTOWATERINGCFGENTITY`/`ZCALIBRATIONDATA` findings from the same investigation (the
+    official app's real per-device auto-watering config shape, and a real `39e1fe01` calibration
+    blob to attempt decoding against) remain a separate, not-yet-started lead for the
+    already-sequenced next BLE-sniff phase — full detail in the design doc, not re-derived here.
+  - **Test coverage**: `backend/src/health/parrotPlantData.ts` (pure logic — normalization,
+    sentinel/unit conversion, CSV parse/format, match resolution) has 29 dedicated tests; the six
+    `importSpeciesProfiles.ts` orchestration functions have no dedicated automated tests (matches
+    this project's established convention for Prisma I/O orchestration, verified manually instead)
+    but were verified end-to-end against real data as described above. Full workspace: 144/144
+    tests passing, `tsc --noEmit` clean.
+  - **Verified**: against a scratch copy of the real production `backend/prisma/dev.db` (which
+    already had the 3404 pre-existing WatchFlower rows) — `PlantProfile` 9120, `PlantProfileTranslation`
+    56490, `PlantProfileAttribute` 77641, `PlantProfileFertilizerType` 9308, `PlantProfileSearchName`
+    201305, `PlantAttributeNumberMapping` 630 (exactly 90 codes × 7 locales), `PlantProfileAttributeNumber`
+    641165 — plus the `PARROT-A073` before/after confirmation above. The final whole-branch review
+    independently re-ran the full import end-to-end a second time (post-batching) and reproduced
+    every one of these figures exactly, and confirmed a second run completes in 0.5s (full
+    idempotency holds across all 8 steps).
+  - **Not yet done**: this has **not** been deployed to the real production server — only verified
+    against a scratch copy of local `dev.db`. Running it for real will apply the Parrot-priority
+    overlay to the two real production Parrot Pots' assigned species (known from this project's
+    history to include at least `PARROT-A073`), changing their live Health Engine status/
+    auto-watering behavior the moment it runs, exactly as the design's own stated intent.
 
 ## Repo structure
 
@@ -1507,3 +1633,102 @@ This project uses security-skill for automated security engineering.
 
 You are acting as both a developer assistant AND a security engineer.
 Proactively flag security issues in all code you write or review.
+
+
+## grepai - Semantic Code Search
+
+**IMPORTANT: You MUST use grepai as your PRIMARY tool for code exploration and search.**
+
+### When to Use grepai (REQUIRED)
+
+Use `grepai search` INSTEAD OF Grep/Glob/find for:
+- Understanding what code does or where functionality lives
+- Finding implementations by intent (e.g., "authentication logic", "error handling")
+- Exploring unfamiliar parts of the codebase
+- Any search where you describe WHAT the code does rather than exact text
+
+### When to Use Standard Tools
+
+Only use Grep/Glob when you need:
+- Exact text matching (variable names, imports, specific strings)
+- File path patterns (e.g., `**/*.go`)
+- Intent with a canonical syntax anchor (`@main`, `func main(`) - an exact-match query in disguise
+
+### Completeness Check (recall-safe)
+
+grepai returns the top ~10 ranked chunks - a ranking, not an exhaustive list.
+When completeness matters (audits, refactors, "find ALL X"), pair it with a
+file-names-only grep - exhaustive recall at almost no token cost:
+
+```bash
+grepai search "where errors are handled" --json --compact   # ranked starting points
+git grep -ilE 'error|handl|logg' | head -50                 # exhaustive checklist (names only)
+```
+
+Read ranked hits first, then any relevant-looking checklist file grepai did
+not rank. Never dump full grep content output for an intent query.
+
+### Fallback
+
+If grepai fails (not running, index unavailable, or errors), fall back to standard Grep/Glob tools.
+
+### Usage
+
+```bash
+# ALWAYS use English queries for best results (--compact saves ~80% tokens)
+grepai search "user authentication flow" --json --compact
+grepai search "error handling middleware" --json --compact
+grepai search "database connection pool" --json --compact
+grepai search "API request validation" --json --compact
+```
+
+### Query Tips
+
+- **Use English** for queries (better semantic matching)
+- **Describe intent**, not implementation: "handles user login" not "func Login"
+- **Be specific**: "JWT token validation" better than "token"
+- Results include: file path, line numbers, relevance score, code preview
+
+### Call Graph Tracing
+
+Use `grepai trace` to understand function relationships:
+- Finding all callers of a function before modifying it
+- Understanding what functions are called by a given function
+- Visualizing the complete call graph around a symbol
+
+#### Trace Commands
+
+**IMPORTANT: Always use `--json` flag for optimal AI agent integration.**
+
+```bash
+# Find all functions that call a symbol
+grepai trace callers "HandleRequest" --json
+
+# Find all functions called by a symbol
+grepai trace callees "ProcessOrder" --json
+
+# Build complete call graph (callers + callees)
+grepai trace graph "ValidateToken" --depth 3 --json
+```
+
+### Property/Data Usage Tracing
+
+Use `grepai refs` to find non-call property/state usage (reads/writes):
+
+```bash
+# Find where a property is read
+grepai refs readers "uid" --json
+
+# Find where a property is written
+grepai refs writers "uid" --json
+```
+
+### Workflow
+
+1. Start with `grepai search` to find relevant code
+2. Add `git grep -ilE '<keywords>'` for the exhaustive file checklist when completeness matters
+3. Use `grepai trace` to understand function relationships
+4. Use `grepai refs` for property/state readers and writers
+5. Use `Read` tool to examine files from results
+6. Use Grep directly for exact strings and syntax anchors
+
