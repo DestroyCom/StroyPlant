@@ -49,6 +49,15 @@ export interface WateringConfigPushDeps {
 // have the same relations loaded already.
 export async function runWateringConfigPush(deps: WateringConfigPushDeps, deviceId: string): Promise<void> {
   setWateringConfigPushState(deviceId, { status: 'running', startedAt: Date.now() });
+  // Tracks which BLE operation was in flight when/if the catch block below fires — a failed
+  // 'enable' must never leave the flag optimistically true (unchanged behavior), but a failed
+  // 'disable' must NOT force the flag to false either: the on-device state is genuinely unknown at
+  // that point (the write may have partially applied, or the pot may still be running its own
+  // algorithm), and claiming false would wrongly route health/scheduler.ts's degraded safety-net
+  // check back onto the more aggressive primary trigger path while the device could still be
+  // autonomous. Found via a real hardware test (2026-08-30) where 4 consecutive disable attempts
+  // failed with connection errors, not a value mismatch.
+  let intent: 'enable' | 'disable' | 'none' = 'none';
   try {
     const device = await prisma.device.findUnique({ where: { id: deviceId }, include: { plantProfile: true, schedule: true } });
     if (!device) throw new Error('Device not found');
@@ -58,6 +67,7 @@ export async function runWateringConfigPush(deps: WateringConfigPushDeps, device
 
     if (eligibility.eligible) {
       const values = buildWateringConfigEnableValues(eligibility.vwcIrrPercent, eligibility.vwcCmdPercent, eligibility.nIrr);
+      intent = 'enable';
       await deps.connectionQueue.run(() => deps.provider.writeWateringConfig(deviceId, { mode: 'enable', values }));
 
       // Never trust a bare ATT write acknowledgment as proof the config was actually retained —
@@ -85,6 +95,7 @@ export async function runWateringConfigPush(deps: WateringConfigPushDeps, device
       // Only bother writing "disable" if the device might currently be autonomous — avoids a
       // needless BLE write for a device that was never eligible in the first place.
       if (device.autonomousWateringActive) {
+        intent = 'disable';
         await deps.connectionQueue.run(() => deps.provider.writeWateringConfig(deviceId, { mode: 'disable' }));
         const readBack = await deps.connectionQueue.run(() => deps.provider.readWateringConfig(deviceId));
         if (readBack.algorithmEnabled !== false) {
@@ -100,7 +111,15 @@ export async function runWateringConfigPush(deps: WateringConfigPushDeps, device
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     log({ direction: 'WRITE', label: 'Watering config push failed', deviceId, result: 'ERROR', detail });
-    await prisma.device.update({ where: { id: deviceId }, data: { autonomousWateringActive: false } }).catch(() => {});
+    if (intent !== 'disable') {
+      // A failed enable (or a failure before any BLE write started) must never leave the flag
+      // optimistically true — matches the project-wide "never trust an unconfirmed write" rule.
+      await prisma.device.update({ where: { id: deviceId }, data: { autonomousWateringActive: false } }).catch(() => {});
+    }
+    // A failed disable leaves the flag untouched on purpose: the on-device state is genuinely
+    // unknown (the write may have partially applied, or the pot's own algorithm could still be
+    // running), so scheduler.ts should keep treating this device as autonomous — and stay in the
+    // more conservative degraded safety net — until a disable actually confirms.
     await prisma.syncEvent.create({ data: { deviceId, source: 'CONFIG_PUSH', errorDetail: detail } }).catch(() => {});
     setWateringConfigPushState(deviceId, { status: 'error', message: detail, finishedAt: Date.now() });
   }
