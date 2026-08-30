@@ -4,6 +4,7 @@ import { prisma } from '../../../db/client.js';
 import { computeDeviceHealth } from '../../../health/scoring.js';
 import { getHealthSettings, upsertHealthSettings } from '../../../health/settings.js';
 import { getCalibration } from '../../../health/soilConductivityCalibration.js';
+import { kickOffWateringConfigPush } from '../../../wateringConfigPush.js';
 import { serializeDate } from '../serialize.js';
 import { protectedProcedure, router } from '../trpc.js';
 
@@ -33,7 +34,7 @@ export const healthRouter = router({
 
   assignPlantProfile: protectedProcedure
     .input(z.object({ deviceId: z.string(), plantProfileId: z.number().nullable() }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ ctx, input }) => {
       const device = await prisma.device.findUnique({ where: { id: input.deviceId } });
       if (!device) throw new TRPCError({ code: 'NOT_FOUND', message: 'Device not found' });
 
@@ -47,6 +48,12 @@ export const healthRouter = router({
         data: { plantProfileId: input.plantProfileId },
         include: { plantProfile: true },
       });
+
+      // Species assignment is already a deliberate, infrequent user action — always recompute
+      // eligibility and push (enable or disable) in the background. runWateringConfigPush itself
+      // no-ops for non-Parrot-Pot devices (see wateringConfigPush.ts).
+      kickOffWateringConfigPush({ provider: ctx.provider, connectionQueue: ctx.connectionQueue }, device.id);
+
       return { ...updated, lastSeenAt: serializeDate(updated.lastSeenAt) };
     }),
 
