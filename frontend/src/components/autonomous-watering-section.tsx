@@ -45,6 +45,9 @@ export function AutonomousWateringSection({ deviceId, plantProfile, autonomousWa
 
   const pushMutation = useMutation(
     trpc.wateringConfig.push.mutationOptions({
+      onSuccess: () => {
+        void queryClient.invalidateQueries({ queryKey: trpc.wateringConfig.pushRunStatus.queryKey({ deviceId }) });
+      },
       onError: (error) => {
         toast.error('Échec du lancement', { description: error.message });
       },
