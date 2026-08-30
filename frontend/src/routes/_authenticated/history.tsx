@@ -39,6 +39,7 @@ function entryLabel(entry: HistoryEntry): string {
     if (entry.success) return `${entry.deviceName} a été arrosé${entry.triggerLabel === 'CRON' ? ' automatiquement' : ' à la main'}`;
     return `Échec de l'arrosage de ${entry.deviceName}`;
   }
+  if (entry.triggerLabel === 'CONFIG_PUSH') return `Échec de configuration de l'arrosage autonome sur ${entry.deviceName}`;
   const sourceLabel = entry.triggerLabel === 'POLL' ? 'automatique' : 'manuelle';
   return `Échec de synchro (${sourceLabel}) sur ${entry.deviceName}`;
 }
