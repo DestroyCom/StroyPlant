@@ -59,6 +59,23 @@ export async function runWateringConfigPush(deps: WateringConfigPushDeps, device
     if (eligibility.eligible) {
       const values = buildWateringConfigEnableValues(eligibility.vwcIrrPercent, eligibility.vwcCmdPercent, eligibility.nIrr);
       await deps.connectionQueue.run(() => deps.provider.writeWateringConfig(deviceId, { mode: 'enable', values }));
+
+      // Never trust a bare ATT write acknowledgment as proof the config was actually retained —
+      // this project has direct real-hardware precedent (the f906/f90c manual-trigger
+      // investigation) of a write producing a normal GATT acknowledgment with zero physical
+      // effect. Reading back and comparing is the only way to know the values actually landed.
+      const readBack = await deps.connectionQueue.run(() => deps.provider.readWateringConfig(deviceId));
+      const matches =
+        readBack.vwcIrrRaw === values.vwcIrrRaw &&
+        readBack.vwcCmdRaw === values.vwcCmdRaw &&
+        readBack.nIrr === values.nIrr &&
+        readBack.algorithmEnabled === true;
+      if (!matches) {
+        throw new Error(
+          `Config push write did not stick — read back ${JSON.stringify(readBack)}, expected vwcIrrRaw=${values.vwcIrrRaw} vwcCmdRaw=${values.vwcCmdRaw} nIrr=${values.nIrr} algorithmEnabled=true`,
+        );
+      }
+
       await prisma.device.update({
         where: { id: deviceId },
         data: { autonomousWateringActive: true, autonomousWateringUpdatedAt: new Date() },
@@ -69,6 +86,10 @@ export async function runWateringConfigPush(deps: WateringConfigPushDeps, device
       // needless BLE write for a device that was never eligible in the first place.
       if (device.autonomousWateringActive) {
         await deps.connectionQueue.run(() => deps.provider.writeWateringConfig(deviceId, { mode: 'disable' }));
+        const readBack = await deps.connectionQueue.run(() => deps.provider.readWateringConfig(deviceId));
+        if (readBack.algorithmEnabled !== false) {
+          throw new Error(`Config disable write did not stick — read back algorithmEnabled=${readBack.algorithmEnabled}, expected false`);
+        }
       }
       await prisma.device.update({
         where: { id: deviceId },
