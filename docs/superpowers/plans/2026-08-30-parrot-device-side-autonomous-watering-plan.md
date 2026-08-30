@@ -1477,6 +1477,181 @@ git commit -m "frontend: add AutonomousWateringSection to the device detail page
 
 ---
 
+### Task 9: Read-back verification after every config write (amendment, added mid-execution)
+
+**Added after all 8 original tasks were implemented and reviewed**, per DestCom's explicit
+request during execution. Rationale: no task in this plan has verified against real hardware that
+a write to `f903`/`f904`/`f905`/`f908` actually takes effect — and this project has a direct,
+recent, real-hardware precedent (the `f906`/`f90c` manual-trigger investigation,
+`docs/superpowers/specs/2026-08-29-parrot-official-app-ble-sniffing-findings.md`) of a write
+producing a completely normal ATT-level acknowledgment with **zero physical effect** on the
+device. `writeWateringConfig` succeeding is not proof the config was actually retained — only a
+read-back comparison is. This closes that gap by making `runWateringConfigPush` itself verify its
+own write, on every push, forever — not just during the one-off real-hardware validation DestCom
+will do separately.
+
+**Files:**
+
+- Modify: `backend/src/wateringConfigPush.ts`
+
+**Interfaces:**
+
+- Consumes: `DeviceProvider.readWateringConfig` (Task 3/4, already implemented in mock/node-ble).
+- No new exports — `runWateringConfigPush`'s signature and the `WateringConfigPushState` shape are
+  unchanged; only its internal enable/disable branches gain a verification step. A verification
+  failure surfaces exactly like any other failure already handled by the existing `catch` block
+  (log, `SyncEvent{CONFIG_PUSH}`, `autonomousWateringActive: false`, push state `error`) — no new
+  error-handling path needed.
+
+- [ ] **Step 1: Add read-back verification to the enable branch**
+
+Open `backend/src/wateringConfigPush.ts`. Find the `if (eligibility.eligible) { ... }` block inside
+`runWateringConfigPush` and change it from:
+
+```typescript
+    if (eligibility.eligible) {
+      const values = buildWateringConfigEnableValues(eligibility.vwcIrrPercent, eligibility.vwcCmdPercent, eligibility.nIrr);
+      await deps.connectionQueue.run(() => deps.provider.writeWateringConfig(deviceId, { mode: 'enable', values }));
+      await prisma.device.update({ where: { id: deviceId }, data: { autonomousWateringActive: true, autonomousWateringUpdatedAt: new Date() } });
+      setWateringConfigPushState(deviceId, { status: 'success', enabled: true, finishedAt: Date.now() });
+    } else {
+```
+
+to:
+
+```typescript
+    if (eligibility.eligible) {
+      const values = buildWateringConfigEnableValues(eligibility.vwcIrrPercent, eligibility.vwcCmdPercent, eligibility.nIrr);
+      await deps.connectionQueue.run(() => deps.provider.writeWateringConfig(deviceId, { mode: 'enable', values }));
+
+      // Never trust a bare ATT write acknowledgment as proof the config was actually retained —
+      // this project has direct real-hardware precedent (the f906/f90c manual-trigger
+      // investigation) of a write producing a normal GATT acknowledgment with zero physical
+      // effect. Reading back and comparing is the only way to know the values actually landed.
+      const readBack = await deps.connectionQueue.run(() => deps.provider.readWateringConfig(deviceId));
+      const matches =
+        readBack.vwcIrrRaw === values.vwcIrrRaw &&
+        readBack.vwcCmdRaw === values.vwcCmdRaw &&
+        readBack.nIrr === values.nIrr &&
+        readBack.algorithmEnabled === true;
+      if (!matches) {
+        throw new Error(
+          `Config push write did not stick — read back ${JSON.stringify(readBack)}, expected vwcIrrRaw=${values.vwcIrrRaw} vwcCmdRaw=${values.vwcCmdRaw} nIrr=${values.nIrr} algorithmEnabled=true`,
+        );
+      }
+
+      await prisma.device.update({ where: { id: deviceId }, data: { autonomousWateringActive: true, autonomousWateringUpdatedAt: new Date() } });
+      setWateringConfigPushState(deviceId, { status: 'success', enabled: true, finishedAt: Date.now() });
+    } else {
+```
+
+- [ ] **Step 2: Add symmetric read-back verification to the disable branch**
+
+Immediately below, change:
+
+```typescript
+      // Only bother writing "disable" if the device might currently be autonomous — avoids a
+      // needless BLE write for a device that was never eligible in the first place.
+      if (device.autonomousWateringActive) {
+        await deps.connectionQueue.run(() => deps.provider.writeWateringConfig(deviceId, { mode: 'disable' }));
+      }
+      await prisma.device.update({ where: { id: deviceId }, data: { autonomousWateringActive: false, autonomousWateringUpdatedAt: new Date() } });
+      setWateringConfigPushState(deviceId, { status: 'success', enabled: false, finishedAt: Date.now() });
+```
+
+to:
+
+```typescript
+      // Only bother writing "disable" if the device might currently be autonomous — avoids a
+      // needless BLE write for a device that was never eligible in the first place.
+      if (device.autonomousWateringActive) {
+        await deps.connectionQueue.run(() => deps.provider.writeWateringConfig(deviceId, { mode: 'disable' }));
+        const readBack = await deps.connectionQueue.run(() => deps.provider.readWateringConfig(deviceId));
+        if (readBack.algorithmEnabled !== false) {
+          throw new Error(`Config disable write did not stick — read back algorithmEnabled=${readBack.algorithmEnabled}, expected false`);
+        }
+      }
+      await prisma.device.update({ where: { id: deviceId }, data: { autonomousWateringActive: false, autonomousWateringUpdatedAt: new Date() } });
+      setWateringConfigPushState(deviceId, { status: 'success', enabled: false, finishedAt: Date.now() });
+```
+
+- [ ] **Step 3: Typecheck**
+
+Run: `cd backend && pnpm exec tsc --noEmit -p tsconfig.json`
+Expected: clean.
+
+- [ ] **Step 4: Manually re-verify the enable/disable round trip still succeeds against the mock provider**
+
+The mock provider's `writeWateringConfig`/`readWateringConfig` are symmetric (writing sets exactly
+the state reading returns), so this verification should pass with no mock changes needed — this
+step exists to prove that claim rather than assume it. Reuse the exact same scratch-DB script
+Task 5's Step 6 used (same `cp`/`DATABASE_URL` setup), calling `runWateringConfigPush` for the
+enable case then the disable case, and confirm both still end in `{status:'success', ...}` (not
+`error`) — i.e. the new read-back check doesn't spuriously fail against the mock.
+
+Additionally, add ONE new negative-path check proving the verification actually catches a real
+mismatch: after the scratch DB is set up, temporarily monkey-patch a provider wrapper for this
+one script only (do not modify `mock/index.ts` itself) whose `writeWateringConfig` writes
+different values than what `readWateringConfig` will report — e.g.:
+
+```typescript
+import { prisma } from './src/db/client.js';
+import { createMockProvider } from './src/providers/mock/index.js';
+import { ConnectionQueue } from './src/ble/connectionQueue.js';
+import { runWateringConfigPush } from './src/wateringConfigPush.js';
+import { getWateringConfigPushState } from './src/wateringConfigPushSession.js';
+
+const deviceId = 'MOCK-POT-NORMAL';
+const profile = await prisma.plantProfile.findFirst({
+  where: { soilMoistureIrrigatePercent: { not: null }, soilMoistureCommandPercent: { not: null } },
+});
+if (!profile) throw new Error('No Parrot-sourced species found in this DB.');
+await prisma.device.upsert({
+  where: { id: deviceId },
+  update: { plantProfileId: profile.id },
+  create: { id: deviceId, kind: 'PARROT_POT', name: 'scratch test pot', plantProfileId: profile.id },
+});
+
+const realProvider = createMockProvider();
+const connectionQueue = new ConnectionQueue();
+
+// Positive path: real mock, values should match, push should succeed.
+await runWateringConfigPush({ provider: realProvider, connectionQueue }, deviceId);
+console.log('Positive path (should be success):', getWateringConfigPushState(deviceId));
+
+// Negative path: a provider whose write silently no-ops (like the real f90c mystery) — write
+// does nothing, so the subsequent readWateringConfig still returns the OLD value, which won't
+// match what was "written". Proves the verification actually fires on a genuine mismatch.
+await prisma.device.update({ where: { id: deviceId }, data: { autonomousWateringActive: false } });
+const brokenProvider = {
+  ...realProvider,
+  writeWateringConfig: async () => {
+    /* silently does nothing, like f90c */
+  },
+};
+await runWateringConfigPush({ provider: brokenProvider, connectionQueue }, deviceId);
+console.log('Negative path (should be error, "did not stick"):', getWateringConfigPushState(deviceId));
+```
+
+Expected: the positive-path log shows `{status:'success', enabled: true, ...}`; the negative-path
+log shows `{status:'error', message: 'Config push write did not stick — ...', ...}` — proving the
+new check is not a no-op.
+
+- [ ] **Step 5: Lint**
+
+Run: `cd /Users/destcom/Documents/PERSO/StroyPlant && pnpm lint`
+Expected: clean.
+
+- [ ] **Step 6: Commit**
+
+```bash
+cd /Users/destcom/Documents/PERSO/StroyPlant
+git add backend/src/wateringConfigPush.ts
+git commit -m "backend: verify watering config writes actually stick via read-back"
+```
+
+---
+
 ## After all tasks: real hardware rollout
 
 Not part of this plan's task list (no automated or scratch-DB verification can validate real
