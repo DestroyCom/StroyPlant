@@ -1,4 +1,5 @@
 import type { PlantDrCalibration, PlantDrWriteValues } from '../../ble/parrot/plantDr.js';
+import type { WateringConfigRaw, WateringConfigWrite } from '../../ble/parrot/wateringConfig.js';
 import { env } from '../../env.js';
 import { log } from '../../logger.js';
 import type { DeviceKind, DeviceProvider, DiscoveredDevice, SensorReading } from '../types.js';
@@ -126,6 +127,18 @@ export function createNobleBridgeProvider(): DeviceProvider {
       // node-ble's live GATT notify happens directly on the production server, matching how
       // node-ble itself was originally validated there rather than via this provider.
       throw new Error('subscribeLive not implemented on noble-bridge');
+    },
+
+    async readWateringConfig(): Promise<WateringConfigRaw> {
+      // Deliberate scope cut, same rationale as subscribeLive above and the established
+      // noble-bridge precedent of not chasing full parity for every new Parrot Pot feature
+      // (docs/superpowers/specs/2026-08-30-parrot-device-side-autonomous-watering-design.md) —
+      // this is a Mac dev tool for protocol validation, not a production path.
+      throw new Error('readWateringConfig not implemented on noble-bridge');
+    },
+
+    async writeWateringConfig(_deviceId: string, _write: WateringConfigWrite): Promise<void> {
+      throw new Error('writeWateringConfig not implemented on noble-bridge');
     },
   };
 }
