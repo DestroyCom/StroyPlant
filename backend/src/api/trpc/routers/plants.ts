@@ -1,7 +1,8 @@
 import type { Prisma } from '@prisma/client';
+import { TRPCError } from '@trpc/server';
 import { z } from 'zod';
 import { prisma } from '../../../db/client.js';
-import { listKnownAttributeFilters } from '../../../health/parrotFilterLabels.js';
+import { listKnownAttributeFilters, resolveAttributeLabel, resolveFertilizerTypeLabel } from '../../../health/parrotFilterLabels.js';
 import { protectedProcedure, router } from '../trpc.js';
 
 const ORCHID_TAG_BIT = 256;
@@ -76,4 +77,74 @@ export const plantsRouter = router({
         total,
       };
     }),
+
+  getById: protectedProcedure.input(z.object({ id: z.number().int() })).query(async ({ input }) => {
+    const profile = await prisma.plantProfile.findUnique({
+      where: { id: input.id },
+      include: {
+        translations: { where: { locale: 'FR' } },
+        attributes: true,
+        fertilizerTypes: true,
+        searchNames: { where: { locale: 'FR', type: 0 } },
+      },
+    });
+    if (!profile) throw new TRPCError({ code: 'NOT_FOUND', message: 'Espèce introuvable' });
+
+    const translation = profile.translations[0] ?? null;
+    const commonNames = [...new Set(profile.searchNames.map((entry) => entry.name))];
+
+    const resolvedAttributes = profile.attributes
+      .map((attribute) => resolveAttributeLabel(attribute.category, attribute.value))
+      .filter((resolved): resolved is NonNullable<typeof resolved> => resolved != null);
+
+    const fertilizerTypeLabels = profile.fertilizerTypes
+      .map((entry) => resolveFertilizerTypeLabel(entry.code))
+      .filter((label): label is string => label != null);
+
+    return {
+      id: profile.id,
+      name: profile.name,
+      genusName: profile.genusName,
+      speciesName: profile.speciesName,
+      synonyms: profile.synonyms,
+      commonNames,
+      commonName: translation?.commonName ?? profile.commonName ?? null,
+      hasParrotData: profile.parrotSpeciesId != null,
+      isOrchid: profile.tags != null && (profile.tags & ORCHID_TAG_BIT) !== 0,
+      heightMinCm: profile.heightMinCm,
+      heightMaxCm: profile.heightMaxCm,
+      spreadMinCm: profile.spreadMinCm,
+      spreadMaxCm: profile.spreadMaxCm,
+      soilMoistureMinPercent: profile.soilMoistureMinPercent,
+      soilMoistureMaxPercent: profile.soilMoistureMaxPercent,
+      soilConductivityMinUsCm: profile.soilConductivityMinUsCm,
+      soilConductivityMaxUsCm: profile.soilConductivityMaxUsCm,
+      temperatureMinC: profile.temperatureMinC,
+      temperatureMaxC: profile.temperatureMaxC,
+      lightMinMmol: profile.lightMinMmol,
+      lightMaxMmol: profile.lightMaxMmol,
+      sunCategory: profile.sunCategory,
+      waterCategory: profile.waterCategory,
+      fertilizerCategory: profile.fertilizerCategory,
+      hardinessZoneMinValue: profile.hardinessZoneMinValue,
+      hardinessZoneMaxValue: profile.hardinessZoneMaxValue,
+      description: translation?.description ?? null,
+      interesting: translation?.interesting ?? null,
+      planting: translation?.planting ?? null,
+      growth: translation?.growth ?? null,
+      blooming: translation?.blooming ?? null,
+      harvesting: translation?.harvesting ?? null,
+      soilIrr: translation?.soilIrr ?? null,
+      fertilizerText: translation?.fertilizerText ?? null,
+      pruning: translation?.pruning ?? null,
+      pests: translation?.pests ?? null,
+      detailCare: translation?.detailCare ?? null,
+      hardinessZoneMinText: translation?.hardinessZoneMinText ?? null,
+      hardinessZoneMaxText: translation?.hardinessZoneMaxText ?? null,
+      heatZoneMinText: translation?.heatZoneMinText ?? null,
+      heatZoneMaxText: translation?.heatZoneMaxText ?? null,
+      resolvedAttributes,
+      fertilizerTypeLabels,
+    };
+  }),
 });
