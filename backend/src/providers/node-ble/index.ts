@@ -96,6 +96,20 @@ const readU16 = (buf: Buffer) => buf.readUInt16LE(0);
 const readU8 = (buf: Buffer) => buf.readUInt8(0);
 const readU32 = (buf: Buffer) => buf.readUInt32LE(0);
 
+// A truncated/malformed GATT response for the Live service's primary float32 sensors
+// (fa07/fa09/fa0b) has been observed on real hardware — Buffer.readFloatLE(0) throws a bare
+// RangeError on anything shorter than 4 bytes, which previously surfaced two ways: (1) inside
+// readSensors, only at reading-construction time after ~300 lines of now-wasted reads, mislabeled
+// as a connection/GATT_ERROR=133 failure by the retry wrapper catching it; (2) inside
+// subscribeLive's notification handlers, as an uncaught synchronous throw with no error handling
+// at all. Centralizes the length check + a clearly-labeled error both call sites need.
+export function readFloatLESafe(buf: Buffer, label: string): number {
+  if (buf.length < 4) {
+    throw new RangeError(`Malformed ${label} buffer: ${buf.length} byte(s), expected 4 (hex=${buf.toString('hex')})`);
+  }
+  return buf.readFloatLE(0);
+}
+
 // Raw payload only — NO bit-level interpretation as long as the correlation protocol
 // (docs/STROYPLANT_SPEC.md section 7.1) hasn't produced a reproducible result (requires physical
 // access to the devices, not done yet). Must never fail device discovery if
@@ -423,16 +437,22 @@ export function createNodeBleProvider(): DeviceProvider {
             const soilChar = await trackedCharacteristic(sensorService, UUIDS.live.soilMoisturePercent, characteristics);
             const tempChar = await trackedCharacteristic(sensorService, UUIDS.live.temperatureC, characteristics);
             const luxChar = await trackedCharacteristic(sensorService, UUIDS.live.luminosity, characteristics);
-            const soilMoisture = await soilChar.readValue();
-            const temperature = await tempChar.readValue();
-            const luminosity = await luxChar.readValue();
+            const soilMoistureBuf = await soilChar.readValue();
+            const temperatureBuf = await tempChar.readValue();
+            const luminosityBuf = await luxChar.readValue();
             log({
               direction: 'READ',
               label: 'Sensors read',
               deviceId,
               result: 'OK',
-              detail: `soil=${soilMoisture.toString('hex')} temp=${temperature.toString('hex')} lux=${luminosity.toString('hex')}`,
+              detail: `soil=${soilMoistureBuf.toString('hex')} temp=${temperatureBuf.toString('hex')} lux=${luminosityBuf.toString('hex')}`,
             });
+            // Decoded immediately, not deferred to the reading construction ~300 lines below —
+            // a malformed buffer fails fast, before wasting the rest of this attempt's BLE reads,
+            // with an accurate error label instead of being misattributed to a connection failure.
+            const soilMoisturePercent = readFloatLESafe(soilMoistureBuf, 'soilMoisturePercent (fa07)');
+            const temperatureC = readFloatLESafe(temperatureBuf, 'temperatureC (fa09)');
+            const luminosity = readFloatLESafe(luminosityBuf, 'luminosity (fa0b)');
 
             let waterTankLevelPercent: number | undefined;
             try {
@@ -788,9 +808,9 @@ export function createNodeBleProvider(): DeviceProvider {
             const reading: SensorReading = {
               kind: 'PARROT_POT',
               data: {
-                soilMoisturePercent: soilMoisture.readFloatLE(0),
-                temperatureC: temperature.readFloatLE(0),
-                luminosity: luminosity.readFloatLE(0),
+                soilMoisturePercent,
+                temperatureC,
+                luminosity,
                 waterTankLevelPercent,
                 isDrySoil: statusFlags?.isDrySoil,
                 isWetSoil: statusFlags?.isWetSoil,
@@ -1001,16 +1021,47 @@ export function createNodeBleProvider(): DeviceProvider {
                 }, LIVE_SAMPLE_DEBOUNCE_MS);
               };
 
+              // A malformed/truncated notification buffer must never throw synchronously inside an
+              // EventEmitter listener (uncaught here, unlike the promise-based onSample path below)
+              // — skip this one notification and keep waiting for the next, rather than crashing
+              // the whole live session over one bad sample.
               const onSoil = (buf: Buffer) => {
-                pending.soilMoisturePercent = buf.readFloatLE(0);
+                try {
+                  pending.soilMoisturePercent = readFloatLESafe(buf, 'soilMoisturePercent (fa07)');
+                } catch (error) {
+                  log({
+                    direction: 'READ',
+                    label: 'Live soil sample malformed, skipped',
+                    deviceId,
+                    result: 'ERROR',
+                    detail: String(error),
+                  });
+                  return;
+                }
                 scheduleFlush();
               };
               const onTemp = (buf: Buffer) => {
-                pending.temperatureC = buf.readFloatLE(0);
+                try {
+                  pending.temperatureC = readFloatLESafe(buf, 'temperatureC (fa09)');
+                } catch (error) {
+                  log({
+                    direction: 'READ',
+                    label: 'Live temp sample malformed, skipped',
+                    deviceId,
+                    result: 'ERROR',
+                    detail: String(error),
+                  });
+                  return;
+                }
                 scheduleFlush();
               };
               const onLux = (buf: Buffer) => {
-                pending.luminosity = buf.readFloatLE(0);
+                try {
+                  pending.luminosity = readFloatLESafe(buf, 'luminosity (fa0b)');
+                } catch (error) {
+                  log({ direction: 'READ', label: 'Live lux sample malformed, skipped', deviceId, result: 'ERROR', detail: String(error) });
+                  return;
+                }
                 scheduleFlush();
               };
 
