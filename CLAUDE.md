@@ -1356,11 +1356,13 @@ production server:
     formula and write order in `wateringConfig.ts`'s header comment) — **confirmed live on real
     hardware** (pot 8733, `A0:14:3D:CD:87:33`): a written config survived a disconnect/reconnect
     cycle. Full root-cause writeup: `docs/superpowers/specs/2026-08-31-parrot-watering-config-checksum-fix.md`.
-    **Known loose end**: pot 8733 still holds test values (29.7%/36.1% instead of its original
-    26.0%/32.0%) — a restore attempt failed 3/3 with a transient `le-connection-abort-by-local`
-    (unrelated to the checksum fix, this project's previously-documented BLE flakiness pattern);
-    script `backend/scripts/hwtest-restore-8733.ts` is ready to re-run, no real consequence in the
-    meantime (dedicated test pot, no species assigned).
+    **Restored to its original config (2026-08-31)**: the first restore attempt that same day failed
+    3/3 with a transient `le-connection-abort-by-local`, left as a known loose end with no real
+    consequence (dedicated test pot, no species assigned). Re-run later the same day via the same
+    disposable-container workflow — succeeded on the 2nd read-back attempt after one more transient
+    `le-connection-abort-by-local` (the retry policy self-healing exactly as designed): read-back
+    confirmed `plantId=1071 vwcIrrRaw=260 vwcCmdRaw=320 nIrr=384 mode=0 configId=75`, exactly matching
+    the pre-test original — `>>> RESTORED: true <<<`.
   - **Part 3 — the 4-mode watering system (2026-08-31)**: replaces the single-implicit-mode push
     from Part 1 with the same 4 modes the official app exposes, matching real behavior confirmed from
     the decompiled Android source (`docs/superpowers/specs/2026-08-31-parrot-pot-official-app-parity-design.md`
