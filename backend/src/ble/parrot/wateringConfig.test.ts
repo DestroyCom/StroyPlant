@@ -148,6 +148,12 @@ test('PLANT_SITTER falls back to classic-threshold-minus-6-points when eco data 
   assert.deepEqual(result, { eligible: true, mode: 1, vwcIrrPercent: 26, vwcCmdPercent: 38, nIrr: 384 });
 });
 
+test('PLANT_SITTER clamps the fallback vwcIrrPercent to 0 instead of going negative', () => {
+  const plant = plantInputs({ soilMoistureIrrigatePercent: 4, soilMoistureCommandPercent: 10 });
+  const result = resolveWateringModeThresholds('PLANT_SITTER', plant, NO_CUSTOM);
+  assert.deepEqual(result, { eligible: true, mode: 1, vwcIrrPercent: 0, vwcCmdPercent: 10, nIrr: 0 });
+});
+
 test('PLANT_SITTER is ineligible with no plant profile', () => {
   assert.deepEqual(resolveWateringModeThresholds('PLANT_SITTER', null, NO_CUSTOM), { eligible: false });
 });

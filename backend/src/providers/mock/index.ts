@@ -383,6 +383,13 @@ export function createMockProvider(): DeviceProvider {
       // checksum exists to catch.
       if (values.configId === computeWateringConfigId(values)) {
         pot.wateringConfig = { ...values, algorithmEnabled: values.mode === 1 };
+        log({
+          direction: 'WRITE',
+          label: 'Watering config written (mock)',
+          deviceId,
+          result: 'OK',
+          detail: JSON.stringify(pot.wateringConfig),
+        });
       } else {
         log({
           direction: 'WRITE',
@@ -392,13 +399,6 @@ export function createMockProvider(): DeviceProvider {
           detail: `expected configId=${computeWateringConfigId(values)}, got ${values.configId}`,
         });
       }
-      log({
-        direction: 'WRITE',
-        label: 'Watering config written (mock)',
-        deviceId,
-        result: 'OK',
-        detail: JSON.stringify(pot.wateringConfig),
-      });
     },
   };
 }

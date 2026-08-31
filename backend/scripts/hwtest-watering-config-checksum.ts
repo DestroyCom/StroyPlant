@@ -21,7 +21,9 @@ async function main() {
   const original = await provider.readWateringConfig(DEVICE_ID);
   console.log('original:', fmt(original));
   const originalChecksumOk = original.configId === computeWateringConfigId(original);
-  console.log(`original CONFIG_ID self-consistent: ${originalChecksumOk} (device=${original.configId}, computed=${computeWateringConfigId(original)})`);
+  console.log(
+    `original CONFIG_ID self-consistent: ${originalChecksumOk} (device=${original.configId}, computed=${computeWateringConfigId(original)})`,
+  );
   if (!originalChecksumOk) {
     console.warn('WARNING: device is currently in an inconsistent state — proceeding anyway, will restore to this exact read either way.');
   }
@@ -40,7 +42,10 @@ async function main() {
   await new Promise((resolve) => setTimeout(resolve, 5000));
   const afterWrite = await provider.readWateringConfig(DEVICE_ID);
   console.log('read back:', fmt(afterWrite));
-  const persisted = afterWrite.vwcIrrRaw === newVwcIrrRaw && afterWrite.vwcCmdRaw === newVwcCmdRaw;
+  const expectedAfterWrite = { ...merged };
+  const persisted = (Object.keys(expectedAfterWrite) as (keyof typeof expectedAfterWrite)[]).every(
+    (key) => afterWrite[key] === expectedAfterWrite[key],
+  );
   console.log(`\n>>> PERSISTED ACROSS RECONNECT: ${persisted} <<<`);
 
   console.log('\n--- Step 4: restore the original config exactly as found ---');
@@ -49,7 +54,7 @@ async function main() {
   await new Promise((resolve) => setTimeout(resolve, 5000));
   const afterRestore = await provider.readWateringConfig(DEVICE_ID);
   console.log('read back after restore:', fmt(afterRestore));
-  const restored = afterRestore.vwcIrrRaw === original.vwcIrrRaw && afterRestore.vwcCmdRaw === original.vwcCmdRaw && afterRestore.mode === original.mode;
+  const restored = (Object.keys(original) as (keyof typeof original)[]).every((key) => afterRestore[key] === original[key]);
   console.log(`>>> RESTORED TO ORIGINAL: ${restored} <<<`);
 
   if (!persisted) process.exitCode = 1;

@@ -96,7 +96,11 @@ async function evaluateDevice(device: DeviceForTick, provider: DeviceProvider, c
 
   const soilMoisture = health.parameters.soilMoisturePercent;
   if (device.autonomousWateringActive) {
-    const target = device.plantProfile?.soilMoistureCommandPercent;
+    // Falls back to the user's own CUSTOM-mode target when the species has no classic Parrot
+    // threshold — CUSTOM mode is deliberately usable with no species data at all, so requiring
+    // `plantProfile.soilMoistureCommandPercent` here would make the safety net permanently blind
+    // for those devices even though a real target exists on the Schedule row.
+    const target = device.plantProfile?.soilMoistureCommandPercent ?? effective.customVwcCmdPercent;
     if (soilMoisture?.value == null || target == null) return; // no signal to act on
     if (soilMoisture.value >= target - LARGE_DELTA_THRESHOLD_POINTS) return; // gap not large enough for the safety net to act
   } else {

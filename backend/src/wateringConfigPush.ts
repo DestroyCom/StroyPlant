@@ -129,15 +129,19 @@ export async function runWateringConfigPush(deps: WateringConfigPushDeps, device
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     log({ direction: 'WRITE', label: 'Watering config push failed', deviceId, result: 'ERROR', detail });
-    if (intent !== 'disable') {
-      // A failed enable (or a failure before any BLE write started) must never leave the flag
-      // optimistically true — matches the project-wide "never trust an unconfirmed write" rule.
+    if (intent === 'enable') {
+      // A failed enable attempt must never leave the flag optimistically true — matches the
+      // project-wide "never trust an unconfirmed write" rule.
       await prisma.device.update({ where: { id: deviceId }, data: { autonomousWateringActive: false } }).catch(() => {});
     }
-    // A failed disable leaves the flag untouched on purpose: the on-device state is genuinely
+    // A failed disable, OR a failure before either branch was even reached (intent still 'none' —
+    // e.g. the initial findUnique itself throwing), leaves the flag untouched on purpose: neither
+    // case is evidence the device stopped being autonomous. The on-device state is genuinely
     // unknown (the write may have partially applied, or the pot's own algorithm could still be
     // running), so scheduler.ts should keep treating this device as autonomous — and stay in the
-    // more conservative degraded safety net — until a disable actually confirms.
+    // more conservative degraded safety net — until a disable actually confirms. A transient
+    // failure that never even reached a BLE call (intent === 'none') must not silently discard an
+    // already-confirmed `true` state either — that would be a metadata hiccup, not new evidence.
     await prisma.syncEvent.create({ data: { deviceId, source: 'CONFIG_PUSH', errorDetail: detail } }).catch(() => {});
     setWateringConfigPushState(deviceId, { status: 'error', message: detail, finishedAt: Date.now() });
   }

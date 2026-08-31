@@ -54,14 +54,16 @@ export const scheduleRouter = router({
 
       // Push whenever the server-fallback active flag changed (unrelated to the device-side mode,
       // kept for parity with the pre-existing behavior on that flag) OR the device-side watering
-      // mode/custom values changed — adjusting cooldownHours alone still never re-pushes.
+      // mode/custom values changed — adjusting cooldownHours alone still never re-pushes. Guarded
+      // to Parrot Pot only, same reasoning as health.ts's assignPlantProfile — otherwise a Xiaomi
+      // device's schedule toggle would log a spurious ERROR + SyncEvent row on every save.
       const isActiveNow = resolveEffectiveSchedule(device, schedule).active;
       const modeChanged =
         existingSchedule?.wateringMode !== schedule.wateringMode ||
         existingSchedule?.customVwcIrrPercent !== schedule.customVwcIrrPercent ||
         existingSchedule?.customVwcCmdPercent !== schedule.customVwcCmdPercent ||
         existingSchedule?.customNIrrDays !== schedule.customNIrrDays;
-      if (wasActive !== isActiveNow || modeChanged) {
+      if (device.kind === 'PARROT_POT' && (wasActive !== isActiveNow || modeChanged)) {
         kickOffWateringConfigPush({ provider: ctx.provider, connectionQueue: ctx.connectionQueue }, deviceId);
       }
 

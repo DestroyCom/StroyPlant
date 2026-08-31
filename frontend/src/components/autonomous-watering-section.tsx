@@ -133,6 +133,10 @@ export function AutonomousWateringSection({ deviceId, plantProfile, autonomousWa
     // entered/confirmed. Only the form's own "Enregistrer" button (saveCustomValues) pushes for
     // CUSTOM. Every other mode keeps pushing immediately on click, unchanged.
     if (nextMode === 'CUSTOM') return;
+    // Custom fields deliberately omitted (not sent as null) — schedule.upsert's zod input treats
+    // them as optional, so leaving them out preserves whatever the user last entered in Custom
+    // mode, rather than wiping it every time they switch to a different mode. If they come back to
+    // Custom later, their previous values are still there instead of resetting to the defaults.
     upsertScheduleMutation.mutate({
       deviceId,
       active: schedule.active,
@@ -140,9 +144,6 @@ export function AutonomousWateringSection({ deviceId, plantProfile, autonomousWa
       allowedEndHour: schedule.allowedEndHour,
       cooldownHours: schedule.cooldownHours,
       wateringMode: nextMode,
-      customVwcIrrPercent: null,
-      customVwcCmdPercent: null,
-      customNIrrDays: null,
     });
   }
 
@@ -177,6 +178,7 @@ export function AutonomousWateringSection({ deviceId, plantProfile, autonomousWa
               key={option.value}
               type="button"
               disabled={disabled}
+              aria-pressed={wateringMode === option.value}
               onClick={() => saveMode(option.value)}
               className={`rounded-lg border p-3 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
                 wateringMode === option.value ? 'border-primary bg-primary/5' : 'border-border-subtle hover:bg-muted'

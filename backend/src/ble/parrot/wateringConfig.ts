@@ -167,7 +167,9 @@ export function resolveWateringModeThresholds(
       return {
         eligible: true,
         mode: 1,
-        vwcIrrPercent: soilMoistureIrrigatePercent - PLANT_SITTER_FALLBACK_OFFSET_POINTS,
+        // Clamped to 0 — a species with a very low classic threshold could otherwise go negative
+        // here, which would underflow when written as a raw uint16*10 field on the device.
+        vwcIrrPercent: Math.max(0, soilMoistureIrrigatePercent - PLANT_SITTER_FALLBACK_OFFSET_POINTS),
         vwcCmdPercent: soilMoistureCommandPercent,
         nIrr: irrigateCalibrationSampleCount ?? 0,
       };

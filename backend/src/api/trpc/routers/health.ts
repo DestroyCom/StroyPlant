@@ -87,9 +87,13 @@ export const healthRouter = router({
       }
 
       // Species assignment is already a deliberate, infrequent user action — always recompute
-      // eligibility and push (enable or disable) in the background. runWateringConfigPush itself
-      // no-ops for non-Parrot-Pot devices (see wateringConfigPush.ts).
-      kickOffWateringConfigPush({ provider: ctx.provider, connectionQueue: ctx.connectionQueue }, device.id);
+      // eligibility and push (enable or disable) in the background. Guarded to Parrot Pot only —
+      // runWateringConfigPush itself also rejects other kinds, but only via a thrown-and-caught
+      // Error, which would otherwise log a spurious ERROR + SyncEvent row on every non-Parrot-Pot
+      // species assignment (see wateringConfigPush.ts).
+      if (device.kind === 'PARROT_POT') {
+        kickOffWateringConfigPush({ provider: ctx.provider, connectionQueue: ctx.connectionQueue }, device.id);
+      }
 
       return { ...updated, lastSeenAt: serializeDate(updated.lastSeenAt) };
     }),

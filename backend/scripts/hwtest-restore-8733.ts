@@ -29,7 +29,8 @@ async function main() {
   await new Promise((resolve) => setTimeout(resolve, 5000));
   const readBack = await provider.readWateringConfig(DEVICE_ID);
   console.log('read back:', JSON.stringify(readBack));
-  const ok = readBack.vwcIrrRaw === 260 && readBack.vwcCmdRaw === 320 && readBack.configId === 75;
+  const ok =
+    (Object.keys(original) as (keyof typeof original)[]).every((key) => readBack[key] === original[key]) && readBack.configId === 75;
   console.log(`>>> RESTORED: ${ok} <<<`);
   if (!ok) process.exitCode = 1;
 }
