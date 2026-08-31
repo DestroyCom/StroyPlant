@@ -175,10 +175,16 @@ handle→UUID map (see the f906/f90c correction). Two real corrections came out 
 Also note: no field in this table encodes a distinct "mode identity" (Perfect Drop vs. Plant Sitter
 vs. Custom) — all three write `f90d=1` identically and differ only in their `f903`/`f904`/`f905`
 threshold values. The 4-mode UI is a client-side threshold-preset concept over one underlying
-binary protocol signal (`f90d`), not a device-side mode enum — which is good news for StroyPlant's
-existing design choice to expose a binary autonomous-on/off concept rather than a 4-mode picker
-(see the design doc's Non-goals) — that choice is now better-evidenced, just pointed at the wrong
-characteristic for "on."
+binary protocol signal (`f90d`), not a device-side mode enum.
+
+**SUPERSEDED 2026-08-31** — the sentence originally here ("which is good news for StroyPlant's
+existing design choice to expose a binary autonomous-on/off concept rather than a 4-mode picker...")
+described a design choice that no longer holds: StroyPlant now has exactly the 4-mode picker this
+paragraph argued against building (`docs/superpowers/specs/2026-08-31-parrot-pot-official-app-
+parity-design.md`, `frontend/src/components/autonomous-watering-section.tsx`), backed by the same
+"client-side threshold-preset over one binary `f90d` signal" mechanism this section correctly
+describes. The technical observation above (one binary protocol signal under 4 UI presets) remains
+accurate — only the architectural recommendation built on top of it changed.
 
 | Field | Role | Evidence |
 |---|---|---|
@@ -188,7 +194,8 @@ characteristic for "on."
 | `f90d` (`mode` in code) | **Auto-algorithm enable flag (uint8)** — corrected 2026-08-30, was previously (wrongly) attributed to `f908` | `1` for Perfect Drop/Plant Sitter/Custom/species-reassignment, `0` for Manuel — 5/5 real captures, re-verified via raw byte decode |
 | `f90f` (`timeSlotDurr` in code) | Allowed watering hours window duration | Constant `1440` (24h in minutes) across every mode tested — corrected from `f90e` (see above) |
 | `f90e` (`timeSlotStart` in code) | Allowed watering hours window start | Constant `0` across every mode tested — corrected from holding `1440` (see above) |
-| `f901`, `f902`, `f90a`/`b`/`c` | Unconfirmed | Vary without a clean formula found (`f901`), or stayed constant/zero in every capture (`f902`, and the `eco`/trigger-mirror fields) — none of the 4 mode-switch screens exercised them |
+| `f901` | **CONFIRMED 2026-08-31, superseding "vary without a clean formula found" above** — XOR-16 validation checksum over the other 12 characteristics of this service, written last | 9/9 real capture vectors matched exactly (`docs/superpowers/specs/2026-08-31-parrot-watering-config-checksum-fix.md`), implemented in `wateringConfig.ts`'s `computeWateringConfigId`, confirmed live on real hardware (pot 8733, survived a disconnect/reconnect) |
+| `f902`, `f90a`/`b`/`c` | Unconfirmed | Stayed constant/zero in every capture (`f902`, and the `eco`/trigger-mirror fields) — none of the 4 mode-switch screens exercised them. `f90a`/`f90b` specifically re-confirmed always-zero across all 3 mode captures on 2026-08-31, see the parity design doc |
 | `f908` (`pumpDutyCycle` in code) | **Unconfirmed — never written by the app in any of the 5 real captures analyzed** (corrected 2026-08-30; previously misattributed as the enable flag) | Role unknown, same confidence level as `f912` below |
 | `f912` (`algorithmStatus` in code) | Unconfirmed, separate from `f90d` | Never touched by any of these captures at all — the pre-existing "values 1-6 unconfirmed" open question from earlier project history is untouched by this investigation |
 

@@ -42,7 +42,7 @@ counterparts, just re-encoded with a different endianness in the PacketLogger re
 new data there, safely ignorable.
 
 Real GATT session activity (as opposed to passive advertisement noise from surrounding devices) is
-concentrated in exactly 3 distinct time windows across all 17 files:
+concentrated in exactly 4 distinct time windows across all 17 files:
 - **Aug 29, ~22:27–22:29** (`13_full_flowerpower_app_workout.pklg`, self-contained, 2638 packets)
 - **Aug 29, ~23:54–00:02** (`12_log_claude_...pklg`, `11_my_script_attempt.pklg`, overlapping)
 - **Aug 30, ~23:19–23:23** (`13_sniff_during_test_script.pklg`'s own unique window — despite the

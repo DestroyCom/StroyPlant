@@ -1351,11 +1351,16 @@ production server:
     class of problem once before for the Plant Dr service (Batch 6, `computePlantDrConfigId`)
     without realizing `f900` needed the same treatment. Every write this project had ever made to
     this service was checksum-inconsistent by construction and silently rejected by the firmware.
-    Fixed with a full 13-field read-modify-write (`resolveWateringModeThresholds` →
-    `mergeWateringConfigOverrides` → `buildWateringConfigWriteValues`, `computeWateringConfigId`'s
-    formula and write order in `wateringConfig.ts`'s header comment) — **confirmed live on real
-    hardware** (pot 8733, `A0:14:3D:CD:87:33`): a written config survived a disconnect/reconnect
-    cycle. Full root-cause writeup: `docs/superpowers/specs/2026-08-31-parrot-watering-config-checksum-fix.md`.
+    Fixed with a full 13-field read-modify-write (`mergeWateringConfigOverrides` →
+    `buildWateringConfigWriteValues`, `computeWateringConfigId`'s formula and write order in
+    `wateringConfig.ts`'s header comment) — **the checksum/persistence mechanism itself is
+    confirmed live on real hardware** (pot 8733, `A0:14:3D:CD:87:33`, via
+    `hwtest-watering-config-checksum.ts` calling those functions directly with hand-picked override
+    values): a written config survived a disconnect/reconnect cycle. This does **not** cover
+    `resolveWateringModeThresholds` (Part 3 below) — the hardware test never routed through the
+    4-mode resolver, only through the lower-level write/checksum functions it calls into; the mode
+    resolver itself is mock-provider-verified only, see Part 3's own verification note. Full
+    root-cause writeup: `docs/superpowers/specs/2026-08-31-parrot-watering-config-checksum-fix.md`.
     **Restored to its original config (2026-08-31)**: the first restore attempt that same day failed
     3/3 with a transient `le-connection-abort-by-local`, left as a known loose end with no real
     consequence (dedicated test pot, no species assigned). Re-run later the same day via the same

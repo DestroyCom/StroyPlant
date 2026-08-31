@@ -93,10 +93,31 @@ Replace it with (adds the watering service + tank characteristic + a one-time se
           // actually dispensed. Read it once up front so every sample has a value from the start,
           // never gated on a notification that might not arrive all session — see this task's own
           // header comment for why waiting for it here would be a real bug, not just a nicety.
-          const wateringService = await gatt.getPrimaryService(WATERING_SERVICE_UUID);
-          const tankChar = await trackedCharacteristic(wateringService, UUIDS.watering.waterTankLevel, characteristics);
-          if (signal.aborted) return;
-          let latestTankLevel = (await tankChar.readValue()).readUInt8(0);
+          //
+          // Best-effort and bounded: this is a SECOND GATT service, independent of the sensor
+          // service the 3 primary metrics live on — a slow/failing watering-service lookup or read
+          // must never block or abort soil/temp/lux, which are the actual point of live mode. A
+          // fixed 5s bound (this file's existing withTimeout/CONNECT_TIMEOUT_MS pattern is for the
+          // whole-connection case, too generous here) keeps one bad read from eating meaningfully
+          // into the session's own setup time. On any failure, log and continue with `undefined` —
+          // `ParrotPotReading.waterTankLevelPercent` is already optional for exactly this reason.
+          let latestTankLevel: number | undefined;
+          let tankChar: GattCharacteristic | undefined;
+          try {
+            const wateringService = await withTimeout(gatt.getPrimaryService(WATERING_SERVICE_UUID), 5000, 'live-tank-service');
+            tankChar = await withTimeout(trackedCharacteristic(wateringService, UUIDS.watering.waterTankLevel, characteristics), 5000, 'live-tank-characteristic');
+            if (signal.aborted) return;
+            latestTankLevel = (await withTimeout(tankChar.readValue(), 5000, 'live-tank-read')).readUInt8(0);
+          } catch (error) {
+            log({
+              direction: 'READ',
+              label: 'Live session: tank level unavailable, continuing without it',
+              deviceId,
+              result: 'ERROR',
+              detail: error instanceof Error ? error.message : String(error),
+            });
+            tankChar = undefined;
+          }
 ```
 
 - [ ] **Step 2: Include the tank level in every snapshot, and update it opportunistically via notify**
@@ -122,7 +143,9 @@ Replace with:
                   };
 ```
 
-Then find the 3 notify handlers (`onSoil`/`onTemp`/`onLux`) and add a 4th right after `onLux`:
+Then find the 3 notify handlers (`onSoil`/`onTemp`/`onLux`) and add a 4th right after `onLux` —
+`tankChar` may be `undefined` (the best-effort read above failed), so this handler is only ever
+registered when it isn't:
 
 ```ts
               const onTank = (buf: Buffer) => {
@@ -133,14 +156,15 @@ Then find the 3 notify handlers (`onSoil`/`onTemp`/`onLux`) and add a 4th right 
               };
 ```
 
-Then find `cleanupListeners` and add the new listener's removal:
+Then find `cleanupListeners` and add the new listener's removal — guarded, since `tankChar` may be
+`undefined`:
 
 ```ts
               const cleanupListeners = () => {
                 soilChar.removeListener('valuechanged', onSoil);
                 tempChar.removeListener('valuechanged', onTemp);
                 luxChar.removeListener('valuechanged', onLux);
-                tankChar.removeListener('valuechanged', onTank);
+                tankChar?.removeListener('valuechanged', onTank);
                 if (flushTimer) clearTimeout(flushTimer);
                 signal.removeEventListener('abort', onAbort);
                 device.removeListener('disconnect', onDisconnect);
@@ -148,45 +172,48 @@ Then find `cleanupListeners` and add the new listener's removal:
 ```
 
 Then find where the 3 existing listeners are registered and the notifications started, and add the
-4th to both:
+4th to both — again guarded on `tankChar` being defined:
 
 ```ts
               soilChar.on('valuechanged', onSoil);
               tempChar.on('valuechanged', onTemp);
               luxChar.on('valuechanged', onLux);
-              tankChar.on('valuechanged', onTank);
+              tankChar?.on('valuechanged', onTank);
               signal.addEventListener('abort', onAbort, { once: true });
               device.once('disconnect', onDisconnect);
             });
           } finally {
             for (const characteristic of [soilChar, tempChar, luxChar, tankChar]) {
+              if (!characteristic) continue;
               await characteristic.stopNotifications().catch(() => {});
             }
           }
 ```
 
 (That last `finally` block is the existing one right after the `new Promise<void>(...)` — add
-`tankChar` to its array and, before this whole inner `try`, add `await tankChar.startNotifications();`
-next to the existing 3 `startNotifications()` calls:
+`tankChar` to its array (filtering the `undefined` case, as above) and, before this whole inner
+`try`, add a guarded `startNotifications()` call next to the existing 3:
 
 ```ts
           await soilChar.startNotifications();
           await tempChar.startNotifications();
           await luxChar.startNotifications();
-          await tankChar.startNotifications();
+          if (tankChar) await tankChar.startNotifications().catch(() => {});
 ```
 
-)
+A failure to start tank notifications specifically is also non-fatal — `latestTankLevel` just stays
+at whatever the one-time seed read above produced (or `undefined` if that failed too), the session
+still runs fine on soil/temp/lux alone.)
 
 - [ ] **Step 3: Typecheck**
 
-Run: `cd backend && npx tsc --noEmit`
+Run: `cd backend && pnpm exec tsc --noEmit`
 
 Expected: no errors.
 
 - [ ] **Step 4: Run the backend test suite**
 
-Run: `cd backend && npm run test`
+Run: `cd backend && pnpm test`
 
 Expected: all tests pass (this file has no dedicated automated test — matches this project's
 established convention for the real BLE provider files, verified via the mock provider + manual
@@ -240,13 +267,13 @@ Replace with:
 
 - [ ] **Step 2: Typecheck**
 
-Run: `cd backend && npx tsc --noEmit`
+Run: `cd backend && pnpm exec tsc --noEmit`
 
 Expected: no errors.
 
 - [ ] **Step 3: Run the backend test suite**
 
-Run: `cd backend && npm run test`
+Run: `cd backend && pnpm test`
 
 Expected: all tests pass.
 
@@ -406,7 +433,7 @@ Replace with:
 
 - [ ] **Step 5: Typecheck**
 
-Run: `cd frontend && npx tsc --noEmit`
+Run: `cd frontend && pnpm typecheck`
 
 Expected: no errors.
 
@@ -469,7 +496,7 @@ fails, it's the exact bug that task was written to avoid).
 
 - [ ] **Step 7: Run the full test suite one more time to confirm nothing regressed**
 
-Run: `cd backend && npx tsc --noEmit && npm run test` and `cd frontend && npx tsc --noEmit`
+Run: `cd backend && pnpm exec tsc --noEmit && pnpm test` and `cd frontend && pnpm typecheck`
 
 Expected: all clean.
 

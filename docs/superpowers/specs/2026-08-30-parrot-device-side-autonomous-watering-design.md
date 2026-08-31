@@ -126,6 +126,17 @@ push, or if it was never pushed — the flag never gets set optimistically ahead
 this codebase, spec section 7.1). `autonomousWateringUpdatedAt` is display-only (frontend "dernière
 config poussée le...").
 
+**CORRECTED, real-hardware finding (2026-08-30, same day)** — "false on any disable push, any
+failed push" above turned out to be the wrong policy for a *failed* disable specifically: a real
+hardware test hit 4 consecutive disable attempts failing with connection errors (not a value
+mismatch), and forcing `false` in that case wrongly told the scheduler the device was no longer
+autonomous when its real on-device state was genuinely unknown (the write may have partially
+applied, or the pot's own algorithm could still be running). `backend/src/wateringConfigPush.ts`
+now only forces `false` after a confirmed-failed **enable** attempt (or a pre-flight failure before
+either branch was reached) — a failed disable leaves the flag untouched until a disable actually
+confirms. See CLAUDE.md's "First real production incident" / device-side-autonomous-watering
+entries for the full history.
+
 No new table for the pushed values themselves — like Plant Dr's `getCalibration`, the device
 itself is the source of truth; a live read (`wateringConfig.getConfig`, below) fetches current
 values on demand for display, nothing is cached in SQL beyond the one boolean+timestamp needed for
@@ -136,6 +147,13 @@ the scheduler decision.
 New file `backend/src/ble/parrot/wateringConfig.ts` (mirrors `plantDr.ts`'s shape, no checksum
 needed here — unlike Plant Dr's `fd81` `CONFIG_ID`, nothing in the sniffing captures suggested the
 `f900` service validates a composite checksum, each characteristic write is independent):
+
+**CORRECTED 2026-08-31 — this assumption was wrong and was the root cause of the config-persistence
+bug tracked as a follow-up to this feature.** `f901`/`CONFIG_ID` in this same service turned out to
+be exactly the same kind of XOR-16 validation checksum as Plant Dr's `fd81`, just missed by the
+original sniffing analysis — see `docs/superpowers/specs/2026-08-31-parrot-watering-config-checksum-fix.md`
+for the full root cause and fix. The read-modify-write-then-checksum contract this design doc
+originally waved off as unnecessary is exactly what `wateringConfig.ts` implements today.
 
 ```typescript
 export interface WateringConfigEnableValues {
