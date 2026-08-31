@@ -180,11 +180,19 @@ directement dans le fichier TypeScript committé.
       la donnée sous-jacente est `null` ou non résolue), Particularités (badges, `SF` résolus
       uniquement).
     - **Entretien** : Nutriments et besoins (les 3 lignes jauge+plage, tableau ci-dessus, plus
-      Température en min/max brut), puis les sections texte présentes (`planting`, `growth`,
-      `harvesting`, `soilIrr`, `fertilizerText`, `pruning`, zones de rusticité/chaleur en texte) —
-      chaque section omise si son champ est `null`, jamais un texte de remplissage inventé
-      (cohérent avec le principe déjà établi ailleurs dans ce projet de ne jamais fabriquer de
-      donnée manquante).
+      Température en min/max brut), puis les sections texte présentes, dans cet ordre (calé sur
+      les intitulés `plantDetails_groupHeader_*` de l'app officielle, ordre exact d'affichage non
+      vérifié — détail mineur pour le plan) : Plantation (`planting`), Croissance (`growth`),
+      Floraison (`blooming`), Récolte (`harvesting`), Sol et Irrigation (`soilIrr`), Fertilisation
+      (`fertilizerText`), Elagage (`pruning`), Éléments nuisibles (`pests`), et — si présent
+      seulement, champ beaucoup plus rare que les autres (376/8070 espèces FR, vérifié sur les
+      données réelles) — une section "Conseils complémentaires" (`detailCare`), Zone de pousse de
+      la plante (zones de rusticité/chaleur en texte). Chaque section omise si son champ est
+      `null`, jamais un texte de remplissage inventé (cohérent avec le principe déjà établi
+      ailleurs dans ce projet de ne jamais fabriquer de donnée manquante). **Correction faite
+      pendant la relecture (2026-08-31)** : la première version de cette spec omettait Floraison
+      et Éléments nuisibles alors que ce sont des champs réels et peuplés à ~90% (7160 et 7377
+      espèces FR sur 8070) — repérée par DestCom en comparant avec les captures d'écran.
   - Nouveau composant présentationnel léger pour la jauge à points (5 points, N remplis) — pas une
     réutilisation de `SensorGauge` (langage visuel circulaire différent, pas adapté à un score
     catégoriel 1-4/1-3).
