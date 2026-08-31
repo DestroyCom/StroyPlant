@@ -51,8 +51,23 @@ plante ET cycle de vie) sous le même code brut — distinguables sans ambiguït
 recoupent jamais). Le module de résolution doit traiter ça comme deux groupes logiques distincts,
 pas un seul.
 
-**Bonus, mapping complet et indépendant** : `fertilizer_type_1..22` résout `PlantProfileFertilizerType.code` ;
-`tags_categoryName_*` (9 clés) résout le bitmask `PlantProfile.tags`.
+**Bonus, mapping complet et indépendant** : `fertilizer_type_1..22` résout `PlantProfileFertilizerType.code`
+(labels FR vérifiés : tout usage/palmier/cactus/orchidée/poacée/bougainvillier/citronnier/fraisier/
+laurier-rose/olivier/pélargonium/rhododendron/rose/tomate/hortensia et hydrangéa/bambou/bulbes/
+buissons/arbres fruitiers/herbes aromatiques/arbustes à fleurs/légumes du potager, codes 1 à 22).
+
+**Correction faite pendant l'écriture du plan (2026-08-31) — `tags_categoryName_*` NE résout PAS
+le bitmask `PlantProfile.tags` de façon fiable** : seul le bit 256 (orchidée) a jamais été confirmé
+dans ce projet, via le code source décompilé de l'app Android
+(`DataManager.java:3033`, `isOrchid`, voir l'entrée "4-mode watering system" de `CLAUDE.md`) — les
+9 clés `tags_categoryName_*` sont une supposition plausible mais non vérifiée pour les 8 autres
+bits. Test empirique fait pendant l'écriture de ce plan : recherche d'espèces réelles n'ayant qu'un
+seul bit actif dans `tags`, pour tenter de corréler bit→catégorie par le genre botanique — résultat
+**ambigu et contradictoire** (le bit 32 ET le bit 128 pointent tous deux vers des érables `Acer`,
+aucun des deux ne se laisse identifier sans deviner). Conclusion : **ne pas inventer** ce mapping.
+Seul le bit 256 (orchidée, confirmé) est utilisable dans ce sous-projet ; les 8 autres restent un
+suivi ouvert (nécessiterait de retrouver la vraie constante dans le code source décompilé, pas une
+inférence statistique). Périmètre réduit en conséquence — voir la section Architecture.
 
 **Règle d'affichage** : un code sans libellé résolu n'est **jamais** montré à l'utilisateur (ni en
 brut, ni comme filtre proposé) — silencieusement omis de la fiche/des filtres. Fidèle au
@@ -90,7 +105,7 @@ correspondante — jamais un score à 0 point inventé.
 **Backend** — nouveau routeur tRPC `plants` (`backend/src/api/trpc/routers/plants.ts`, ajouté à
 `router.ts`) :
 
-- `plants.search(input: { search?: string; tags?: number[]; attributeFilters?: {category: string; value: string}[]; page: number; pageSize: number })`
+- `plants.search(input: { search?: string; orchidOnly?: boolean; attributeFilters?: {category: string; value: string}[]; page: number; pageSize: number })`
   → `{ items: PlantSummary[], total: number }`.
   - Recherche : `PlantProfile.name` (latin, `contains`) OR `PlantProfileSearchName.name` où
     `locale = 'FR'` (`contains`) OR `PlantProfile.commonName` (`contains`, colonne WatchFlower déjà
@@ -99,16 +114,16 @@ correspondante — jamais un score à 0 point inventé.
     `PlantProfileSearchName`/`PlantProfileTranslation` — vérifié sur les données réelles pendant ce
     brainstorming (`SELECT DISTINCT locale` → `DE/EN/ES/FR/IT/JA/ZH`), à ne pas confondre avec la
     casse minuscule utilisée ailleurs dans ce document par simple confort de lecture.
-  - Filtres tags : bitwise (`tags & tagBit != 0`), OR entre tags sélectionnés (une espèce avec
-    n'importe lequel des tags cochés matche — cohérent avec la nature bitmask, un profil peut
-    cumuler plusieurs tags).
+  - Filtre `orchidOnly` : bitwise (`tags & 256 != 0`) — **seul filtre basé sur `tags`**, voir la
+    correction ci-dessus sur `tags_categoryName_*` : les 8 autres bits ne sont pas fiables, pas de
+    filtre générique par tag dans ce sous-projet.
   - Filtres attributs : jointure sur `PlantProfileAttribute`, OR entre valeurs d'une même
     catégorie, AND entre catégories différentes (reprend le texte de l'app elle-même,
     `filter_infoLabel_selectFilterCriteria` = "Select one or more filters").
   - `PlantSummary` : id, name, commonName (résolu : `PlantProfileTranslation.commonName` locale
     `FR` si présent, sinon `PlantProfile.commonName` WatchFlower), hasParrotData (bool, =
-    `parrotSpeciesId != null`), tags résolus (labels, pour affichage en badges sur la carte
-    résultat).
+    `parrotSpeciesId != null`), isOrchid (bool, `tags & 256 != 0`, pour un badge "Orchidée" sur la
+    carte résultat — seul badge basé sur `tags` pour la même raison).
   - Pagination offset (`skip`/`take`), pas de curseur — volume total (9120) largement dans les
     capacités de SQLite pour un `COUNT` + page simple, cohérent avec le principe YAGNI déjà
     appliqué ailleurs dans ce projet (ex. `health.plantProfiles` existant fait déjà un `findMany`
@@ -132,18 +147,16 @@ correspondante — jamais un score à 0 point inventé.
     logiques : type, cycle, couleur de floraison, couleur des feuilles, forme, particularités,
     saison de floraison — cette dernière restera toujours vide vu la couverture 0/12).
   - Fertilizer types résolus (`fertilizer_type_1..22`).
-  - Tags résolus (`tags_categoryName_*`).
+  - `isOrchid` (bool, `tags & 256 != 0`) — seul signal tiré de `tags`, voir la correction ci-dessus.
   - Throw `NOT_FOUND` si l'id n'existe pas (`protectedProcedure`, même convention que le reste du
     routeur `devices`).
 
 **Module de résolution de labels** — `backend/src/health/parrotFilterLabels.ts` : constantes
-TypeScript committées (pas de nouvelle table Prisma pour 41+22+9 entrées fixes et stables) :
+TypeScript committées (pas de nouvelle table Prisma pour ~65 entrées fixes et stables) :
 - `resolveAttributeLabel(category: string, value: string): { group: string; groupLabel: string; valueLabel: string } | null` —
   gère la désambiguïsation `PT` type-vs-cycle décrite plus haut ; retourne `null` pour un code non
   couvert (jamais un libellé inventé ou le code brut).
 - `resolveFertilizerTypeLabel(code: number): string | null`.
-- `resolveTagLabel(bit: number): string | null` (décode chaque bit individuellement du bitmask
-  `PlantProfile.tags`).
 - `listKnownAttributeFilters(): { group: string; groupLabel: string; options: {value: string; label: string}[] }[]` —
   source unique de vérité pour les filtres proposés au frontend (évite qu'un filtre affiché ne
   corresponde à aucun résultat possible en base).
@@ -157,14 +170,15 @@ directement dans le fichier TypeScript committé.
 
 - `frontend/src/routes/_authenticated/plants.tsx` — page liste :
   - Barre de recherche (`Input`, debounce 300ms, même pattern que `SpeciesSearch`).
-  - Ligne de filtres rapides par tag (`tags_categoryName_*`, boutons/badges togglables,
-    multi-sélection).
+  - Une case à cocher simple "Orchidées uniquement" (seul filtre basé sur `tags`, voir la
+    correction ci-dessus — pas de ligne de filtres rapides multi-tags dans ce sous-projet).
   - Panneau de filtres avancés (attributs résolus, groupés par dimension logique, cases à
-    cocher) — nécessite d'ajouter les composants shadcn `checkbox` et `popover` (ou `sheet` pour
-    mobile) via la CLI, absents du set actuel (`badge`/`button`/`card`/`chart`/`dialog`/`input`/
-    `label`/`separator`/`skeleton`/`sonner`/`switch`/`tabs`) — détail d'implémentation pour le
-    plan, pas une décision d'architecture.
-  - Grille de cartes résultat (nom latin en italique, nom commun, badges de tags), pagination
+    cocher), ouvert dans le `Dialog` déjà présent (composant existant, pas de nouvelle dépendance
+    de layout) — nécessite d'ajouter le composant shadcn `checkbox` via la CLI, absent du set
+    actuel (`badge`/`button`/`card`/`chart`/`dialog`/`input`/`label`/`separator`/`skeleton`/
+    `sonner`/`switch`/`tabs`) — détail d'implémentation pour le plan, pas une décision
+    d'architecture.
+  - Grille de cartes résultat (nom latin en italique, nom commun, badge "Orchidée" si `isOrchid`), pagination
     simple (précédent/suivant + compteur total).
   - Lien ajouté dans `app-shell.tsx` (sidebar desktop + nav mobile), entre "Tableau de bord" et
     "Historique" — icône `Sprout` ou `Leaf` (`lucide-react`, déjà une dépendance).
