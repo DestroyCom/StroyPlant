@@ -1,5 +1,5 @@
 import type { PlantDrCalibration, PlantDrWriteValues } from '../../ble/parrot/plantDr.js';
-import type { WateringConfigRaw, WateringConfigWrite } from '../../ble/parrot/wateringConfig.js';
+import type { WateringConfigRaw, WateringConfigWriteValues } from '../../ble/parrot/wateringConfig.js';
 import { env } from '../../env.js';
 import { log } from '../../logger.js';
 import type { DeviceKind, DeviceProvider, DiscoveredDevice, SensorReading } from '../types.js';
@@ -137,7 +137,7 @@ export function createNobleBridgeProvider(): DeviceProvider {
       throw new Error('readWateringConfig not implemented on noble-bridge');
     },
 
-    async writeWateringConfig(_deviceId: string, _write: WateringConfigWrite): Promise<void> {
+    async writeWateringConfig(_deviceId: string, _values: WateringConfigWriteValues): Promise<void> {
       throw new Error('writeWateringConfig not implemented on noble-bridge');
     },
   };

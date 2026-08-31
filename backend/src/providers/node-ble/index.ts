@@ -15,7 +15,7 @@ import {
   WATER_TRIGGER_PAYLOAD,
   WATERING_SERVICE_UUID,
 } from '../../ble/parrot/uuids.js';
-import type { WateringConfigRaw, WateringConfigWrite } from '../../ble/parrot/wateringConfig.js';
+import type { WateringConfigFields, WateringConfigRaw, WateringConfigWriteValues } from '../../ble/parrot/wateringConfig.js';
 import { parseTempHumidityPayload } from '../../ble/xiaomi/parser.js';
 import {
   LYWSD03MMC_NAME,
@@ -1193,15 +1193,31 @@ export function createNodeBleProvider(): DeviceProvider {
             const wateringService = await gatt.getPrimaryService(WATERING_SERVICE_UUID);
             const readU16Value = async (uuid: string) =>
               (await (await trackedCharacteristic(wateringService, uuid, characteristics)).readValue()).readUInt16LE(0);
+            const readU32Value = async (uuid: string) =>
+              (await (await trackedCharacteristic(wateringService, uuid, characteristics)).readValue()).readUInt32LE(0);
             const readU8Value = async (uuid: string) =>
               (await (await trackedCharacteristic(wateringService, uuid, characteristics)).readValue()).readUInt8(0);
 
-            const vwcIrrRaw = await readU16Value(UUIDS.watering.vwcIrr);
-            const vwcCmdRaw = await readU16Value(UUIDS.watering.vwcCmd);
-            const nIrr = await readU16Value(UUIDS.watering.nIrr);
-            const algorithmEnabledRaw = await readU8Value(UUIDS.watering.pumpDutyCycle);
+            // Full 13-field read — see wateringConfig.ts: writing back a correct CONFIG_ID (f901)
+            // requires knowing the current state of every other field first (read-modify-write,
+            // docs/PARROT_BLE_DEEP_DIVE.md section 2), not just the 3 this project changes.
+            const fields: WateringConfigFields = {
+              plantId: await readU16Value(UUIDS.watering.plantId),
+              vwcIrrRaw: await readU16Value(UUIDS.watering.vwcIrr),
+              vwcCmdRaw: await readU16Value(UUIDS.watering.vwcCmd),
+              nIrr: await readU16Value(UUIDS.watering.nIrr),
+              vwcIrrEcoRaw: await readU16Value(UUIDS.watering.vwcIrrEco),
+              vwcCmdEcoRaw: await readU16Value(UUIDS.watering.vwcCmdEco),
+              nIrrEco: await readU16Value(UUIDS.watering.nIrrEco),
+              timeSlotStart: await readU16Value(UUIDS.watering.timeSlotStart),
+              timeSlotDuration: await readU16Value(UUIDS.watering.timeSlotDurr),
+              vacationStart: await readU32Value(UUIDS.watering.vacationStart),
+              vacationEnd: await readU32Value(UUIDS.watering.vacationEnd),
+              mode: await readU8Value(UUIDS.watering.mode),
+            };
+            const configId = await readU16Value(UUIDS.watering.configId);
 
-            const config: WateringConfigRaw = { vwcIrrRaw, vwcCmdRaw, nIrr, algorithmEnabled: algorithmEnabledRaw === 1 };
+            const config: WateringConfigRaw = { ...fields, configId, algorithmEnabled: fields.mode === 1 };
             log({ direction: 'READ', label: 'Watering config read', deviceId, result: 'OK', detail: JSON.stringify(config) });
             return config;
           } finally {
@@ -1213,7 +1229,7 @@ export function createNodeBleProvider(): DeviceProvider {
       });
     },
 
-    async writeWateringConfig(deviceId: string, write: WateringConfigWrite): Promise<void> {
+    async writeWateringConfig(deviceId: string, values: WateringConfigWriteValues): Promise<void> {
       await withGattRetry({
         label: 'writeWateringConfig',
         deviceId,
@@ -1233,6 +1249,13 @@ export function createNodeBleProvider(): DeviceProvider {
               await characteristic.writeValueWithResponse(payload);
               log({ direction: 'WRITE', label, uuid, deviceId, payloadHex: payload.toString('hex'), result: 'OK' });
             };
+            const writeU32 = async (uuid: string, value: number, label: string) => {
+              const characteristic = await trackedCharacteristic(wateringService, uuid, characteristics);
+              const payload = Buffer.alloc(4);
+              payload.writeUInt32LE(value >>> 0, 0);
+              await characteristic.writeValueWithResponse(payload);
+              log({ direction: 'WRITE', label, uuid, deviceId, payloadHex: payload.toString('hex'), result: 'OK' });
+            };
             const writeU8 = async (uuid: string, value: number, label: string) => {
               const characteristic = await trackedCharacteristic(wateringService, uuid, characteristics);
               const payload = Buffer.from([value & 0xff]);
@@ -1240,16 +1263,25 @@ export function createNodeBleProvider(): DeviceProvider {
               log({ direction: 'WRITE', label, uuid, deviceId, payloadHex: payload.toString('hex'), result: 'OK' });
             };
 
-            if (write.mode === 'enable') {
-              // f908 (algorithm enable) is written last — a failure partway through never leaves
-              // the algorithm active with a half-applied config.
-              await writeU16(UUIDS.watering.vwcIrr, write.values.vwcIrrRaw, 'Watering config VWC_IRR');
-              await writeU16(UUIDS.watering.vwcCmd, write.values.vwcCmdRaw, 'Watering config VWC_CMD');
-              await writeU16(UUIDS.watering.nIrr, write.values.nIrr, 'Watering config N_IRR');
-              await writeU8(UUIDS.watering.pumpDutyCycle, 1, 'Watering config algorithm enable');
-            } else {
-              await writeU8(UUIDS.watering.pumpDutyCycle, 0, 'Watering config algorithm disable');
-            }
+            // Exact order from WriteWateringConfig.java (docs/PARROT_BLE_DEEP_DIVE.md section 2),
+            // CONFIG_ID (f901, the XOR checksum) written LAST — the device only commits the batch
+            // once it can recompute this checksum from the 12 fields it just received and it
+            // matches. `values` is already the fully-resolved read-modify-write result (see
+            // wateringConfigPush.ts) — this function just encodes and writes it in order, staying
+            // "dumb" like every other provider write path in this project.
+            await writeU16(UUIDS.watering.plantId, values.plantId, 'Watering config PLANT_ID');
+            await writeU16(UUIDS.watering.vwcIrr, values.vwcIrrRaw, 'Watering config VWC_IRR');
+            await writeU16(UUIDS.watering.vwcCmd, values.vwcCmdRaw, 'Watering config VWC_CMD');
+            await writeU16(UUIDS.watering.nIrr, values.nIrr, 'Watering config N_IRR');
+            await writeU16(UUIDS.watering.vwcIrrEco, values.vwcIrrEcoRaw, 'Watering config VWC_IRR_ECO');
+            await writeU16(UUIDS.watering.vwcCmdEco, values.vwcCmdEcoRaw, 'Watering config VWC_CMD_ECO');
+            await writeU16(UUIDS.watering.nIrrEco, values.nIrrEco, 'Watering config N_IRR_ECO');
+            await writeU16(UUIDS.watering.timeSlotStart, values.timeSlotStart, 'Watering config TIME_SLOT_START');
+            await writeU16(UUIDS.watering.timeSlotDurr, values.timeSlotDuration, 'Watering config TIME_SLOT_DURATION');
+            await writeU32(UUIDS.watering.vacationStart, values.vacationStart, 'Watering config VACATION_START');
+            await writeU32(UUIDS.watering.vacationEnd, values.vacationEnd, 'Watering config VACATION_END');
+            await writeU8(UUIDS.watering.mode, values.mode, 'Watering config MODE');
+            await writeU16(UUIDS.watering.configId, values.configId, 'Watering config CONFIG_ID (commit)');
           } finally {
             for (const characteristic of characteristics) releaseDbusListeners(characteristic);
             await withTimeout(device.disconnect(), CONNECT_TIMEOUT_MS, 'disconnect').catch(() => {});

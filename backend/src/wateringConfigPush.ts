@@ -3,7 +3,11 @@
 // parrot-device-side-autonomous-watering-design.md.
 import type { Device, PlantProfile, Schedule } from '@prisma/client';
 import type { ConnectionQueue } from './ble/connectionQueue.js';
-import { buildWateringConfigEnableValues } from './ble/parrot/wateringConfig.js';
+import {
+  buildWateringConfigEnableFields,
+  buildWateringConfigWriteValues,
+  mergeWateringConfigOverrides,
+} from './ble/parrot/wateringConfig.js';
 import { prisma } from './db/client.js';
 import { resolveEffectiveSchedule } from './health/scheduler.js';
 import { log } from './logger.js';
@@ -66,9 +70,17 @@ export async function runWateringConfigPush(deps: WateringConfigPushDeps, device
     const eligibility = resolveWateringConfigEligibility(device, device.schedule, device.plantProfile);
 
     if (eligibility.eligible) {
-      const values = buildWateringConfigEnableValues(eligibility.vwcIrrPercent, eligibility.vwcCmdPercent, eligibility.nIrr);
       intent = 'enable';
-      await deps.connectionQueue.run(() => deps.provider.writeWateringConfig(deviceId, { mode: 'enable', values }));
+      // Read-modify-write (docs/PARROT_BLE_DEEP_DIVE.md section 2, computeWateringConfigId's own
+      // header comment): the firmware validates CONFIG_ID (f901) as an XOR checksum over all 12
+      // other fields, so writing just the 3 fields StroyPlant cares about — without first reading
+      // and preserving the other 9 — leaves CONFIG_ID uncomputable/wrong and the whole batch gets
+      // silently rejected. This was the root cause of [[project_autonomous_watering_f903_f904_revert]].
+      const current = await deps.connectionQueue.run(() => deps.provider.readWateringConfig(deviceId));
+      const overrides = buildWateringConfigEnableFields(eligibility.vwcIrrPercent, eligibility.vwcCmdPercent, eligibility.nIrr);
+      const merged = mergeWateringConfigOverrides(current, overrides);
+      const values = buildWateringConfigWriteValues(merged);
+      await deps.connectionQueue.run(() => deps.provider.writeWateringConfig(deviceId, values));
 
       // Never trust a bare ATT write acknowledgment as proof the config was actually retained —
       // this project has direct real-hardware precedent (the f906/f90c manual-trigger
@@ -96,7 +108,14 @@ export async function runWateringConfigPush(deps: WateringConfigPushDeps, device
       // needless BLE write for a device that was never eligible in the first place.
       if (device.autonomousWateringActive) {
         intent = 'disable';
-        await deps.connectionQueue.run(() => deps.provider.writeWateringConfig(deviceId, { mode: 'disable' }));
+        // Same read-modify-write requirement as the enable branch above — only `mode` changes,
+        // the thresholds are deliberately left as-is (matches the real app's own Manuel-mode
+        // behavior: it keeps the last thresholds as advisory values with the algorithm off,
+        // docs/PARROT_BLE_DEEP_DIVE.md section 2 / the manuel capture in
+        // docs/superpowers/specs/2026-08-31-parrot-ble-full-capture-reanalysis.md).
+        const current = await deps.connectionQueue.run(() => deps.provider.readWateringConfig(deviceId));
+        const values = buildWateringConfigWriteValues(mergeWateringConfigOverrides(current, { mode: 0 }));
+        await deps.connectionQueue.run(() => deps.provider.writeWateringConfig(deviceId, values));
         const readBack = await deps.connectionQueue.run(() => deps.provider.readWateringConfig(deviceId));
         if (readBack.algorithmEnabled !== false) {
           throw new Error(`Config disable write did not stick — read back algorithmEnabled=${readBack.algorithmEnabled}, expected false`);
