@@ -109,7 +109,31 @@ le reste de son flux (read-modify-write + checksum + vérification par relecture
 nouveaux champs (`wateringMode` + les 3 `custom*`) — changer de mode déclenche automatiquement un
 push, comme un changement d'horaire le fait déjà aujourd'hui pour le filet de sécurité serveur.
 
-## 4. Vue capteurs en direct
+## 4. Comportements spéciaux par tag d'espèce (orchidées, cactus)
+
+Trouvé en lisant directement le code source décompilé de l'appli Android réelle
+(`/Users/destcom/Documents/PERSO/parrot-pot-debug/analyse/decoded_jadx/`, `strings.xml` et
+`DataManager.java`/`Utility.java`) — pas une supposition. `PlantProfile.tags` (déjà importé,
+bitmask) porte 2 flags pertinents :
+
+- **Bit 256 = orchidée** (33/8070 espèces, dont Phalaenopsis, déjà utilisée sur un vrai appareil de
+  ce projet). **Mécanisme réel confirmé** (`DataManager.java:3033`,
+  `createWateringConfigThread(plantId, isOrchid ? 0 : 1)`) : l'appli force `wateringMode = MANUAL`
+  **automatiquement à l'assignation d'une espèce orchidée**, avec le message *"Attention, l'arrosage
+  automatique n'est pas optimisé pour les orchidées : la soucoupe risque de déborder. Nous vous
+  conseillons de rester en mode Manuel avec une orchidée."* (`watering_autoMode_orchidWarning`).
+  **Reproduit à l'identique** : dans `health.assignPlantProfile` (l'un des call sites de
+  `kickOffWateringConfigPush`), si la nouvelle espèce assignée a `tags & 256` et que le
+  `wateringMode` courant n'est pas déjà `MANUAL`, forcer `Schedule.wateringMode = MANUAL` avant de
+  déclencher le push — modifiable ensuite par l'utilisateur comme n'importe quel autre mode.
+- **Bit 1 = cactus/succulente** (85/8070 espèces). **Pas de forçage automatique dans l'appli
+  officielle** — vérifié dans le code, le flag ne change que le texte du message de statut
+  ("après une période de sécheresse de {x}..." au lieu de "dans {x}..."), jamais le mode. Traité
+  comme convenu précédemment : avertissement affiché dans le sélecteur de mode (section 3) si
+  Perfect Drop ou Plant Sitter est sélectionné pour une espèce taguée cactus/succulente — texte à
+  définir (ex. inspiré de l'esprit du message orchidée), sans forcer de changement.
+
+## 5. Vue capteurs en direct
 
 **Backend** — `subscribeLive()` (`node-ble/index.ts`) ouvre aujourd'hui uniquement le service `fa00`
 (humidité/température/luminosité). Extension : ouvrir en plus le service `f900` (watering) dans la
@@ -123,7 +147,7 @@ en direct — confirmé par la capture de l'appli officielle elle-même (*"non d
 live"*), le gauge conductivité existant dans les "Détails techniques" reste la seule vue pour cette
 donnée, inchangé.
 
-## 5. Unités d'affichage
+## 6. Unités d'affichage
 
 - **Réservoir** : litres uniquement, partout (live, gauges "Détails techniques", pas de double
   affichage %) — `litres = percent / 100 * 2.2`. `format.ts`'s `isTankLow()` (actuellement `< 20`
@@ -139,7 +163,7 @@ donnée, inchangé.
   utilisée sous son mapping actuel "température calibrée"). **Noté comme investigation séparée à
   mener plus tard, hors périmètre de cette feature** — voir la note de suivi ci-dessous.
 - **Fertilisant/conductivité** : reste sur l'échelle actuelle dans les gauges "Détails techniques"
-  (pas dans le live, section 4). Passer à une échelle 0.0–6.0 explicite n'est pas dans ce lot —
+  (pas dans le live, section 5). Passer à une échelle 0.0–6.0 explicite n'est pas dans ce lot —
   pas demandé pour cette itération, à confirmer séparément si souhaité.
 
 ## Suivi hors périmètre
@@ -161,3 +185,7 @@ donnée, inchangé.
   `wateringConfig.test.ts`'s vecteurs réels existants.
 - Vérification mock provider (comme pour le fix checksum du même jour) avant tout test matériel réel
   — le pot 8733 reste le terrain de test dédié une fois la connexion stabilisée.
+- Tests unitaires pour le forçage orchidée (section 4) : nouvelle espèce orchidée assignée sur un
+  appareil en `PERFECT_DROP`/`PLANT_SITTER` → passe à `MANUAL` ; réassignation d'une espèce
+  orchidée alors que `wateringMode` est déjà `MANUAL` → reste `MANUAL`, pas de re-déclenchement
+  inutile ; espèce non-orchidée assignée → `wateringMode` inchangé, aucun forçage.
