@@ -54,7 +54,13 @@ async function main() {
   await new Promise((resolve) => setTimeout(resolve, 5000));
   const afterRestore = await provider.readWateringConfig(DEVICE_ID);
   console.log('read back after restore:', fmt(afterRestore));
-  const restored = (Object.keys(original) as (keyof typeof original)[]).every((key) => afterRestore[key] === original[key]);
+  // Compared against restoreValues (the 12 fields plus their freshly-computed CONFIG_ID), not
+  // original directly — if the device's original state was itself checksum-inconsistent (the
+  // Step 1 warning above), original.configId would legitimately differ from
+  // computeWateringConfigId(original), and comparing against original.configId would report a
+  // false restoration failure even though every real field, and the now-consistent checksum,
+  // actually match.
+  const restored = (Object.keys(restoreValues) as (keyof typeof restoreValues)[]).every((key) => afterRestore[key] === restoreValues[key]);
   console.log(`>>> RESTORED TO ORIGINAL: ${restored} <<<`);
 
   if (!persisted) process.exitCode = 1;

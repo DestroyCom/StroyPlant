@@ -403,6 +403,47 @@ production server:
     only needs to confirm the syncs were queued. Dashboard gained a "Forcer la synchro" button
     (`frontend/src/routes/_authenticated/index.tsx`), separate from round 1's per-device "sync now"
     button on the detail page.
+  - **Round 3 — truncated GATT buffer crashes the whole poll, ~21h of zero readings on all 3 real
+    pots** (2026-08-31, found and fixed on `feature/parrot-device-side-autonomous-watering` right
+    before merge): first flagged as `[[project_a073_sensor_read_crash]]`, a single-device incident
+    deferred by DestCom on 2026-08-31 — checking production again the same day for an unrelated
+    reason found it had grown into all 3 real Parrot Pots going completely silent (`RestartCount=0`,
+    not a crash-loop — the process stayed up, just stopped persisting any `Reading` for any Parrot
+    Pot for ~21h). Root cause confirmed via real `docker logs`: a Live-service float32 characteristic
+    (`fa07`/`fa09`/`fa0b`) occasionally returns a truncated GATT response (`soil=00`, 1 byte instead
+    of 4), and `Buffer.readFloatLE(0)` throws a bare `RangeError` on it — deep inside `readSensors`,
+    only at reading-construction time after ~300 lines of by-then-wasted BLE reads (Plant Dr,
+    watering config, calibration), and mislabeled by the retry wrapper as a connection/
+    `GATT_ERROR=133` failure rather than a decode bug. The same pattern existed, unguarded, inside
+    `subscribeLive`'s notification handlers too — a malformed live sample would throw synchronously
+    inside an `EventEmitter` listener with no error handling at all.
+    - **Fix**: `readFloatLESafe()` (`node-ble/index.ts`) centralizes the length check. `readSensors`
+      now decodes right after the 3 initial reads instead of ~300 lines later — a malformed buffer
+      fails fast with an accurate error, before wasting the rest of the attempt, letting the existing
+      retry/backoff policy handle it as intended. `subscribeLive`'s `onSoil`/`onTemp`/`onLux` catch a
+      malformed notification and skip it instead of throwing — the existing "wait for the first
+      complete triple" gate in `scheduleFlush` already tolerates a missing value correctly, this just
+      extends that same tolerance to an occasional malformed one instead of crashing the session.
+    - **Deliberately not changed**: `ParrotPotReading.soilMoisturePercent`/`temperatureC`/
+      `luminosity` stay non-optional, required fields — widening them to `number | undefined` would
+      ripple into the Health Engine, MQTT publisher, and every frontend gauge for a fix that doesn't
+      need it; a cycle with a malformed buffer still fails that one poll attempt cleanly (as it
+      effectively already did), just without the wasted work or the misleading error label.
+    - **Test coverage added**: `backend/src/providers/node-ble/index.test.ts` (the first test file
+      for this provider — pure buffer-decode logic, no BLE/D-Bus needed) — `backend/package.json`'s
+      `test` script glob widened to include `src/providers/**/*.test.ts`.
+    - **Not yet re-verified against real hardware** — the fix is mock-provider/unit-test verified
+      only (this class of BLE work can't be tested on Mac at all, matches this project's own
+      convention). Next production deploy should confirm the 3 real pots start producing `Reading`
+      rows again and that a "buffer malformed, skipped" log line (rather than a repeat of the
+      21h-silence pattern) is what shows up on the next occurrence, whenever it recurs.
+    - **Still open, unrelated to this fix**: whether `fixSoilMoistureTemperatureSwap.ts`
+      (`backend/scripts/`, the fa07/fa09-swap historical data correction from 2026-08-29) was ever
+      actually run against production — it has zero references anywhere in this file or any other
+      doc, and production's `Reading.soilMoisturePercent` is 100% `NULL` across all 6249 historical
+      Parrot Pot rows, consistent with either the script having run, or with historical moisture
+      simply never having been recorded pre-fix. Not confirmed either way — check before relying on
+      this column's historical data meaning anything.
 - **Device location + indoor/outdoor, and post-deploy triage fixes** (commit `3d5b312`, same day as
   the incident above, not previously documented here) — bundled alongside round 1's match-rule fix:
   - `Device` gained `location` (free text) and `environment` (`INDOOR`/`OUTDOOR`, nullable) columns
