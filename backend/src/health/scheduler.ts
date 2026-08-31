@@ -33,6 +33,10 @@ export interface EffectiveSchedule {
   allowedStartHour: number;
   allowedEndHour: number;
   cooldownHours: number;
+  wateringMode: 'PERFECT_DROP' | 'PLANT_SITTER' | 'MANUAL' | 'CUSTOM';
+  customVwcIrrPercent: number | null;
+  customVwcCmdPercent: number | null;
+  customNIrrDays: number | null;
 }
 
 export function resolveEffectiveSchedule(device: Pick<Device, 'plantProfileId'>, schedule: Schedule | null): EffectiveSchedule {
@@ -41,6 +45,10 @@ export function resolveEffectiveSchedule(device: Pick<Device, 'plantProfileId'>,
     allowedStartHour: schedule?.allowedStartHour ?? DEFAULT_SCHEDULE.allowedStartHour,
     allowedEndHour: schedule?.allowedEndHour ?? DEFAULT_SCHEDULE.allowedEndHour,
     cooldownHours: schedule?.cooldownHours ?? DEFAULT_SCHEDULE.cooldownHours,
+    wateringMode: schedule?.wateringMode ?? 'PERFECT_DROP',
+    customVwcIrrPercent: schedule?.customVwcIrrPercent ?? null,
+    customVwcCmdPercent: schedule?.customVwcCmdPercent ?? null,
+    customNIrrDays: schedule?.customNIrrDays ?? null,
   };
 }
 

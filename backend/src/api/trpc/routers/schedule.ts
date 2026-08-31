@@ -26,6 +26,10 @@ export const scheduleRouter = router({
         allowedStartHour: z.number().int().min(0).max(23),
         allowedEndHour: z.number().int().min(0).max(23),
         cooldownHours: z.number().int().min(1).max(168),
+        wateringMode: z.enum(['PERFECT_DROP', 'PLANT_SITTER', 'MANUAL', 'CUSTOM']),
+        customVwcIrrPercent: z.number().min(0).max(100).nullable(),
+        customVwcCmdPercent: z.number().min(0).max(100).nullable(),
+        customNIrrDays: z.number().int().min(0).max(90).nullable(),
       }),
     )
     .mutation(async ({ ctx, input }) => {
@@ -42,10 +46,16 @@ export const scheduleRouter = router({
         create: { deviceId, ...data },
       });
 
-      // Only push when eligibility actually changed — avoids a needless BLE write on every
-      // unrelated save (e.g. adjusting cooldownHours while already active never re-pushes).
+      // Push whenever the server-fallback active flag changed (unrelated to the device-side mode,
+      // kept for parity with the pre-existing behavior on that flag) OR the device-side watering
+      // mode/custom values changed — adjusting cooldownHours alone still never re-pushes.
       const isActiveNow = resolveEffectiveSchedule(device, schedule).active;
-      if (wasActive !== isActiveNow) {
+      const modeChanged =
+        existingSchedule?.wateringMode !== schedule.wateringMode ||
+        existingSchedule?.customVwcIrrPercent !== schedule.customVwcIrrPercent ||
+        existingSchedule?.customVwcCmdPercent !== schedule.customVwcCmdPercent ||
+        existingSchedule?.customNIrrDays !== schedule.customNIrrDays;
+      if (wasActive !== isActiveNow || modeChanged) {
         kickOffWateringConfigPush({ provider: ctx.provider, connectionQueue: ctx.connectionQueue }, deviceId);
       }
 
