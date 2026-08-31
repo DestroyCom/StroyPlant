@@ -1,3 +1,4 @@
+import type { Prisma } from '@prisma/client';
 import { z } from 'zod';
 import { prisma } from '../../../db/client.js';
 import { listKnownAttributeFilters } from '../../../health/parrotFilterLabels.js';
@@ -25,7 +26,7 @@ export const plantsRouter = router({
     )
     .query(async ({ input }) => {
       const search = input.search?.trim();
-      const and: object[] = [];
+      const and: Prisma.PlantProfileWhereInput[] = [];
 
       if (search) {
         and.push({
@@ -51,7 +52,7 @@ export const plantsRouter = router({
         and.push({ attributes: { some: { category, value: { in: values } } } });
       }
 
-      const where = { AND: and };
+      const where: Prisma.PlantProfileWhereInput = { AND: and };
 
       const [items, total] = await Promise.all([
         prisma.plantProfile.findMany({
