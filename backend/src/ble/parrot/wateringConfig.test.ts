@@ -99,3 +99,87 @@ test('buildWateringConfigEnableFields rounds fractional percentages to the neare
   assert.equal(result.vwcIrrRaw, 320);
   assert.equal(result.vwcCmdRaw, 380);
 });
+
+import { resolveWateringModeThresholds, type WateringModeCustomInputs, type WateringModePlantInputs } from './wateringConfig.js';
+
+function plantInputs(overrides: Partial<WateringModePlantInputs>): WateringModePlantInputs {
+  return {
+    soilMoistureIrrigatePercent: null,
+    soilMoistureCommandPercent: null,
+    soilMoistureIrrigateEcoPercent: null,
+    soilMoistureCommandEcoPercent: null,
+    irrigateCalibrationSampleCount: null,
+    irrigateEcoCalibrationSampleCount: null,
+    ...overrides,
+  };
+}
+
+const NO_CUSTOM: WateringModeCustomInputs = { vwcIrrPercent: null, vwcCmdPercent: null, nIrrDays: null };
+
+test('PERFECT_DROP uses the species classic thresholds', () => {
+  const plant = plantInputs({ soilMoistureIrrigatePercent: 32, soilMoistureCommandPercent: 38, irrigateCalibrationSampleCount: 384 });
+  const result = resolveWateringModeThresholds('PERFECT_DROP', plant, NO_CUSTOM);
+  assert.deepEqual(result, { eligible: true, mode: 1, vwcIrrPercent: 32, vwcCmdPercent: 38, nIrr: 384 });
+});
+
+test('PERFECT_DROP is ineligible with no plant profile', () => {
+  assert.deepEqual(resolveWateringModeThresholds('PERFECT_DROP', null, NO_CUSTOM), { eligible: false });
+});
+
+test('PERFECT_DROP is ineligible when the species has no classic thresholds (WatchFlower-only species)', () => {
+  const plant = plantInputs({});
+  assert.deepEqual(resolveWateringModeThresholds('PERFECT_DROP', plant, NO_CUSTOM), { eligible: false });
+});
+
+test('PERFECT_DROP defaults a missing irrigateCalibrationSampleCount to 0', () => {
+  const plant = plantInputs({ soilMoistureIrrigatePercent: 32, soilMoistureCommandPercent: 38 });
+  const result = resolveWateringModeThresholds('PERFECT_DROP', plant, NO_CUSTOM);
+  assert.deepEqual(result, { eligible: true, mode: 1, vwcIrrPercent: 32, vwcCmdPercent: 38, nIrr: 0 });
+});
+
+test('PLANT_SITTER uses the species eco thresholds when present', () => {
+  const plant = plantInputs({
+    soilMoistureIrrigatePercent: 32,
+    soilMoistureCommandPercent: 38,
+    soilMoistureIrrigateEcoPercent: 26,
+    soilMoistureCommandEcoPercent: 32,
+    irrigateEcoCalibrationSampleCount: 672,
+  });
+  const result = resolveWateringModeThresholds('PLANT_SITTER', plant, NO_CUSTOM);
+  assert.deepEqual(result, { eligible: true, mode: 1, vwcIrrPercent: 26, vwcCmdPercent: 32, nIrr: 672 });
+});
+
+test('PLANT_SITTER falls back to classic-threshold-minus-6-points when eco data is missing', () => {
+  const plant = plantInputs({ soilMoistureIrrigatePercent: 32, soilMoistureCommandPercent: 38, irrigateCalibrationSampleCount: 384 });
+  const result = resolveWateringModeThresholds('PLANT_SITTER', plant, NO_CUSTOM);
+  assert.deepEqual(result, { eligible: true, mode: 1, vwcIrrPercent: 26, vwcCmdPercent: 38, nIrr: 384 });
+});
+
+test('PLANT_SITTER is ineligible with no plant profile', () => {
+  assert.deepEqual(resolveWateringModeThresholds('PLANT_SITTER', null, NO_CUSTOM), { eligible: false });
+});
+
+test('PLANT_SITTER is ineligible when neither eco nor classic thresholds exist', () => {
+  assert.deepEqual(resolveWateringModeThresholds('PLANT_SITTER', plantInputs({}), NO_CUSTOM), { eligible: false });
+});
+
+test('MANUAL is always eligible with no species and provides no threshold overrides', () => {
+  assert.deepEqual(resolveWateringModeThresholds('MANUAL', null, NO_CUSTOM), { eligible: true, mode: 0 });
+});
+
+test('MANUAL is eligible even with a full plant profile — thresholds still not overridden', () => {
+  const plant = plantInputs({ soilMoistureIrrigatePercent: 32, soilMoistureCommandPercent: 38 });
+  assert.deepEqual(resolveWateringModeThresholds('MANUAL', plant, NO_CUSTOM), { eligible: true, mode: 0 });
+});
+
+test('CUSTOM uses the user-entered values, converting nIrrDays to 15-minute units', () => {
+  const custom: WateringModeCustomInputs = { vwcIrrPercent: 30, vwcCmdPercent: 45, nIrrDays: 2 };
+  const result = resolveWateringModeThresholds('CUSTOM', null, custom);
+  assert.deepEqual(result, { eligible: true, mode: 1, vwcIrrPercent: 30, vwcCmdPercent: 45, nIrr: 192 });
+});
+
+test('CUSTOM is ineligible until all 3 values are entered', () => {
+  assert.deepEqual(resolveWateringModeThresholds('CUSTOM', null, { vwcIrrPercent: 30, vwcCmdPercent: null, nIrrDays: 2 }), { eligible: false });
+  assert.deepEqual(resolveWateringModeThresholds('CUSTOM', null, { vwcIrrPercent: null, vwcCmdPercent: 45, nIrrDays: 2 }), { eligible: false });
+  assert.deepEqual(resolveWateringModeThresholds('CUSTOM', null, { vwcIrrPercent: 30, vwcCmdPercent: 45, nIrrDays: null }), { eligible: false });
+});

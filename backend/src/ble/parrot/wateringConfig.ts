@@ -110,3 +110,87 @@ export function buildWateringConfigEnableFields(
     mode: 1,
   };
 }
+
+export type WateringMode = 'PERFECT_DROP' | 'PLANT_SITTER' | 'MANUAL' | 'CUSTOM';
+
+export interface WateringModePlantInputs {
+  soilMoistureIrrigatePercent: number | null;
+  soilMoistureCommandPercent: number | null;
+  soilMoistureIrrigateEcoPercent: number | null;
+  soilMoistureCommandEcoPercent: number | null;
+  irrigateCalibrationSampleCount: number | null;
+  irrigateEcoCalibrationSampleCount: number | null;
+}
+
+export interface WateringModeCustomInputs {
+  vwcIrrPercent: number | null;
+  vwcCmdPercent: number | null;
+  nIrrDays: number | null;
+}
+
+export type WateringModeResolution =
+  | { eligible: false }
+  | { eligible: true; mode: 0 }
+  | { eligible: true; mode: 1; vwcIrrPercent: number; vwcCmdPercent: number; nIrr: number };
+
+// Real capture data (docs/superpowers/specs/2026-08-31-parrot-pot-official-app-parity-design.md
+// section 2): every one of the 8070 Parrot-sourced species has eco thresholds populated today, so
+// this fallback is a dead code path in practice — kept for robustness if a future species import
+// ever lacks eco data. 6 points matches the typical observed gap between a species' classic and
+// eco threshold pairs in the real Parrot data (e.g. 32%→26%, 38%→32%).
+const PLANT_SITTER_FALLBACK_OFFSET_POINTS = 6;
+
+// Maps a chosen watering mode + the assigned species' data (+ user custom input) to the exact
+// values that must be pushed to the device — see wateringConfigPush.ts for how this feeds into
+// mergeWateringConfigOverrides/buildWateringConfigWriteValues. `MANUAL`'s `{ mode: 0 }` shape
+// deliberately excludes threshold fields: the real app leaves the last thresholds on-device
+// untouched in Manual mode (only `mode` changes), never zeroes or guesses them.
+export function resolveWateringModeThresholds(
+  wateringMode: WateringMode,
+  plantProfile: WateringModePlantInputs | null,
+  custom: WateringModeCustomInputs,
+): WateringModeResolution {
+  switch (wateringMode) {
+    case 'PERFECT_DROP': {
+      if (!plantProfile) return { eligible: false };
+      const { soilMoistureIrrigatePercent, soilMoistureCommandPercent, irrigateCalibrationSampleCount } = plantProfile;
+      if (soilMoistureIrrigatePercent == null || soilMoistureCommandPercent == null) return { eligible: false };
+      return {
+        eligible: true,
+        mode: 1,
+        vwcIrrPercent: soilMoistureIrrigatePercent,
+        vwcCmdPercent: soilMoistureCommandPercent,
+        nIrr: irrigateCalibrationSampleCount ?? 0,
+      };
+    }
+    case 'PLANT_SITTER': {
+      if (!plantProfile) return { eligible: false };
+      const { soilMoistureIrrigateEcoPercent, soilMoistureCommandEcoPercent, irrigateEcoCalibrationSampleCount } = plantProfile;
+      if (soilMoistureIrrigateEcoPercent != null && soilMoistureCommandEcoPercent != null) {
+        return {
+          eligible: true,
+          mode: 1,
+          vwcIrrPercent: soilMoistureIrrigateEcoPercent,
+          vwcCmdPercent: soilMoistureCommandEcoPercent,
+          nIrr: irrigateEcoCalibrationSampleCount ?? 0,
+        };
+      }
+      const { soilMoistureIrrigatePercent, soilMoistureCommandPercent, irrigateCalibrationSampleCount } = plantProfile;
+      if (soilMoistureIrrigatePercent == null || soilMoistureCommandPercent == null) return { eligible: false };
+      return {
+        eligible: true,
+        mode: 1,
+        vwcIrrPercent: soilMoistureIrrigatePercent - PLANT_SITTER_FALLBACK_OFFSET_POINTS,
+        vwcCmdPercent: soilMoistureCommandPercent,
+        nIrr: irrigateCalibrationSampleCount ?? 0,
+      };
+    }
+    case 'MANUAL':
+      return { eligible: true, mode: 0 };
+    case 'CUSTOM': {
+      const { vwcIrrPercent, vwcCmdPercent, nIrrDays } = custom;
+      if (vwcIrrPercent == null || vwcCmdPercent == null || nIrrDays == null) return { eligible: false };
+      return { eligible: true, mode: 1, vwcIrrPercent, vwcCmdPercent, nIrr: nIrrDays * 96 };
+    }
+  }
+}
