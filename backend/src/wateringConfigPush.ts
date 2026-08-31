@@ -1,45 +1,38 @@
 // Device-side autonomous watering — the only file that decides eligibility and calls the
-// provider's readWateringConfig/writeWateringConfig. See docs/superpowers/specs/2026-08-30-
-// parrot-device-side-autonomous-watering-design.md.
+// provider's readWateringConfig/writeWateringConfig. See docs/superpowers/specs/2026-08-31-
+// parrot-pot-official-app-parity-design.md.
 import type { Device, PlantProfile, Schedule } from '@prisma/client';
 import type { ConnectionQueue } from './ble/connectionQueue.js';
 import {
-  buildWateringConfigEnableFields,
   buildWateringConfigWriteValues,
   mergeWateringConfigOverrides,
+  resolveWateringModeThresholds,
+  type WateringModeResolution,
 } from './ble/parrot/wateringConfig.js';
 import { prisma } from './db/client.js';
-import { resolveEffectiveSchedule } from './health/scheduler.js';
 import { log } from './logger.js';
 import type { DeviceProvider } from './providers/types.js';
 import { isWateringConfigPushRunning, setWateringConfigPushState } from './wateringConfigPushSession.js';
 
-export type WateringConfigEligibility =
-  | { eligible: false }
-  | { eligible: true; vwcIrrPercent: number; vwcCmdPercent: number; nIrr: number };
+type PlantProfileThresholdFields = Pick<
+  PlantProfile,
+  | 'soilMoistureIrrigatePercent'
+  | 'soilMoistureCommandPercent'
+  | 'soilMoistureIrrigateEcoPercent'
+  | 'soilMoistureCommandEcoPercent'
+  | 'irrigateCalibrationSampleCount'
+  | 'irrigateEcoCalibrationSampleCount'
+>;
 
-// A device is a push candidate exactly when the backend scheduler already considers it a
-// watering candidate (resolveEffectiveSchedule's active flag) AND its assigned species has
-// Parrot-sourced threshold data — the ~3400 WatchFlower-only species have neither field, and stay
-// silently ineligible (not an error, an expected common case). A discriminated union rather than
-// optional fields, so a caller checking `eligibility.eligible` gets the 3 values narrowed as
-// definitely present with no cast needed.
-export function resolveWateringConfigEligibility(
-  device: Pick<Device, 'plantProfileId'>,
-  schedule: Schedule | null,
-  plantProfile: Pick<PlantProfile, 'soilMoistureIrrigatePercent' | 'soilMoistureCommandPercent' | 'irrigateCalibrationSampleCount'> | null,
-): WateringConfigEligibility {
-  if (!resolveEffectiveSchedule(device, schedule).active || !plantProfile) return { eligible: false };
-
-  const { soilMoistureIrrigatePercent, soilMoistureCommandPercent, irrigateCalibrationSampleCount } = plantProfile;
-  if (soilMoistureIrrigatePercent == null || soilMoistureCommandPercent == null) return { eligible: false };
-
-  return {
-    eligible: true,
-    vwcIrrPercent: soilMoistureIrrigatePercent,
-    vwcCmdPercent: soilMoistureCommandPercent,
-    nIrr: irrigateCalibrationSampleCount ?? 0,
-  };
+// Reads whichever mode + (for CUSTOM) hand-entered values the Schedule row currently holds — a
+// missing Schedule row (device never configured) resolves to PERFECT_DROP with no custom inputs,
+// same default as the column itself.
+function resolveWateringMode(device: Pick<Device, 'plantProfileId'>, schedule: Schedule | null, plantProfile: PlantProfileThresholdFields | null): WateringModeResolution {
+  return resolveWateringModeThresholds(schedule?.wateringMode ?? 'PERFECT_DROP', plantProfile, {
+    vwcIrrPercent: schedule?.customVwcIrrPercent ?? null,
+    vwcCmdPercent: schedule?.customVwcCmdPercent ?? null,
+    nIrrDays: schedule?.customNIrrDays ?? null,
+  });
 }
 
 export interface WateringConfigPushDeps {
@@ -67,9 +60,9 @@ export async function runWateringConfigPush(deps: WateringConfigPushDeps, device
     if (!device) throw new Error('Device not found');
     if (device.kind !== 'PARROT_POT') throw new Error('Device-side autonomous watering is Parrot Pot only');
 
-    const eligibility = resolveWateringConfigEligibility(device, device.schedule, device.plantProfile);
+    const resolution = resolveWateringMode(device, device.schedule, device.plantProfile);
 
-    if (eligibility.eligible) {
+    if (resolution.eligible && resolution.mode === 1) {
       intent = 'enable';
       // Read-modify-write (docs/PARROT_BLE_DEEP_DIVE.md section 2, computeWateringConfigId's own
       // header comment): the firmware validates CONFIG_ID (f901) as an XOR checksum over all 12
@@ -77,8 +70,12 @@ export async function runWateringConfigPush(deps: WateringConfigPushDeps, device
       // and preserving the other 9 — leaves CONFIG_ID uncomputable/wrong and the whole batch gets
       // silently rejected. This was the root cause of [[project_autonomous_watering_f903_f904_revert]].
       const current = await deps.connectionQueue.run(() => deps.provider.readWateringConfig(deviceId));
-      const overrides = buildWateringConfigEnableFields(eligibility.vwcIrrPercent, eligibility.vwcCmdPercent, eligibility.nIrr);
-      const merged = mergeWateringConfigOverrides(current, overrides);
+      const merged = mergeWateringConfigOverrides(current, {
+        vwcIrrRaw: Math.round(resolution.vwcIrrPercent * 10),
+        vwcCmdRaw: Math.round(resolution.vwcCmdPercent * 10),
+        nIrr: resolution.nIrr,
+        mode: 1,
+      });
       const values = buildWateringConfigWriteValues(merged);
       await deps.connectionQueue.run(() => deps.provider.writeWateringConfig(deviceId, values));
 
@@ -104,8 +101,10 @@ export async function runWateringConfigPush(deps: WateringConfigPushDeps, device
       });
       setWateringConfigPushState(deviceId, { status: 'success', enabled: true, finishedAt: Date.now() });
     } else {
-      // Only bother writing "disable" if the device might currently be autonomous — avoids a
-      // needless BLE write for a device that was never eligible in the first place.
+      // Either genuinely ineligible (no species / missing thresholds for the chosen mode), or
+      // eligible-but-MANUAL (resolution.mode === 0) — both want the device holding mode=0.
+      // Only bother writing if the device might currently be autonomous — avoids a needless BLE
+      // write for a device that was never eligible/never in an auto mode in the first place.
       if (device.autonomousWateringActive) {
         intent = 'disable';
         // Same read-modify-write requirement as the enable branch above — only `mode` changes,
