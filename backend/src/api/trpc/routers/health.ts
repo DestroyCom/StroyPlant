@@ -76,7 +76,7 @@ export const healthRouter = router({
             update: { wateringMode: 'MANUAL' },
             create: {
               deviceId: device.id,
-              active: existingSchedule?.active ?? device.plantProfileId != null,
+              active: existingSchedule?.active ?? input.plantProfileId != null,
               allowedStartHour: existingSchedule?.allowedStartHour ?? 6,
               allowedEndHour: existingSchedule?.allowedEndHour ?? 20,
               cooldownHours: existingSchedule?.cooldownHours ?? 24,
