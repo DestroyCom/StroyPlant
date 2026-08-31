@@ -65,6 +65,17 @@ model Schedule {
   allowedEndHour   Int // 0-23, local server time, exclusive — wraps past midnight if < allowedStartHour
   cooldownHours    Int // minimum delay since the last watering attempt (any source) before triggering again
 
+  // Device-side autonomous watering mode (docs/superpowers/specs/2026-08-31-parrot-pot-official-
+  // app-parity-design.md) — which of the 4 real Parrot Pot modes this device is set to. Defaults
+  // to PERFECT_DROP to match the pre-existing (single implicit mode) behavior for every device
+  // that already has a Schedule row — this migration changes no on-device behavior by itself.
+  wateringMode WateringMode @default(PERFECT_DROP)
+  // Only meaningful when wateringMode = CUSTOM — the user's own hand-entered thresholds. Null in
+  // every other mode.
+  customVwcIrrPercent Float?
+  customVwcCmdPercent Float?
+  customNIrrDays      Int?
+
   updatedAt DateTime @updatedAt
 }
 
@@ -396,6 +407,13 @@ model RawSensorLog {
 enum TriggerSource {
   MANUAL
   CRON
+}
+
+enum WateringMode {
+  PERFECT_DROP
+  PLANT_SITTER
+  MANUAL
+  CUSTOM
 }
 
 model WateringEvent {
