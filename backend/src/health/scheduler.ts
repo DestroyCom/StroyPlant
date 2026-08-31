@@ -20,11 +20,23 @@ export const DEFAULT_SCHEDULE = {
   cooldownHours: 24,
 };
 
+// Device-side autonomous watering (docs/superpowers/specs/2026-08-30-parrot-device-side-
+// autonomous-watering-design.md) — once a device's pot decides and waters itself, the backend
+// scheduler becomes a degraded safety net rather than the primary decision-maker: a much longer
+// cooldown, and only acting on a huge gap (DestCom's own example: target 40%, actual only 15%),
+// never a marginal one the pot's own algorithm should already be handling.
+const DEGRADED_MIN_COOLDOWN_HOURS = 72;
+const LARGE_DELTA_THRESHOLD_POINTS = 20;
+
 export interface EffectiveSchedule {
   active: boolean;
   allowedStartHour: number;
   allowedEndHour: number;
   cooldownHours: number;
+  wateringMode: 'PERFECT_DROP' | 'PLANT_SITTER' | 'MANUAL' | 'CUSTOM';
+  customVwcIrrPercent: number | null;
+  customVwcCmdPercent: number | null;
+  customNIrrDays: number | null;
 }
 
 export function resolveEffectiveSchedule(device: Pick<Device, 'plantProfileId'>, schedule: Schedule | null): EffectiveSchedule {
@@ -33,6 +45,10 @@ export function resolveEffectiveSchedule(device: Pick<Device, 'plantProfileId'>,
     allowedStartHour: schedule?.allowedStartHour ?? DEFAULT_SCHEDULE.allowedStartHour,
     allowedEndHour: schedule?.allowedEndHour ?? DEFAULT_SCHEDULE.allowedEndHour,
     cooldownHours: schedule?.cooldownHours ?? DEFAULT_SCHEDULE.cooldownHours,
+    wateringMode: schedule?.wateringMode ?? 'PERFECT_DROP',
+    customVwcIrrPercent: schedule?.customVwcIrrPercent ?? null,
+    customVwcCmdPercent: schedule?.customVwcCmdPercent ?? null,
+    customNIrrDays: schedule?.customNIrrDays ?? null,
   };
 }
 
@@ -50,8 +66,11 @@ async function evaluateDevice(device: DeviceForTick, provider: DeviceProvider, c
   const currentHour = new Date().getHours();
   if (!isWithinAllowedWindow(currentHour, effective.allowedStartHour, effective.allowedEndHour)) return;
 
+  const cooldownHours = device.autonomousWateringActive
+    ? Math.max(effective.cooldownHours, DEGRADED_MIN_COOLDOWN_HOURS)
+    : effective.cooldownHours;
   const lastWatering = await prisma.wateringEvent.findFirst({ where: { deviceId: device.id }, orderBy: { timestamp: 'desc' } });
-  if (lastWatering && Date.now() - lastWatering.timestamp.getTime() < effective.cooldownHours * 3600_000) return;
+  if (lastWatering && Date.now() - lastWatering.timestamp.getTime() < cooldownHours * 3600_000) return;
 
   const healthSettings = await getHealthSettings();
   const since = new Date(Date.now() - healthSettings.baselineWindowDays * 24 * 3600_000);
@@ -75,7 +94,18 @@ async function evaluateDevice(device: DeviceForTick, provider: DeviceProvider, c
   // accumulated would risk a spurious real-world watering trigger, not just a wrong badge.
   if (health.status === 'warming_up') return;
 
-  if (health.parameters.soilMoisturePercent?.status !== 'too_low') return;
+  const soilMoisture = health.parameters.soilMoisturePercent;
+  if (device.autonomousWateringActive) {
+    // Falls back to the user's own CUSTOM-mode target when the species has no classic Parrot
+    // threshold — CUSTOM mode is deliberately usable with no species data at all, so requiring
+    // `plantProfile.soilMoistureCommandPercent` here would make the safety net permanently blind
+    // for those devices even though a real target exists on the Schedule row.
+    const target = device.plantProfile?.soilMoistureCommandPercent ?? effective.customVwcCmdPercent;
+    if (soilMoisture?.value == null || target == null) return; // no signal to act on
+    if (soilMoisture.value >= target - LARGE_DELTA_THRESHOLD_POINTS) return; // gap not large enough for the safety net to act
+  } else {
+    if (soilMoisture?.status !== 'too_low') return;
+  }
 
   log({ direction: 'WRITE', label: 'Scheduler triggering auto-watering (soil moisture too low)', deviceId: device.id, result: 'OK' });
   await triggerWatering(device.id, 'CRON', provider, connectionQueue);

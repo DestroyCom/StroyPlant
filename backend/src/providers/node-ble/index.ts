@@ -15,6 +15,7 @@ import {
   WATER_TRIGGER_PAYLOAD,
   WATERING_SERVICE_UUID,
 } from '../../ble/parrot/uuids.js';
+import type { WateringConfigFields, WateringConfigRaw, WateringConfigWriteValues } from '../../ble/parrot/wateringConfig.js';
 import { parseTempHumidityPayload } from '../../ble/xiaomi/parser.js';
 import {
   LYWSD03MMC_NAME,
@@ -94,6 +95,20 @@ async function readRawBestEffort<T>(
 const readU16 = (buf: Buffer) => buf.readUInt16LE(0);
 const readU8 = (buf: Buffer) => buf.readUInt8(0);
 const readU32 = (buf: Buffer) => buf.readUInt32LE(0);
+
+// A truncated/malformed GATT response for the Live service's primary float32 sensors
+// (fa07/fa09/fa0b) has been observed on real hardware — Buffer.readFloatLE(0) throws a bare
+// RangeError on anything shorter than 4 bytes, which previously surfaced two ways: (1) inside
+// readSensors, only at reading-construction time after ~300 lines of now-wasted reads, mislabeled
+// as a connection/GATT_ERROR=133 failure by the retry wrapper catching it; (2) inside
+// subscribeLive's notification handlers, as an uncaught synchronous throw with no error handling
+// at all. Centralizes the length check + a clearly-labeled error both call sites need.
+export function readFloatLESafe(buf: Buffer, label: string): number {
+  if (buf.length < 4) {
+    throw new RangeError(`Malformed ${label} buffer: ${buf.length} byte(s), expected 4 (hex=${buf.toString('hex')})`);
+  }
+  return buf.readFloatLE(0);
+}
 
 // Raw payload only — NO bit-level interpretation as long as the correlation protocol
 // (docs/STROYPLANT_SPEC.md section 7.1) hasn't produced a reproducible result (requires physical
@@ -422,16 +437,22 @@ export function createNodeBleProvider(): DeviceProvider {
             const soilChar = await trackedCharacteristic(sensorService, UUIDS.live.soilMoisturePercent, characteristics);
             const tempChar = await trackedCharacteristic(sensorService, UUIDS.live.temperatureC, characteristics);
             const luxChar = await trackedCharacteristic(sensorService, UUIDS.live.luminosity, characteristics);
-            const soilMoisture = await soilChar.readValue();
-            const temperature = await tempChar.readValue();
-            const luminosity = await luxChar.readValue();
+            const soilMoistureBuf = await soilChar.readValue();
+            const temperatureBuf = await tempChar.readValue();
+            const luminosityBuf = await luxChar.readValue();
             log({
               direction: 'READ',
               label: 'Sensors read',
               deviceId,
               result: 'OK',
-              detail: `soil=${soilMoisture.toString('hex')} temp=${temperature.toString('hex')} lux=${luminosity.toString('hex')}`,
+              detail: `soil=${soilMoistureBuf.toString('hex')} temp=${temperatureBuf.toString('hex')} lux=${luminosityBuf.toString('hex')}`,
             });
+            // Decoded immediately, not deferred to the reading construction ~300 lines below —
+            // a malformed buffer fails fast, before wasting the rest of this attempt's BLE reads,
+            // with an accurate error label instead of being misattributed to a connection failure.
+            const soilMoisturePercent = readFloatLESafe(soilMoistureBuf, 'soilMoisturePercent (fa07)');
+            const temperatureC = readFloatLESafe(temperatureBuf, 'temperatureC (fa09)');
+            const luminosity = readFloatLESafe(luminosityBuf, 'luminosity (fa0b)');
 
             let waterTankLevelPercent: number | undefined;
             try {
@@ -787,9 +808,9 @@ export function createNodeBleProvider(): DeviceProvider {
             const reading: SensorReading = {
               kind: 'PARROT_POT',
               data: {
-                soilMoisturePercent: soilMoisture.readFloatLE(0),
-                temperatureC: temperature.readFloatLE(0),
-                luminosity: luminosity.readFloatLE(0),
+                soilMoisturePercent,
+                temperatureC,
+                luminosity,
                 waterTankLevelPercent,
                 isDrySoil: statusFlags?.isDrySoil,
                 isWetSoil: statusFlags?.isWetSoil,
@@ -1000,16 +1021,47 @@ export function createNodeBleProvider(): DeviceProvider {
                 }, LIVE_SAMPLE_DEBOUNCE_MS);
               };
 
+              // A malformed/truncated notification buffer must never throw synchronously inside an
+              // EventEmitter listener (uncaught here, unlike the promise-based onSample path below)
+              // — skip this one notification and keep waiting for the next, rather than crashing
+              // the whole live session over one bad sample.
               const onSoil = (buf: Buffer) => {
-                pending.soilMoisturePercent = buf.readFloatLE(0);
+                try {
+                  pending.soilMoisturePercent = readFloatLESafe(buf, 'soilMoisturePercent (fa07)');
+                } catch (error) {
+                  log({
+                    direction: 'READ',
+                    label: 'Live soil sample malformed, skipped',
+                    deviceId,
+                    result: 'ERROR',
+                    detail: String(error),
+                  });
+                  return;
+                }
                 scheduleFlush();
               };
               const onTemp = (buf: Buffer) => {
-                pending.temperatureC = buf.readFloatLE(0);
+                try {
+                  pending.temperatureC = readFloatLESafe(buf, 'temperatureC (fa09)');
+                } catch (error) {
+                  log({
+                    direction: 'READ',
+                    label: 'Live temp sample malformed, skipped',
+                    deviceId,
+                    result: 'ERROR',
+                    detail: String(error),
+                  });
+                  return;
+                }
                 scheduleFlush();
               };
               const onLux = (buf: Buffer) => {
-                pending.luminosity = buf.readFloatLE(0);
+                try {
+                  pending.luminosity = readFloatLESafe(buf, 'luminosity (fa0b)');
+                } catch (error) {
+                  log({ direction: 'READ', label: 'Live lux sample malformed, skipped', deviceId, result: 'ERROR', detail: String(error) });
+                  return;
+                }
                 scheduleFlush();
               };
 
@@ -1171,6 +1223,118 @@ export function createNodeBleProvider(): DeviceProvider {
             // already dropped off, that call can throw and .catch() below only swallows it at our
             // level, leaving the match rule registered. releaseDbusListeners is an idempotent
             // backstop, safe to call whether or not disconnect()'s own cleanup already ran.
+            await withTimeout(device.disconnect(), CONNECT_TIMEOUT_MS, 'disconnect').catch(() => {});
+            releaseDbusListeners(device);
+          }
+        },
+      });
+    },
+
+    async readWateringConfig(deviceId: string): Promise<WateringConfigRaw> {
+      return withGattRetry({
+        label: 'readWateringConfig',
+        deviceId,
+        isGattError133,
+        restartAdapter,
+        attempt: async () => {
+          const device = await connectDevice(deviceId);
+          const characteristics: GattCharacteristic[] = [];
+          try {
+            const gatt = await withTimeout(device.gatt(), CONNECT_TIMEOUT_MS, 'gatt');
+            const wateringService = await gatt.getPrimaryService(WATERING_SERVICE_UUID);
+            const readU16Value = async (uuid: string) =>
+              (await (await trackedCharacteristic(wateringService, uuid, characteristics)).readValue()).readUInt16LE(0);
+            const readU32Value = async (uuid: string) =>
+              (await (await trackedCharacteristic(wateringService, uuid, characteristics)).readValue()).readUInt32LE(0);
+            const readU8Value = async (uuid: string) =>
+              (await (await trackedCharacteristic(wateringService, uuid, characteristics)).readValue()).readUInt8(0);
+
+            // Full 13-field read — see wateringConfig.ts: writing back a correct CONFIG_ID (f901)
+            // requires knowing the current state of every other field first (read-modify-write,
+            // docs/PARROT_BLE_DEEP_DIVE.md section 2), not just the 3 this project changes.
+            const fields: WateringConfigFields = {
+              plantId: await readU16Value(UUIDS.watering.plantId),
+              vwcIrrRaw: await readU16Value(UUIDS.watering.vwcIrr),
+              vwcCmdRaw: await readU16Value(UUIDS.watering.vwcCmd),
+              nIrr: await readU16Value(UUIDS.watering.nIrr),
+              vwcIrrEcoRaw: await readU16Value(UUIDS.watering.vwcIrrEco),
+              vwcCmdEcoRaw: await readU16Value(UUIDS.watering.vwcCmdEco),
+              nIrrEco: await readU16Value(UUIDS.watering.nIrrEco),
+              timeSlotStart: await readU16Value(UUIDS.watering.timeSlotStart),
+              timeSlotDuration: await readU16Value(UUIDS.watering.timeSlotDurr),
+              vacationStart: await readU32Value(UUIDS.watering.vacationStart),
+              vacationEnd: await readU32Value(UUIDS.watering.vacationEnd),
+              mode: await readU8Value(UUIDS.watering.mode),
+            };
+            const configId = await readU16Value(UUIDS.watering.configId);
+
+            const config: WateringConfigRaw = { ...fields, configId, algorithmEnabled: fields.mode === 1 };
+            log({ direction: 'READ', label: 'Watering config read', deviceId, result: 'OK', detail: JSON.stringify(config) });
+            return config;
+          } finally {
+            for (const characteristic of characteristics) releaseDbusListeners(characteristic);
+            await withTimeout(device.disconnect(), CONNECT_TIMEOUT_MS, 'disconnect').catch(() => {});
+            releaseDbusListeners(device);
+          }
+        },
+      });
+    },
+
+    async writeWateringConfig(deviceId: string, values: WateringConfigWriteValues): Promise<void> {
+      await withGattRetry({
+        label: 'writeWateringConfig',
+        deviceId,
+        isGattError133,
+        restartAdapter,
+        attempt: async () => {
+          const device = await connectDevice(deviceId);
+          const characteristics: GattCharacteristic[] = [];
+          try {
+            const gatt = await withTimeout(device.gatt(), CONNECT_TIMEOUT_MS, 'gatt');
+            const wateringService = await gatt.getPrimaryService(WATERING_SERVICE_UUID);
+
+            const writeU16 = async (uuid: string, value: number, label: string) => {
+              const characteristic = await trackedCharacteristic(wateringService, uuid, characteristics);
+              const payload = Buffer.alloc(2);
+              payload.writeUInt16LE(value & 0xffff, 0);
+              await characteristic.writeValueWithResponse(payload);
+              log({ direction: 'WRITE', label, uuid, deviceId, payloadHex: payload.toString('hex'), result: 'OK' });
+            };
+            const writeU32 = async (uuid: string, value: number, label: string) => {
+              const characteristic = await trackedCharacteristic(wateringService, uuid, characteristics);
+              const payload = Buffer.alloc(4);
+              payload.writeUInt32LE(value >>> 0, 0);
+              await characteristic.writeValueWithResponse(payload);
+              log({ direction: 'WRITE', label, uuid, deviceId, payloadHex: payload.toString('hex'), result: 'OK' });
+            };
+            const writeU8 = async (uuid: string, value: number, label: string) => {
+              const characteristic = await trackedCharacteristic(wateringService, uuid, characteristics);
+              const payload = Buffer.from([value & 0xff]);
+              await characteristic.writeValueWithResponse(payload);
+              log({ direction: 'WRITE', label, uuid, deviceId, payloadHex: payload.toString('hex'), result: 'OK' });
+            };
+
+            // Exact order from WriteWateringConfig.java (docs/PARROT_BLE_DEEP_DIVE.md section 2),
+            // CONFIG_ID (f901, the XOR checksum) written LAST — the device only commits the batch
+            // once it can recompute this checksum from the 12 fields it just received and it
+            // matches. `values` is already the fully-resolved read-modify-write result (see
+            // wateringConfigPush.ts) — this function just encodes and writes it in order, staying
+            // "dumb" like every other provider write path in this project.
+            await writeU16(UUIDS.watering.plantId, values.plantId, 'Watering config PLANT_ID');
+            await writeU16(UUIDS.watering.vwcIrr, values.vwcIrrRaw, 'Watering config VWC_IRR');
+            await writeU16(UUIDS.watering.vwcCmd, values.vwcCmdRaw, 'Watering config VWC_CMD');
+            await writeU16(UUIDS.watering.nIrr, values.nIrr, 'Watering config N_IRR');
+            await writeU16(UUIDS.watering.vwcIrrEco, values.vwcIrrEcoRaw, 'Watering config VWC_IRR_ECO');
+            await writeU16(UUIDS.watering.vwcCmdEco, values.vwcCmdEcoRaw, 'Watering config VWC_CMD_ECO');
+            await writeU16(UUIDS.watering.nIrrEco, values.nIrrEco, 'Watering config N_IRR_ECO');
+            await writeU16(UUIDS.watering.timeSlotStart, values.timeSlotStart, 'Watering config TIME_SLOT_START');
+            await writeU16(UUIDS.watering.timeSlotDurr, values.timeSlotDuration, 'Watering config TIME_SLOT_DURATION');
+            await writeU32(UUIDS.watering.vacationStart, values.vacationStart, 'Watering config VACATION_START');
+            await writeU32(UUIDS.watering.vacationEnd, values.vacationEnd, 'Watering config VACATION_END');
+            await writeU8(UUIDS.watering.mode, values.mode, 'Watering config MODE');
+            await writeU16(UUIDS.watering.configId, values.configId, 'Watering config CONFIG_ID (commit)');
+          } finally {
+            for (const characteristic of characteristics) releaseDbusListeners(characteristic);
             await withTimeout(device.disconnect(), CONNECT_TIMEOUT_MS, 'disconnect').catch(() => {});
             releaseDbusListeners(device);
           }

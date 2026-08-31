@@ -69,6 +69,13 @@ export const UUIDS = {
     // available this session. Do not switch to f90c without resolving this first.
     trigger: '39e1f906-84a8-11e2-afba-0002a5d5c51b', // write [0x08, 0x00] (uint16 LE), write-with-response
     waterTankLevel: '39e1f907-84a8-11e2-afba-0002a5d5c51b', // notify, uint8 %
+    // XOR-16 validation checksum over the other 12 watering-service characteristics, written LAST
+    // — see computeWateringConfigId() (wateringConfig.ts) and
+    // docs/superpowers/specs/2026-08-31-parrot-ble-full-capture-reanalysis.md. Confirmed from the
+    // decompiled official app (docs/PARROT_BLE_DEEP_DIVE.md section 2,
+    // `PlantConfig.getWateringConfigId()`), same pattern as `plantDr.configId` below.
+    configId: '39e1f901-84a8-11e2-afba-0002a5d5c51b',
+    plantId: '39e1f902-84a8-11e2-afba-0002a5d5c51b', // uint16, read-modify-write, meaning unconfirmed
     vwcIrr: '39e1f903-84a8-11e2-afba-0002a5d5c51b',
     vwcCmd: '39e1f904-84a8-11e2-afba-0002a5d5c51b',
     nIrr: '39e1f905-84a8-11e2-afba-0002a5d5c51b',

@@ -53,6 +53,9 @@ function CalibrationPage() {
 
   const calibrateMutation = useMutation(
     trpc.plantDr.calibrateWet.mutationOptions({
+      onSuccess: () => {
+        void queryClient.invalidateQueries({ queryKey: trpc.plantDr.calibrationRunStatus.queryKey({ deviceId }) });
+      },
       onError: (error) => {
         toast.error('Échec du lancement de la calibration', { description: error.message });
       },

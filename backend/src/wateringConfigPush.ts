@@ -1,0 +1,158 @@
+// Device-side autonomous watering — the only file that decides eligibility and calls the
+// provider's readWateringConfig/writeWateringConfig. See docs/superpowers/specs/2026-08-31-
+// parrot-pot-official-app-parity-design.md.
+import type { PlantProfile, Schedule } from '@prisma/client';
+import type { ConnectionQueue } from './ble/connectionQueue.js';
+import {
+  buildWateringConfigWriteValues,
+  mergeWateringConfigOverrides,
+  resolveWateringModeThresholds,
+  type WateringModeResolution,
+} from './ble/parrot/wateringConfig.js';
+import { prisma } from './db/client.js';
+import { log } from './logger.js';
+import type { DeviceProvider } from './providers/types.js';
+import { isWateringConfigPushRunning, setWateringConfigPushState } from './wateringConfigPushSession.js';
+
+type PlantProfileThresholdFields = Pick<
+  PlantProfile,
+  | 'soilMoistureIrrigatePercent'
+  | 'soilMoistureCommandPercent'
+  | 'soilMoistureIrrigateEcoPercent'
+  | 'soilMoistureCommandEcoPercent'
+  | 'irrigateCalibrationSampleCount'
+  | 'irrigateEcoCalibrationSampleCount'
+>;
+
+// Reads whichever mode + (for CUSTOM) hand-entered values the Schedule row currently holds — a
+// missing Schedule row (device never configured) resolves to PERFECT_DROP with no custom inputs,
+// same default as the column itself.
+function resolveWateringMode(schedule: Schedule | null, plantProfile: PlantProfileThresholdFields | null): WateringModeResolution {
+  return resolveWateringModeThresholds(schedule?.wateringMode ?? 'PERFECT_DROP', plantProfile, {
+    vwcIrrPercent: schedule?.customVwcIrrPercent ?? null,
+    vwcCmdPercent: schedule?.customVwcCmdPercent ?? null,
+    nIrrDays: schedule?.customNIrrDays ?? null,
+  });
+}
+
+export interface WateringConfigPushDeps {
+  provider: DeviceProvider;
+  connectionQueue: ConnectionQueue;
+}
+
+// Self-contained: always re-fetches the device fresh from the DB rather than requiring callers to
+// pass an already-loaded object with the right relations — this is shared by 3 call sites
+// (assignPlantProfile, schedule.upsert, the manual wateringConfig.push mutation) which don't all
+// have the same relations loaded already.
+export async function runWateringConfigPush(deps: WateringConfigPushDeps, deviceId: string): Promise<void> {
+  setWateringConfigPushState(deviceId, { status: 'running', startedAt: Date.now() });
+  // Tracks which BLE operation was in flight when/if the catch block below fires — a failed
+  // 'enable' must never leave the flag optimistically true (unchanged behavior), but a failed
+  // 'disable' must NOT force the flag to false either: the on-device state is genuinely unknown at
+  // that point (the write may have partially applied, or the pot may still be running its own
+  // algorithm), and claiming false would wrongly route health/scheduler.ts's degraded safety-net
+  // check back onto the more aggressive primary trigger path while the device could still be
+  // autonomous. Found via a real hardware test (2026-08-30) where 4 consecutive disable attempts
+  // failed with connection errors, not a value mismatch.
+  let intent: 'enable' | 'disable' | 'none' = 'none';
+  try {
+    const device = await prisma.device.findUnique({ where: { id: deviceId }, include: { plantProfile: true, schedule: true } });
+    if (!device) throw new Error('Device not found');
+    if (device.kind !== 'PARROT_POT') throw new Error('Device-side autonomous watering is Parrot Pot only');
+
+    const resolution = resolveWateringMode(device.schedule, device.plantProfile);
+
+    if (resolution.eligible && resolution.mode === 1) {
+      intent = 'enable';
+      // Read-modify-write (docs/PARROT_BLE_DEEP_DIVE.md section 2, computeWateringConfigId's own
+      // header comment): the firmware validates CONFIG_ID (f901) as an XOR checksum over all 12
+      // other fields, so writing just the 3 fields StroyPlant cares about — without first reading
+      // and preserving the other 9 — leaves CONFIG_ID uncomputable/wrong and the whole batch gets
+      // silently rejected. This was the root cause of [[project_autonomous_watering_f903_f904_revert]].
+      const current = await deps.connectionQueue.run(() => deps.provider.readWateringConfig(deviceId));
+      const merged = mergeWateringConfigOverrides(current, {
+        vwcIrrRaw: Math.round(resolution.vwcIrrPercent * 10),
+        vwcCmdRaw: Math.round(resolution.vwcCmdPercent * 10),
+        nIrr: resolution.nIrr,
+        mode: 1,
+      });
+      const values = buildWateringConfigWriteValues(merged);
+      await deps.connectionQueue.run(() => deps.provider.writeWateringConfig(deviceId, values));
+
+      // Never trust a bare ATT write acknowledgment as proof the config was actually retained —
+      // this project has direct real-hardware precedent (the f906/f90c manual-trigger
+      // investigation) of a write producing a normal GATT acknowledgment with zero physical
+      // effect. Reading back and comparing is the only way to know the values actually landed.
+      const readBack = await deps.connectionQueue.run(() => deps.provider.readWateringConfig(deviceId));
+      const matches =
+        readBack.vwcIrrRaw === values.vwcIrrRaw &&
+        readBack.vwcCmdRaw === values.vwcCmdRaw &&
+        readBack.nIrr === values.nIrr &&
+        readBack.algorithmEnabled === true;
+      if (!matches) {
+        throw new Error(
+          `Config push write did not stick — read back ${JSON.stringify(readBack)}, expected vwcIrrRaw=${values.vwcIrrRaw} vwcCmdRaw=${values.vwcCmdRaw} nIrr=${values.nIrr} algorithmEnabled=true`,
+        );
+      }
+
+      await prisma.device.update({
+        where: { id: deviceId },
+        data: { autonomousWateringActive: true, autonomousWateringUpdatedAt: new Date() },
+      });
+      setWateringConfigPushState(deviceId, { status: 'success', enabled: true, finishedAt: Date.now() });
+    } else {
+      // Either genuinely ineligible (no species / missing thresholds for the chosen mode), or
+      // eligible-but-MANUAL (resolution.mode === 0) — both want the device holding mode=0.
+      // Only bother writing if the device might currently be autonomous — avoids a needless BLE
+      // write for a device that was never eligible/never in an auto mode in the first place.
+      if (device.autonomousWateringActive) {
+        intent = 'disable';
+        // Same read-modify-write requirement as the enable branch above — only `mode` changes,
+        // the thresholds are deliberately left as-is (matches the real app's own Manuel-mode
+        // behavior: it keeps the last thresholds as advisory values with the algorithm off,
+        // docs/PARROT_BLE_DEEP_DIVE.md section 2 / the manuel capture in
+        // docs/superpowers/specs/2026-08-31-parrot-ble-full-capture-reanalysis.md).
+        const current = await deps.connectionQueue.run(() => deps.provider.readWateringConfig(deviceId));
+        const values = buildWateringConfigWriteValues(mergeWateringConfigOverrides(current, { mode: 0 }));
+        await deps.connectionQueue.run(() => deps.provider.writeWateringConfig(deviceId, values));
+        const readBack = await deps.connectionQueue.run(() => deps.provider.readWateringConfig(deviceId));
+        if (readBack.algorithmEnabled !== false) {
+          throw new Error(`Config disable write did not stick — read back algorithmEnabled=${readBack.algorithmEnabled}, expected false`);
+        }
+      }
+      await prisma.device.update({
+        where: { id: deviceId },
+        data: { autonomousWateringActive: false, autonomousWateringUpdatedAt: new Date() },
+      });
+      setWateringConfigPushState(deviceId, { status: 'success', enabled: false, finishedAt: Date.now() });
+    }
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    log({ direction: 'WRITE', label: 'Watering config push failed', deviceId, result: 'ERROR', detail });
+    if (intent === 'enable') {
+      // A failed enable attempt must never leave the flag optimistically true — matches the
+      // project-wide "never trust an unconfirmed write" rule.
+      await prisma.device.update({ where: { id: deviceId }, data: { autonomousWateringActive: false } }).catch(() => {});
+    }
+    // A failed disable, OR a failure before either branch was even reached (intent still 'none' —
+    // e.g. the initial findUnique itself throwing), leaves the flag untouched on purpose: neither
+    // case is evidence the device stopped being autonomous. The on-device state is genuinely
+    // unknown (the write may have partially applied, or the pot's own algorithm could still be
+    // running), so scheduler.ts should keep treating this device as autonomous — and stay in the
+    // more conservative degraded safety net — until a disable actually confirms. A transient
+    // failure that never even reached a BLE call (intent === 'none') must not silently discard an
+    // already-confirmed `true` state either — that would be a metadata hiccup, not new evidence.
+    await prisma.syncEvent.create({ data: { deviceId, source: 'CONFIG_PUSH', errorDetail: detail } }).catch(() => {});
+    setWateringConfigPushState(deviceId, { status: 'error', message: detail, finishedAt: Date.now() });
+  }
+}
+
+// Fire-and-forget entry point for the two automatic call sites (assignPlantProfile,
+// schedule.upsert) — silently skips if a push is already running for this device (a rare race
+// between two rapid saves), never surfaces a CONFLICT to a mutation whose primary purpose isn't
+// this push. The manual wateringConfig.push tRPC mutation calls runWateringConfigPush directly
+// instead, after throwing its own CONFLICT synchronously (see Task 5's router).
+export function kickOffWateringConfigPush(deps: WateringConfigPushDeps, deviceId: string): void {
+  if (isWateringConfigPushRunning(deviceId)) return;
+  void runWateringConfigPush(deps, deviceId);
+}

@@ -23,27 +23,27 @@ assistant's memory file for this investigation; this document is the settled con
   properties and with the code's own existing (but only-ever-read) `waterTankLevel` label for a
   neighboring characteristic. `f906` is very likely a status/level characteristic StroyPlant
   happens to also be able to write to, not a second official trigger path.
-- **Update, 2026-08-30 — f90c switch attempted and reverted, real mystery found.** Confirmed 7+
-  times via real sniffing (including 3 consecutive repeats and one dedicated verification capture)
-  that the app's "ARROSAGE" button always writes exactly `[0x0a, 0x00]` to `f90c` and nothing else.
-  The code was changed to use `f90c`/`[0x0a, 0x00]` and empirically tested on real hardware — but
-  replaying the exact same write from a bare standalone script produced an ATT-level write
-  acknowledgment with **no physical watering**, reproducibly, across every variant tried: via
-  `node-ble`/BlueZ on the real production server, and via `@abandonware/noble`/CoreBluetooth on the
-  Mac (matching the app's own stack) — the latter tested with the official app fully closed and
-  StroyPlant's production container stopped, to rule out any connection contention. The write
-  genuinely reaches the device (confirmed via a dedicated verification capture showing my script's
-  connection/discovery/write sequence directly) but the pump never activates. **Change reverted —
-  `trigger` stays `f906`/`[0x08, 0x00]`**, the mechanism already confirmed working in production for
-  months, despite its own paradoxical GATT declaration (Read+Notify only, no Write bit). Leading
-  hypothesis, unverified: the device may require an actual BLE bond/pairing or an app-specific
-  authentication handshake before honoring a write to `f90c` specifically, as a safety measure
-  against an arbitrary nearby BLE client remotely triggering a real watering. Not resolvable with
-  the tooling available this session (no way found to inspect BLE bond state for a generic GATT
-  peripheral on macOS). **Do not attempt this switch again without a real plan to test the
-  bonding/authentication hypothesis specifically** — this cost 4 real watering-trigger attempts
-  across 2 real pots for no resolved answer, and repeating the same trial-and-error will just cost
-  more of the same.
+- **Update, 2026-08-30 — f90c switch attempted and reverted based on a flawed capture reading;
+  RESOLVED 2026-08-30 (later the same day) via a rigorous byte-level re-analysis — there was no
+  bonding/authentication mystery, `trigger` was correct all along.** The original conclusion that
+  the app's "ARROSAGE" button writes to `f90c` was reached by eyeballing PacketLogger's decoded
+  view, not by verifying the raw GATT handle→UUID map from the wire. A later re-derivation (`tshark
+  -V`, reading the literal `UUID:` bytes of every Read By Type Response in `00_baseline_connect.pklg`
+  rather than Wireshark's bracketed/cached name annotations, which turned out to be stale in
+  places) found the real map: **handle 0x0089 = `39e1f906`** (properties: Write only), and
+  **handle 0x008b = `39e1f907`** (properties: Read+Notify) — the app's trigger write (`0x0a00`)
+  in `01_watering_trigger.pklg` targets **handle 0x0089**, i.e. **`f906`, not `f90c`**. The
+  Read+Notify-only characteristic showing the 100→~90 drain pattern during watering is **`f907`**
+  (already correctly labeled `waterTankLevel` in `uuids.ts`), not `f906`. The two were swapped in
+  the original manual analysis. **StroyPlant's existing code (`trigger: f906`) was correct from the
+  start** — there is no bonding/authentication requirement, no paradoxical GATT declaration (f906's
+  real declared properties are plain Write, matching how the code already writes to it), and no
+  reason to ever revisit `f90c`, which really is just an inert field written `0` in every real
+  config batch captured. The 4 failed real watering-trigger attempts against `f90c` earlier this
+  same day are now explained: they were testing the wrong characteristic, not probing a real
+  firmware security feature. See the corrected `f900` field table in section 4 below for the full
+  re-derived map, which also surfaced a second, more consequential correction (the `f90d`/`f908`
+  mixup affecting the device-side-autonomous-watering work).
 - The BLE **write acknowledgment itself is near-instant** (~59ms, measured directly). The
   *physical* watering/moisture-settling process takes a comparable ~20-25s regardless of which
   characteristic triggers it. The most likely explanation for the perceived speed difference:
@@ -144,17 +144,60 @@ characteristic. Not fixed as part of this investigation — flagged for a separa
 
 All 4 modes write the same batch of fields in the `f900` "watering config" service; only a few
 fields actually change per mode. Confirmed by diffing real captures of all 4 mode switches plus a
-user-edited Custom save:
+user-edited Custom save.
+
+**Correction, 2026-08-30 (byte-level re-analysis)**: the table below was originally built from
+PacketLogger's decoded field view, which — as the f906/f90c correction above found the hard way —
+can misattribute a value to the wrong handle. Re-derived via `tshark -V` against the verified
+handle→UUID map (see the f906/f90c correction). Two real corrections came out of this:
+
+1. **`f90e`/`f90f` were swapped**: the constant `1440` (24h in minutes) is actually written to
+   `f90f` (`timeSlotDurr` in code), not `f90e` (`timeSlotStart`) — `f90e` is constant `0` in every
+   capture instead. `timeSlotStart=0`/`timeSlotDurr=1440` reads as "start at minute 0, duration
+   1440 minutes" — i.e. "no restriction, all day" — actually a more coherent story than the
+   original "both hold 1440" reading.
+2. **The "auto-algorithm enable flag, 1/0 pattern" is `f90d` (`mode` in code), not `f908`
+   (`pumpDutyCycle` in code).** `f908` is **never written by the app in any of the 5 real captures
+   analyzed** (4 mode switches + the species-reassignment capture from finding #2) — its role
+   remains as unconfirmed as `f912`'s. `f90d`, meanwhile, is `1` in every single capture except
+   Manuel (`0`) — Perfect Drop, Plant Sitter, Custom, **and both species-reassignment batches**.
+   This is a significant, actionable correction: the already-implemented device-side-autonomous-
+   watering feature (`docs/superpowers/specs/2026-08-30-parrot-device-side-autonomous-watering-
+   design.md`) writes its "enable" flag to `f908`/`pumpDutyCycle` — a characteristic the real app
+   never touches — instead of `f90d`/`mode`, which is the app's actual enable/commit signal. The
+   design's decision to exclude `f90d` from the writable scope was based on the original (wrong)
+   reading of it as "always 0, unconfirmed role" — it is not always 0, and its role is now
+   reasonably well confirmed. See the "Real hardware test" section of
+   `.superpowers/sdd/2026-08-30-parrot-device-side-autonomous-watering-plan/progress.md` for the
+   context this correction feeds into (f903/f904 silently not sticking on real hardware) — this is
+   flagged there as the leading hypothesis to test next, not yet verified on real hardware.
+
+Also note: no field in this table encodes a distinct "mode identity" (Perfect Drop vs. Plant Sitter
+vs. Custom) — all three write `f90d=1` identically and differ only in their `f903`/`f904`/`f905`
+threshold values. The 4-mode UI is a client-side threshold-preset concept over one underlying
+binary protocol signal (`f90d`), not a device-side mode enum.
+
+**SUPERSEDED 2026-08-31** — the sentence originally here ("which is good news for StroyPlant's
+existing design choice to expose a binary autonomous-on/off concept rather than a 4-mode picker...")
+described a design choice that no longer holds: StroyPlant now has exactly the 4-mode picker this
+paragraph argued against building (`docs/superpowers/specs/2026-08-31-parrot-pot-official-app-
+parity-design.md`, `frontend/src/components/autonomous-watering-section.tsx`), backed by the same
+"client-side threshold-preset over one binary `f90d` signal" mechanism this section correctly
+describes. The technical observation above (one binary protocol signal under 4 UI presets) remains
+accurate — only the architectural recommendation built on top of it changed.
 
 | Field | Role | Evidence |
 |---|---|---|
 | `f903` (`vwcIrr` in code) | Trigger threshold, `% × 10` | Matched the app's own displayed number exactly in 3/3 tests (32.0, 26.0, 30.0) |
 | `f904` (`vwcCmd` in code) | Target/consigne, `% × 10` | Matched exactly in 3/3 tests (38.0, 32.0, 40.0) |
 | `f905` (`nIrr` in code) | Likely the "délai d'arrosage" dry-delay, in **15-minute units** | `48 × 15min = 12h` exactly matched a user-set 12h delay; also plausibly explains the `0/384/672` "n_irr" values already flagged as an anomaly during the plant-DB import (384×15min=4 days, 672×15min=7 days — species-specific *delay presets*, not calibration sample counts as first assumed there) |
-| `f908` (`pumpDutyCycle` in code, likely mislabeled) | Auto-algorithm enable flag (uint8) | `1` for Perfect Drop/Plant Sitter/Custom, `0` for Manuel — a duty-cycle percentage wouldn't plausibly stay pinned to exactly 0 or 1 |
-| `f90e`/`f90f` (`timeSlotStart`/`timeSlotDurr` in code) | Allowed watering hours window | Constant (1440 / 0) across every mode tested — none of the 4 modes' UI exposed an hours-restriction control, consistent with these fields just holding "no restriction" defaults, not yet directly exercised |
-| `f901`, `f902`, `f90a`/`b`/`c`/`d` | Unconfirmed | Vary without a clean formula found (`f901`), or stayed constant/zero in every capture (`f902`, and the `eco`/`mode` fields) — none of the 4 mode-switch screens exercised them |
-| `f912` (`algorithmStatus` in code) | Unconfirmed, separate from `f908` | Never touched by any of these captures at all — the pre-existing "values 1-6 unconfirmed" open question from earlier project history is untouched by this investigation |
+| `f90d` (`mode` in code) | **Auto-algorithm enable flag (uint8)** — corrected 2026-08-30, was previously (wrongly) attributed to `f908` | `1` for Perfect Drop/Plant Sitter/Custom/species-reassignment, `0` for Manuel — 5/5 real captures, re-verified via raw byte decode |
+| `f90f` (`timeSlotDurr` in code) | Allowed watering hours window duration | Constant `1440` (24h in minutes) across every mode tested — corrected from `f90e` (see above) |
+| `f90e` (`timeSlotStart` in code) | Allowed watering hours window start | Constant `0` across every mode tested — corrected from holding `1440` (see above) |
+| `f901` | **CONFIRMED 2026-08-31, superseding "vary without a clean formula found" above** — XOR-16 validation checksum over the other 12 characteristics of this service, written last | 9/9 real capture vectors matched exactly (`docs/superpowers/specs/2026-08-31-parrot-watering-config-checksum-fix.md`), implemented in `wateringConfig.ts`'s `computeWateringConfigId`, confirmed live on real hardware (pot 8733, survived a disconnect/reconnect) |
+| `f902`, `f90a`/`b`/`c` | Unconfirmed | Stayed constant/zero in every capture (`f902`, and the `eco`/trigger-mirror fields) — none of the 4 mode-switch screens exercised them. `f90a`/`f90b` specifically re-confirmed always-zero across all 3 mode captures on 2026-08-31, see the parity design doc |
+| `f908` (`pumpDutyCycle` in code) | **Unconfirmed — never written by the app in any of the 5 real captures analyzed** (corrected 2026-08-30; previously misattributed as the enable flag) | Role unknown, same confidence level as `f912` below |
+| `f912` (`algorithmStatus` in code) | Unconfirmed, separate from `f90d` | Never touched by any of these captures at all — the pre-existing "values 1-6 unconfirmed" open question from earlier project history is untouched by this investigation |
 
 **This is the real architectural answer to "why doesn't StroyPlant behave like the app" as a
 whole, beyond the specific bugs above**: StroyPlant's code already has UUID constants defined for
@@ -175,25 +218,36 @@ the backend or its BLE connection is ever down, unlike an official-app-configure
 
 1. ✅ **Done (2026-08-30)** — fixed the `fa07`/`fa09` sensor swap in `uuids.ts` (both backend and
    `noble-bridge`), plus a one-off migration script for historical `Reading`/`RawSensorLog` rows.
-2. ❌ **Attempted and reverted (2026-08-30)** — switching `trigger` to `f90c` (matching the real
-   app) was tried and empirically tested on real hardware, but the write has no physical effect
-   when sent from our own code (see the Update under Finding 1 above for the full story). Reverted
-   to `f906`, which works. Needs a real plan (likely investigating BLE bonding/authentication) before
-   trying again — not another ad-hoc trial-and-error session.
-3. Decide whether species assignment should push `fd8x`/`f903`/`f904` to the device (Finding 2),
-   moving StroyPlant's calibration model closer to the official app's.
-4. Decide whether StroyPlant should ever program the pot's own `f900` algorithm (Finding 4) for
-   real device-side autonomy, or stay fully server-side-driven by design.
-5. Correct the `PARROT_OFFICIAL_BLE_SPEC.md` transcription for `fa09`/`fa0a` if it's confirmed
+2. ✅ **Resolved (2026-08-30, same day)** — the `f90c` switch was attempted, reverted, and its
+   apparent "no physical effect despite a clean ACK" mystery is now fully explained: the original
+   analysis misattributed the app's real trigger write to `f90c` due to a handle-mapping error in
+   PacketLogger-based eyeballing, not a device firmware quirk. A byte-level `tshark -V` re-derivation
+   of the real handle→UUID map confirmed the app's trigger write actually targets `f906` — exactly
+   what StroyPlant's code already does. No further action needed; do not revisit `f90c`.
+3. ⚠️ **New, actionable (2026-08-30)** — the same re-derivation found the device-side-autonomous-
+   watering feature (built the same day, see its own design/plan docs) writes its algorithm-enable
+   flag to the wrong characteristic (`f908` instead of `f90d`) — see the corrected Finding 4 table
+   above. This is the leading hypothesis for that feature's real-hardware finding that `f903`/`f904`
+   don't stick on write. Not yet tested on real hardware.
+4. ✅ **Done (2026-08-30)** — species assignment pushing `f903`/`f904`/`f905` + an enable flag to
+   the device (Finding 2) was designed and implemented the same day (device-side-autonomous-
+   watering feature) — see item 3 above for the flag-mapping correction this investigation found in
+   that implementation. `fd8x` itself is deliberately untouched by that feature (see its design
+   doc's Scope section) — the `fd83`/`fd82` mirroring observed in Finding 2's capture is a possible
+   secondary lead if fixing `f90d` alone doesn't make `f903`/`f904` stick, not yet investigated.
+5. ✅ **Done (2026-08-30)** — decided: StroyPlant does program the pot's own `f900` algorithm now
+   (Finding 4), full delegation per the device-side-autonomous-watering design. Real-hardware
+   verification of whether it actually works is still pending (item 3 above).
+6. Correct the `PARROT_OFFICIAL_BLE_SPEC.md` transcription for `fa09`/`fa0a` if it's confirmed
    wrong rather than the hardware differing from the source PDF (not determined which is the case).
-6. **DestCom-proposed direction for Finding 1**: reuse the existing Live Sensor Mode connection
+7. **DestCom-proposed direction for Finding 1**: reuse the existing Live Sensor Mode connection
    (`liveSession/manager.ts`) for the manual watering trigger (and future mode-switch UI) while a
    device's page is open, instead of queuing a fresh `connectionQueue` connect per action — matches
    the app's own "connect once when the page opens" pattern and should close most of the observed
    1-2 minute gap (vs. the app's instant response) for the manual-trigger case specifically. Needs
    its own plan (concurrency with the existing poll/live-session coordination, the 5-minute
    auto-cutoff, and the never-fire-and-forget guarantee all need to keep holding) — not started.
-7. Minor/lower-priority open items: `fa0a`/`fa0b`'s true roles, the app's "5046 live lux" source,
+8. Minor/lower-priority open items: `fa0a`/`fa0b`'s true roles, the app's "5046 live lux" source,
    the exact identity of Plant-Dr handle `0x00a0`, why species-change wrote in two batches 30s
    apart, and `f901`/`f902`'s exact meaning.
 

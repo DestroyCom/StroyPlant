@@ -94,6 +94,6 @@ export interface HistoryEntry {
   deviceName: string;
   timestamp: string;
   success: boolean;
-  triggerLabel: 'MANUAL' | 'CRON' | 'POLL';
+  triggerLabel: 'MANUAL' | 'CRON' | 'POLL' | 'CONFIG_PUSH';
   errorDetail: string | null;
 }

@@ -8,6 +8,7 @@ import { plantDrRouter } from './routers/plantDr.js';
 import { pollSettingsRouter } from './routers/pollSettings.js';
 import { readingsRouter } from './routers/readings.js';
 import { scheduleRouter } from './routers/schedule.js';
+import { wateringConfigRouter } from './routers/wateringConfig.js';
 import { router } from './trpc.js';
 
 export const appRouter = router({
@@ -21,6 +22,7 @@ export const appRouter = router({
   pollSettings: pollSettingsRouter,
   readings: readingsRouter,
   schedule: scheduleRouter,
+  wateringConfig: wateringConfigRouter,
 });
 
 export type AppRouter = typeof appRouter;

@@ -1,0 +1,23 @@
+reviews:
+  path_filters:
+    # Archived, verbatim conclusions from third-party AI investigation sessions (ChatGPT, Gemini,
+    # a separate Claude Code instance) — a historical record of independent findings gathered for
+    # comparison during debugging, not living documentation. Rewriting/"correcting" these would
+    # misrepresent what each AI actually concluded at the time, defeating their purpose as an audit
+    # trail. See docs/superpowers/specs/2026-08-31-parrot-watering-config-checksum-fix.md for how
+    # they were used.
+    - "!docs/debug_analyse/**"
+
+    # Implementation plans, per this project's own established process (the writing-plans skill):
+    # a plan is a point-in-time execution record, reviewed and approved (task-by-task, via
+    # subagent-driven-development, or by DestCom directly) BEFORE and DURING execution — not living
+    # documentation updated after the fact once implementation is done. Current, accurate status
+    # always lives in CLAUDE.md instead.
+    - "!docs/superpowers/plans/**"
+
+    # Design specs, same reasoning as plans above — gated by the brainstorming skill's own
+    # self-review + human-approval process before being written, then a historical decision record.
+    # Corrections to superseded technical claims are made in-place with an explicit "CORRECTED"/
+    # "SUPERSEDED" annotation when they'd otherwise mislead a future reader (established convention,
+    # see e.g. backend/src/ble/parrot/wateringConfig.ts's own header comment) — not by rewriting.
+    - "!docs/superpowers/specs/**"

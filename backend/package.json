@@ -11,7 +11,7 @@
     "seed:admin": "tsx src/auth/seed-admin.ts",
     "import:species": "tsx src/health/importSpeciesProfiles.ts",
     "extract:parrot-plants": "tsx scripts/extractParrotPlantData.ts",
-    "test": "tsx --test 'src/inference/**/*.test.ts' 'src/health/**/*.test.ts'"
+    "test": "tsx --test 'src/inference/**/*.test.ts' 'src/health/**/*.test.ts' 'src/ble/**/*.test.ts' 'src/providers/**/*.test.ts'"
   },
   "dependencies": {
     "@fastify/helmet": "^13.1.0",

@@ -403,6 +403,47 @@ production server:
     only needs to confirm the syncs were queued. Dashboard gained a "Forcer la synchro" button
     (`frontend/src/routes/_authenticated/index.tsx`), separate from round 1's per-device "sync now"
     button on the detail page.
+  - **Round 3 — truncated GATT buffer crashes the whole poll, ~21h of zero readings on all 3 real
+    pots** (2026-08-31, found and fixed on `feature/parrot-device-side-autonomous-watering` right
+    before merge): first flagged as `[[project_a073_sensor_read_crash]]`, a single-device incident
+    deferred by DestCom on 2026-08-31 — checking production again the same day for an unrelated
+    reason found it had grown into all 3 real Parrot Pots going completely silent (`RestartCount=0`,
+    not a crash-loop — the process stayed up, just stopped persisting any `Reading` for any Parrot
+    Pot for ~21h). Root cause confirmed via real `docker logs`: a Live-service float32 characteristic
+    (`fa07`/`fa09`/`fa0b`) occasionally returns a truncated GATT response (`soil=00`, 1 byte instead
+    of 4), and `Buffer.readFloatLE(0)` throws a bare `RangeError` on it — deep inside `readSensors`,
+    only at reading-construction time after ~300 lines of by-then-wasted BLE reads (Plant Dr,
+    watering config, calibration), and mislabeled by the retry wrapper as a connection/
+    `GATT_ERROR=133` failure rather than a decode bug. The same pattern existed, unguarded, inside
+    `subscribeLive`'s notification handlers too — a malformed live sample would throw synchronously
+    inside an `EventEmitter` listener with no error handling at all.
+    - **Fix**: `readFloatLESafe()` (`node-ble/index.ts`) centralizes the length check. `readSensors`
+      now decodes right after the 3 initial reads instead of ~300 lines later — a malformed buffer
+      fails fast with an accurate error, before wasting the rest of the attempt, letting the existing
+      retry/backoff policy handle it as intended. `subscribeLive`'s `onSoil`/`onTemp`/`onLux` catch a
+      malformed notification and skip it instead of throwing — the existing "wait for the first
+      complete triple" gate in `scheduleFlush` already tolerates a missing value correctly, this just
+      extends that same tolerance to an occasional malformed one instead of crashing the session.
+    - **Deliberately not changed**: `ParrotPotReading.soilMoisturePercent`/`temperatureC`/
+      `luminosity` stay non-optional, required fields — widening them to `number | undefined` would
+      ripple into the Health Engine, MQTT publisher, and every frontend gauge for a fix that doesn't
+      need it; a cycle with a malformed buffer still fails that one poll attempt cleanly (as it
+      effectively already did), just without the wasted work or the misleading error label.
+    - **Test coverage added**: `backend/src/providers/node-ble/index.test.ts` (the first test file
+      for this provider — pure buffer-decode logic, no BLE/D-Bus needed) — `backend/package.json`'s
+      `test` script glob widened to include `src/providers/**/*.test.ts`.
+    - **Not yet re-verified against real hardware** — the fix is mock-provider/unit-test verified
+      only (this class of BLE work can't be tested on Mac at all, matches this project's own
+      convention). Next production deploy should confirm the 3 real pots start producing `Reading`
+      rows again and that a "buffer malformed, skipped" log line (rather than a repeat of the
+      21h-silence pattern) is what shows up on the next occurrence, whenever it recurs.
+    - **Still open, unrelated to this fix**: whether `fixSoilMoistureTemperatureSwap.ts`
+      (`backend/scripts/`, the fa07/fa09-swap historical data correction from 2026-08-29) was ever
+      actually run against production — it has zero references anywhere in this file or any other
+      doc, and production's `Reading.soilMoisturePercent` is 100% `NULL` across all 6249 historical
+      Parrot Pot rows, consistent with either the script having run, or with historical moisture
+      simply never having been recorded pre-fix. Not confirmed either way — check before relying on
+      this column's historical data meaning anything.
 - **Device location + indoor/outdoor, and post-deploy triage fixes** (commit `3d5b312`, same day as
   the incident above, not previously documented here) — bundled alongside round 1's match-rule fix:
   - `Device` gained `location` (free text) and `environment` (`INDOOR`/`OUTDOOR`, nullable) columns
@@ -1325,6 +1366,123 @@ production server:
     overlay to the two real production Parrot Pots' assigned species (known from this project's
     history to include at least `PARROT-A073`), changing their live Health Engine status/
     auto-watering behavior the moment it runs, exactly as the design's own stated intent.
+- **Device-side autonomous watering + 4-mode watering system (Perfect Drop / Plant Sitter / Manuel /
+  Custom)** ✅ (2026-08-30 initial push, 2026-08-31 persistence bug root-caused and fixed + 4-mode
+  system added, on branch `feature/parrot-device-side-autonomous-watering`, not yet merged to
+  `main`) — pushes real watering-decision config to the Parrot Pot's own on-device algorithm
+  (`39e1f900` "Watering" GATT service) as a complement to the Batch 5 server-side scheduler, mirroring
+  what the official Parrot app itself does. Full history in 3 parts:
+  - **Part 1 — initial push (2026-08-30)**: `backend/src/wateringConfigPush.ts` +
+    `backend/src/ble/parrot/wateringConfig.ts` + a `wateringConfig` tRPC router, wired to fire
+    automatically on species assignment and `schedule.upsert`. `Device.autonomousWateringActive` +
+    `SyncSource.CONFIG_PUSH` track state. `health/scheduler.ts` was taught to degrade to a longer
+    cooldown + huge-delta-only safety net once a device is autonomous, rather than fighting the pot's
+    own algorithm. Read-back verification added the same day after DestCom asked for it explicitly
+    (matches the project's 7.1 never-fire-and-forget rule) — and a same-day fix for a failed
+    *disable* incorrectly forcing `autonomousWateringActive` false (a real hardware test showed 4
+    consecutive disable attempts failing with connection errors, not a value mismatch — the flag
+    needed to stay "unknown, assume autonomous" instead).
+  - **Part 2 — the persistence mystery, root-caused (2026-08-31)**: writes to the `f900` service
+    weren't sticking across a reconnect. Root cause, found by asking 3 AI assistants (ChatGPT, Gemini,
+    a second independent Claude Code instance) to re-analyze the same `.pklg` BLE captures in
+    parallel (reports in `docs/debug_analyse/31082026_WOrkingLikeTheRealApp/`) and cross-checking
+    their converging hypothesis against `docs/PARROT_BLE_DEEP_DIVE.md` section 2 (from the decompiled
+    official app) — **`f901`/`CONFIG_ID` is an XOR-16 validation checksum over the other 12
+    characteristics of the service, not a plain field.** The project had already solved this exact
+    class of problem once before for the Plant Dr service (Batch 6, `computePlantDrConfigId`)
+    without realizing `f900` needed the same treatment. Every write this project had ever made to
+    this service was checksum-inconsistent by construction and silently rejected by the firmware.
+    Fixed with a full 13-field read-modify-write (`mergeWateringConfigOverrides` →
+    `buildWateringConfigWriteValues`, `computeWateringConfigId`'s formula and write order in
+    `wateringConfig.ts`'s header comment) — **the checksum/persistence mechanism itself is
+    confirmed live on real hardware** (pot 8733, `A0:14:3D:CD:87:33`, via
+    `hwtest-watering-config-checksum.ts` calling those functions directly with hand-picked override
+    values): a written config survived a disconnect/reconnect cycle. This does **not** cover
+    `resolveWateringModeThresholds` (Part 3 below) — the hardware test never routed through the
+    4-mode resolver, only through the lower-level write/checksum functions it calls into; the mode
+    resolver itself is mock-provider-verified only, see Part 3's own verification note. Full
+    root-cause writeup: `docs/superpowers/specs/2026-08-31-parrot-watering-config-checksum-fix.md`.
+    **Restored to its original config (2026-08-31)**: the first restore attempt that same day failed
+    3/3 with a transient `le-connection-abort-by-local`, left as a known loose end with no real
+    consequence (dedicated test pot, no species assigned). Re-run later the same day via the same
+    disposable-container workflow — succeeded on the 2nd read-back attempt after one more transient
+    `le-connection-abort-by-local` (the retry policy self-healing exactly as designed): read-back
+    confirmed `plantId=1071 vwcIrrRaw=260 vwcCmdRaw=320 nIrr=384 mode=0 configId=75`, exactly matching
+    the pre-test original — `>>> RESTORED: true <<<`.
+  - **Part 3 — the 4-mode watering system (2026-08-31)**: replaces the single-implicit-mode push
+    from Part 1 with the same 4 modes the official app exposes, matching real behavior confirmed from
+    the decompiled Android source (`docs/superpowers/specs/2026-08-31-parrot-pot-official-app-parity-design.md`
+    sections 1-4; implemented via `docs/superpowers/plans/2026-08-31-parrot-watering-mode-system.md`,
+    6 tasks, subagent-driven-development). Key pieces:
+    - **`Schedule.wateringMode`** (`PERFECT_DROP` default / `PLANT_SITTER` / `MANUAL` / `CUSTOM`) +
+      3 nullable custom-threshold columns, migration `20260831123226_add_watering_mode`.
+      `resolveWateringModeThresholds` (`ble/parrot/wateringConfig.ts`) is a pure function mapping
+      (mode, plant profile, custom inputs) → the exact values to push: Perfect Drop uses the
+      species' classic Parrot thresholds, Plant Sitter uses its eco thresholds (falling back to
+      classic-minus-6-points if eco data is ever absent — a dead path in practice, every one of the
+      8070 Parrot-sourced species has eco data), Manual pushes `mode=0` with thresholds left
+      untouched (matches the real app's own behavior — never zeroes or guesses them), Custom uses
+      the user's own 3 hand-entered values (`nIrrDays` converted to the device's native 15-minute
+      units, ×96).
+    - **Deliberate scope decision**: pushing to the device is now fully orthogonal to
+      `AutoWateringSection`'s own server-side fallback-scheduler toggle (previously the same
+      `Schedule.active` flag gated both) — choosing a mode always pushes regardless of that toggle's
+      state, matching the approved spec's "Périmètre" section. `health/scheduler.ts`'s own
+      fallback-trigger logic (the Part 1 degraded-safety-net behavior) is untouched.
+    - **Orchid auto-default to Manual**: assigning an orchid-tagged species (`PlantProfile.tags` bit
+      256) auto-sets the mode to Manual — reproduces a real, decompiled-source-confirmed official-app
+      behavior (`DataManager.java:3033`: `createWateringConfigThread(plantId, isOrchid ? 0 : 1)`).
+      Only fires on a genuine species *transition* (captured via the device's `plantProfileId`
+      *before* the update), never re-triggers on a re-save of the same species, so it can't silently
+      clobber a user's later explicit mode choice. **Correction during design**: initially believed
+      (from reading only cactus-tag usage) that the app never auto-forces a mode for any species —
+      DestCom pushed back with a specific real memory of an overflow warning + auto-set-to-Manual
+      behavior on iOS, which turned out to be real but keyed to **orchids**, not the cactus the user
+      had misremembered. Cactus-tagged species instead get a non-blocking overflow-risk warning in
+      the UI when Perfect Drop/Plant Sitter is selected, no auto-forced mode change.
+    - **Frontend**: `AutonomousWateringSection` rewritten from a read-only threshold display into 4
+      clickable mode buttons + a Custom-mode input form, polling `wateringConfig.pushRunStatus` for
+      push completion (same pattern as the Plant Dr calibration page — the BLE sequence can exceed
+      Cloudflare's ~100s origin timeout, so the mutation only confirms the push was *queued*).
+    - **Final-review fixes (2026-08-31, caught only by the whole-branch review, not any single task's
+      diff)**: (1) Task 4 made `schedule.upsert`'s 4 new fields non-optional zod, silently breaking a
+      second, untouched caller (`AutoWateringSection`, the pre-existing server-toggle component) —
+      fixed by making them `.optional()`, keeping the two features orthogonal by construction; (2) an
+      unused `device` parameter in `wateringConfigPush.ts` passed `backend`'s own looser `tsc` but
+      broke `frontend`'s real project-referenced build; (3) the rewritten selector had silently
+      dropped the old "species has no Parrot data" guard, letting a user pick Perfect Drop on an
+      ineligible species and get a silent no-op instead — restored, with an explanatory message; (4)
+      clicking the Custom tab immediately pushed hardcoded placeholder threshold values to real
+      hardware before the user entered anything — fixed so only the "Enregistrer" button pushes for
+      Custom; (5) the old "Repousser la configuration" retry button was dropped with no replacement,
+      leaving no recovery path for a failed push short of switching modes twice — a "Repousser
+      maintenant" button restored, wired to the pre-existing `wateringConfig.push` mutation. See the
+      Gotchas entry on `frontend`'s real typecheck command for how (1) and (2) slipped past 2
+      task-level reviews and the plan's own manual-verification task undetected.
+    - **Verified against the mock provider**: Task 2's 24 unit tests (all 4 modes + every
+      ineligibility path) plus an 8-scenario curl+sqlite3 end-to-end pass (species assignment → mode
+      resolution → BLE push → read-back, across all 4 modes, the orchid auto-default's
+      genuine-transition-vs-re-save distinction, and the read-modify-write preserving thresholds
+      across a Manuel switch) — all PASS with concrete recorded output. **Deliberately not
+      browser-verified** (curl-level only) — the frontend's JSX/rendering logic (button highlighting,
+      badge text, form visibility) was independently confirmed against the approved plan text at the
+      source level during task review instead.
+  - **Plant Sitter's wire-level parity — CONFIRMED (2026-08-31)**, no longer a follow-up. Re-analyzed
+    the 3 real captures (`docs/ble-captures/02_mode_perfect_drop.pklg`,
+    `03_mode_plant_sitter.pklg`, `04_mode_manuel.pklg`) directly via `tshark` (no hardware needed —
+    the captures already existed locally): all 3 write the identical 13-handle sequence in the
+    documented order, and **the official app writes Plant Sitter's eco thresholds (26.0%/32.0%)
+    into the exact same `f903`/`f904` fields Perfect Drop uses (32.0%/38.0%) — `f90a`/`f90b` (the
+    dedicated eco-raw fields) are written as `0000` in every single capture, regardless of mode**.
+    The app never populates them at all. This is exactly what `resolveWateringModeThresholds`
+    already does (write eco values into `vwcIrrRaw`/`vwcCmdRaw`, leave `f90a`/`f90b` untouched via
+    the read-modify-write) — full wire-level parity confirmed, not just assumed. `plantId`'s (`f902`)
+    real meaning is still unconfirmed (treated as an opaque read-preserve-write field) — one AI
+    report speculated it's `PlantProfile.parrotSpeciesId`, plausible but not independently verified;
+    the 3 captures do show the same `4b02` value across all 3 mode switches (consistent with it
+    being tied to the assigned species rather than the mode, but not conclusive on its own). Not yet
+    deployed to the real production server or tested against real hardware beyond the Part 2
+    checksum-persistence confirmation on pot 8733.
 
 ## Repo structure
 
@@ -1566,6 +1724,21 @@ Dockerfile, docker-entrypoint.sh, docker-compose.prod.yml, docker-compose.test.y
 
 ## Gotchas already encountered (so as not to rediscover them)
 
+- **`cd frontend && npx tsc --noEmit` is a silent no-op — it always exits 0, checking zero files.**
+  `frontend/tsconfig.json` is a solution-style file (`"files": []`, no `include`) that only
+  references `tsconfig.app.json`/`tsconfig.node.json` — `tsc --noEmit` on the root config alone
+  compiles nothing. The real command is `cd frontend && pnpm typecheck` (`tsc -b --noEmit`), which
+  actually project-references `backend`'s sources too (so a backend-only change can break the
+  frontend build, e.g. an unused parameter tripping `noUnusedParameters`, which `backend`'s own
+  looser `tsconfig.json` never catches). This has now silently passed two genuinely broken builds in
+  this project's history without any errors: the `erasableSyntaxOnly` inference-engine incident
+  (2026-08-12, discovered separately) and, on 2026-08-31, a whole implementation plan whose own
+  Task 5/6 verification steps prescribed the no-op command — both the plan-mandated task review and
+  the plan-mandated manual verification ran it, saw a clean exit, and missed a real `TS6133` build
+  break plus a runtime regression in an unrelated component (`schedule.upsert`'s zod input made 4
+  fields non-optional, silently breaking a second, untouched caller) — caught only by the final
+  whole-branch review running the real command. Always use `pnpm typecheck` (or `npx tsc -p
+  tsconfig.app.json --noEmit`) when verifying the frontend, never the bare root `tsc --noEmit`.
 - **Fastify's router caps a single dynamic path segment at 100 chars by default
   (`FST_ERR_MAX_PARAM_LENGTH`, → HTTP 414)** — the tRPC Fastify plugin registers its whole route as
   one such segment (`/:path`, everything after the `/api/trpc` prefix), and a batched call's path is

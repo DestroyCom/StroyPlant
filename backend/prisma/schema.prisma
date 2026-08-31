@@ -30,6 +30,14 @@ model Device {
   location    String? // free-text placement, e.g. "Salon", "Balcon" — user-entered, not validated
   environment Environment?
 
+  // Device-side autonomous watering (docs/superpowers/specs/2026-08-30-parrot-device-side-
+  // autonomous-watering-design.md) — true only after a confirmed-successful push of f903/f904/
+  // f905/f908 to the pot's own algorithm. Read by health/scheduler.ts to switch into a degraded,
+  // huge-delta, long-cooldown safety net instead of the normal primary trigger condition. Never
+  // set optimistically ahead of a confirmed write.
+  autonomousWateringActive    Boolean   @default(false)
+  autonomousWateringUpdatedAt DateTime?
+
   // Optional assignment (Batch 4, Health Engine) — never blocking, same logic as the Plant Dr
   // calibration (section 7.11): a device works perfectly fine with no profile assigned.
   plantProfileId Int?
@@ -56,6 +64,17 @@ model Schedule {
   allowedStartHour Int // 0-23, local server time, inclusive
   allowedEndHour   Int // 0-23, local server time, exclusive — wraps past midnight if < allowedStartHour
   cooldownHours    Int // minimum delay since the last watering attempt (any source) before triggering again
+
+  // Device-side autonomous watering mode (docs/superpowers/specs/2026-08-31-parrot-pot-official-
+  // app-parity-design.md) — which of the 4 real Parrot Pot modes this device is set to. Defaults
+  // to PERFECT_DROP to match the pre-existing (single implicit mode) behavior for every device
+  // that already has a Schedule row — this migration changes no on-device behavior by itself.
+  wateringMode WateringMode @default(PERFECT_DROP)
+  // Only meaningful when wateringMode = CUSTOM — the user's own hand-entered thresholds. Null in
+  // every other mode.
+  customVwcIrrPercent Float?
+  customVwcCmdPercent Float?
+  customNIrrDays      Int?
 
   updatedAt DateTime @updatedAt
 }
@@ -390,6 +409,13 @@ enum TriggerSource {
   CRON
 }
 
+enum WateringMode {
+  PERFECT_DROP
+  PLANT_SITTER
+  MANUAL
+  CUSTOM
+}
+
 model WateringEvent {
   id            Int           @id @default(autoincrement())
   deviceId      String
@@ -433,6 +459,7 @@ model ShadowDivergence {
 enum SyncSource {
   POLL // scanner's own throttled polling loop (ble/scanner.ts's pollDeviceNow)
   MANUAL // devices.sync / devices.forceSyncAll (user-triggered)
+  CONFIG_PUSH // device-side autonomous watering config push failures (wateringConfigPush.ts)
 }
 
 model SyncEvent {

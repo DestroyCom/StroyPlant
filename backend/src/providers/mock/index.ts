@@ -1,4 +1,5 @@
 import type { PlantDrCalibration, PlantDrWriteValues } from '../../ble/parrot/plantDr.js';
+import { computeWateringConfigId, type WateringConfigRaw, type WateringConfigWriteValues } from '../../ble/parrot/wateringConfig.js';
 import { log } from '../../logger.js';
 import type { DeviceProvider, DiscoveredDevice, SensorReading } from '../types.js';
 
@@ -21,6 +22,7 @@ interface MockPotState {
   declinePerMinute: number;
   lastUpdate: number;
   plantDr: PlantDrCalibration;
+  wateringConfig: WateringConfigRaw;
 }
 
 // Factory-default calibration observed on a real, never-manually-calibrated Parrot Pot
@@ -28,6 +30,28 @@ interface MockPotState {
 // WET_VWC=22.5%, CONFIG_ID=78 (verified against computePlantDrConfigId()).
 function defaultPlantDrCalibration(): PlantDrCalibration {
   return { dryN: 0, dryVwcPercent: 17.5, wetN: 0, wetVwcPercent: 22.5, configId: 78 };
+}
+
+// "Never configured" starting state — every field 0, matching what every real capture this
+// project has taken shows for the fields it's never touched (f90a/f90b/f90c/f910/f911). configId
+// is computed from the rest so a fresh read is already internally consistent, same as a real
+// virgin device would be expected to be.
+function defaultWateringConfig(): WateringConfigRaw {
+  const fields = {
+    plantId: 0,
+    vwcIrrRaw: 0,
+    vwcCmdRaw: 0,
+    nIrr: 0,
+    vwcIrrEcoRaw: 0,
+    vwcCmdEcoRaw: 0,
+    nIrrEco: 0,
+    timeSlotStart: 0,
+    timeSlotDuration: 0,
+    vacationStart: 0,
+    vacationEnd: 0,
+    mode: 0,
+  };
+  return { ...fields, configId: computeWateringConfigId(fields), algorithmEnabled: false };
 }
 
 interface MockXiaomiState {
@@ -61,6 +85,7 @@ function createInitialPots(): MockPotState[] {
       declinePerMinute: 0.05,
       lastUpdate: now,
       plantDr: defaultPlantDrCalibration(),
+      wateringConfig: defaultWateringConfig(),
     },
     {
       id: 'MOCK-POT-DECLINE',
@@ -73,6 +98,7 @@ function createInitialPots(): MockPotState[] {
       declinePerMinute: 1.2, // drops noticeably faster than MOCK-POT-NORMAL
       lastUpdate: now,
       plantDr: defaultPlantDrCalibration(),
+      wateringConfig: defaultWateringConfig(),
     },
   ];
 }
@@ -340,6 +366,39 @@ export function createMockProvider(): DeviceProvider {
         result: 'OK',
         detail: `dry=${pot.plantDr.dryVwcPercent}% wet=${pot.plantDr.wetVwcPercent}% configId=${pot.plantDr.configId}`,
       });
+    },
+
+    async readWateringConfig(deviceId: string): Promise<WateringConfigRaw> {
+      const pot = pots.get(deviceId);
+      if (!pot) throw new Error(`Mock device ${deviceId} inconnu`);
+      return pot.wateringConfig;
+    },
+
+    async writeWateringConfig(deviceId: string, values: WateringConfigWriteValues): Promise<void> {
+      const pot = pots.get(deviceId);
+      if (!pot) throw new Error(`Mock device ${deviceId} inconnu`);
+      // Mirrors the real device's own commit rule (wateringConfig.ts): only "persist" if the
+      // caller wrote a CONFIG_ID that actually matches the 12 fields it just sent — a mock that
+      // always accepted every write regardless of CONFIG_ID couldn't have caught the bug this
+      // checksum exists to catch.
+      if (values.configId === computeWateringConfigId(values)) {
+        pot.wateringConfig = { ...values, algorithmEnabled: values.mode === 1 };
+        log({
+          direction: 'WRITE',
+          label: 'Watering config written (mock)',
+          deviceId,
+          result: 'OK',
+          detail: JSON.stringify(pot.wateringConfig),
+        });
+      } else {
+        log({
+          direction: 'WRITE',
+          label: 'Watering config write rejected (mock) — CONFIG_ID mismatch',
+          deviceId,
+          result: 'ERROR',
+          detail: `expected configId=${computeWateringConfigId(values)}, got ${values.configId}`,
+        });
+      }
     },
   };
 }
