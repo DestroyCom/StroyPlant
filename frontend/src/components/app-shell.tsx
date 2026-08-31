@@ -1,6 +1,6 @@
 import { useQueryClient } from '@tanstack/react-query';
 import { Link, useNavigate } from '@tanstack/react-router';
-import { Clock, Home, LogOut, PlusCircle, Settings } from 'lucide-react';
+import { Clock, Home, LogOut, PlusCircle, Settings, Sprout } from 'lucide-react';
 import type { ReactNode } from 'react';
 import logo from '@/assets/logo.svg';
 import { authClient } from '@/lib/auth-client';
@@ -47,6 +47,16 @@ export function AppShell({ children }: { children: ReactNode }) {
           >
             <Home size={18} />
             Tableau de bord
+          </Link>
+          <Link
+            to="/plants"
+            className={cn(
+              'flex items-center gap-2.5 rounded-md px-3 py-2.5 text-sm font-medium text-sidebar-foreground/70 hover:bg-sidebar-accent',
+              'data-[status=active]:font-bold data-[status=active]:text-sidebar-foreground [&[data-status=active]_svg]:text-sidebar-accent-foreground',
+            )}
+          >
+            <Sprout size={18} />
+            Base de plantes
           </Link>
           <Link
             to="/history"
@@ -105,6 +115,16 @@ export function AppShell({ children }: { children: ReactNode }) {
         >
           <Home size={20} />
           Plantes
+        </Link>
+        <Link
+          to="/plants"
+          className={cn(
+            'flex flex-col items-center gap-0.5 px-3 py-1 text-[11px] font-medium text-sidebar-foreground/70',
+            'data-[status=active]:font-bold data-[status=active]:text-sidebar-accent-foreground',
+          )}
+        >
+          <Sprout size={20} />
+          Base
         </Link>
         <Link
           to="/history"
