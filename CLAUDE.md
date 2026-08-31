@@ -1419,14 +1419,22 @@ production server:
       browser-verified** (curl-level only) — the frontend's JSX/rendering logic (button highlighting,
       badge text, form visibility) was independently confirmed against the approved plan text at the
       source level during task review instead.
-  - **Known follow-up, not yet done**: Plant Sitter's wire-level parity is assumed, not verified —
-    the implementation writes eco thresholds into `f903`/`f904` with `mode=1`, leaving `f90a`/`f90b`
-    (the eco-specific raw fields) untouched; a real capture (`03_mode_plant_sitter.pklg`) exists and
-    would settle whether the official app does the same before the next real-hardware test on pot
-    8733. `plantId`'s (`f902`) real meaning is also still unconfirmed (treated as an opaque
-    read-preserve-write field) — one AI report speculated it's `PlantProfile.parrotSpeciesId`,
-    plausible but not verified. Not yet deployed to the real production server or tested against
-    real hardware beyond the Part 2 checksum-persistence confirmation on pot 8733.
+  - **Plant Sitter's wire-level parity — CONFIRMED (2026-08-31)**, no longer a follow-up. Re-analyzed
+    the 3 real captures (`docs/ble-captures/02_mode_perfect_drop.pklg`,
+    `03_mode_plant_sitter.pklg`, `04_mode_manuel.pklg`) directly via `tshark` (no hardware needed —
+    the captures already existed locally): all 3 write the identical 13-handle sequence in the
+    documented order, and **the official app writes Plant Sitter's eco thresholds (26.0%/32.0%)
+    into the exact same `f903`/`f904` fields Perfect Drop uses (32.0%/38.0%) — `f90a`/`f90b` (the
+    dedicated eco-raw fields) are written as `0000` in every single capture, regardless of mode**.
+    The app never populates them at all. This is exactly what `resolveWateringModeThresholds`
+    already does (write eco values into `vwcIrrRaw`/`vwcCmdRaw`, leave `f90a`/`f90b` untouched via
+    the read-modify-write) — full wire-level parity confirmed, not just assumed. `plantId`'s (`f902`)
+    real meaning is still unconfirmed (treated as an opaque read-preserve-write field) — one AI
+    report speculated it's `PlantProfile.parrotSpeciesId`, plausible but not independently verified;
+    the 3 captures do show the same `4b02` value across all 3 mode switches (consistent with it
+    being tied to the assigned species rather than the mode, but not conclusive on its own). Not yet
+    deployed to the real production server or tested against real hardware beyond the Part 2
+    checksum-persistence confirmation on pot 8733.
 
 ## Repo structure
 
