@@ -26,10 +26,16 @@ export const scheduleRouter = router({
         allowedStartHour: z.number().int().min(0).max(23),
         allowedEndHour: z.number().int().min(0).max(23),
         cooldownHours: z.number().int().min(1).max(168),
-        wateringMode: z.enum(['PERFECT_DROP', 'PLANT_SITTER', 'MANUAL', 'CUSTOM']),
-        customVwcIrrPercent: z.number().min(0).max(100).nullable(),
-        customVwcCmdPercent: z.number().min(0).max(100).nullable(),
-        customNIrrDays: z.number().int().min(0).max(90).nullable(),
+        // Optional: a pre-existing caller (frontend/src/components/auto-watering-section.tsx, the
+        // Batch 5 on/off toggle) only ever sends the 5 original fields above — it must keep working
+        // unmodified, orthogonal to the device-side watering mode added here. An omitted field is
+        // dropped entirely by zod (not even set to `undefined`), so it's absent from `data` below —
+        // `update` leaves the existing DB value untouched, `create` falls back to the column default
+        // (wateringMode: PERFECT_DROP, the others: NULL).
+        wateringMode: z.enum(['PERFECT_DROP', 'PLANT_SITTER', 'MANUAL', 'CUSTOM']).optional(),
+        customVwcIrrPercent: z.number().min(0).max(100).nullable().optional(),
+        customVwcCmdPercent: z.number().min(0).max(100).nullable().optional(),
+        customNIrrDays: z.number().int().min(0).max(90).nullable().optional(),
       }),
     )
     .mutation(async ({ ctx, input }) => {

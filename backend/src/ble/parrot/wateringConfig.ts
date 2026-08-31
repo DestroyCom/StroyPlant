@@ -98,19 +98,6 @@ export function mergeWateringConfigOverrides(
   return { ...current, ...overrides };
 }
 
-export function buildWateringConfigEnableFields(
-  vwcIrrPercent: number,
-  vwcCmdPercent: number,
-  nIrr: number,
-): Pick<WateringConfigFields, 'vwcIrrRaw' | 'vwcCmdRaw' | 'nIrr' | 'mode'> {
-  return {
-    vwcIrrRaw: Math.round(vwcIrrPercent * 10),
-    vwcCmdRaw: Math.round(vwcCmdPercent * 10),
-    nIrr,
-    mode: 1,
-  };
-}
-
 export type WateringMode = 'PERFECT_DROP' | 'PLANT_SITTER' | 'MANUAL' | 'CUSTOM';
 
 export interface WateringModePlantInputs {

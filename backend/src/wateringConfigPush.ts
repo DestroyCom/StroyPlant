@@ -1,7 +1,7 @@
 // Device-side autonomous watering — the only file that decides eligibility and calls the
 // provider's readWateringConfig/writeWateringConfig. See docs/superpowers/specs/2026-08-31-
 // parrot-pot-official-app-parity-design.md.
-import type { Device, PlantProfile, Schedule } from '@prisma/client';
+import type { PlantProfile, Schedule } from '@prisma/client';
 import type { ConnectionQueue } from './ble/connectionQueue.js';
 import {
   buildWateringConfigWriteValues,
@@ -27,7 +27,7 @@ type PlantProfileThresholdFields = Pick<
 // Reads whichever mode + (for CUSTOM) hand-entered values the Schedule row currently holds — a
 // missing Schedule row (device never configured) resolves to PERFECT_DROP with no custom inputs,
 // same default as the column itself.
-function resolveWateringMode(device: Pick<Device, 'plantProfileId'>, schedule: Schedule | null, plantProfile: PlantProfileThresholdFields | null): WateringModeResolution {
+function resolveWateringMode(schedule: Schedule | null, plantProfile: PlantProfileThresholdFields | null): WateringModeResolution {
   return resolveWateringModeThresholds(schedule?.wateringMode ?? 'PERFECT_DROP', plantProfile, {
     vwcIrrPercent: schedule?.customVwcIrrPercent ?? null,
     vwcCmdPercent: schedule?.customVwcCmdPercent ?? null,
@@ -60,7 +60,7 @@ export async function runWateringConfigPush(deps: WateringConfigPushDeps, device
     if (!device) throw new Error('Device not found');
     if (device.kind !== 'PARROT_POT') throw new Error('Device-side autonomous watering is Parrot Pot only');
 
-    const resolution = resolveWateringMode(device, device.schedule, device.plantProfile);
+    const resolution = resolveWateringMode(device.schedule, device.plantProfile);
 
     if (resolution.eligible && resolution.mode === 1) {
       intent = 'enable';

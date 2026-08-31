@@ -1,6 +1,12 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { buildWateringConfigEnableFields, computeWateringConfigId, type WateringConfigFields } from './wateringConfig.js';
+import {
+  computeWateringConfigId,
+  resolveWateringModeThresholds,
+  type WateringConfigFields,
+  type WateringModeCustomInputs,
+  type WateringModePlantInputs,
+} from './wateringConfig.js';
 
 function fields(overrides: Partial<WateringConfigFields>): WateringConfigFields {
   return {
@@ -89,19 +95,6 @@ test('computeWateringConfigId folds a 32-bit vacation field into its low/high 16
   assert.notEqual(withVacation, withoutVacation ^ 0x0304);
 });
 
-test('buildWateringConfigEnableFields encodes percentages as ×10 raw integers and sets mode=1', () => {
-  const result = buildWateringConfigEnableFields(32, 38, 48);
-  assert.deepEqual(result, { vwcIrrRaw: 320, vwcCmdRaw: 380, nIrr: 48, mode: 1 });
-});
-
-test('buildWateringConfigEnableFields rounds fractional percentages to the nearest ×10 integer', () => {
-  const result = buildWateringConfigEnableFields(32.04, 37.96, 0);
-  assert.equal(result.vwcIrrRaw, 320);
-  assert.equal(result.vwcCmdRaw, 380);
-});
-
-import { resolveWateringModeThresholds, type WateringModeCustomInputs, type WateringModePlantInputs } from './wateringConfig.js';
-
 function plantInputs(overrides: Partial<WateringModePlantInputs>): WateringModePlantInputs {
   return {
     soilMoistureIrrigatePercent: null,
@@ -179,7 +172,13 @@ test('CUSTOM uses the user-entered values, converting nIrrDays to 15-minute unit
 });
 
 test('CUSTOM is ineligible until all 3 values are entered', () => {
-  assert.deepEqual(resolveWateringModeThresholds('CUSTOM', null, { vwcIrrPercent: 30, vwcCmdPercent: null, nIrrDays: 2 }), { eligible: false });
-  assert.deepEqual(resolveWateringModeThresholds('CUSTOM', null, { vwcIrrPercent: null, vwcCmdPercent: 45, nIrrDays: 2 }), { eligible: false });
-  assert.deepEqual(resolveWateringModeThresholds('CUSTOM', null, { vwcIrrPercent: 30, vwcCmdPercent: 45, nIrrDays: null }), { eligible: false });
+  assert.deepEqual(resolveWateringModeThresholds('CUSTOM', null, { vwcIrrPercent: 30, vwcCmdPercent: null, nIrrDays: 2 }), {
+    eligible: false,
+  });
+  assert.deepEqual(resolveWateringModeThresholds('CUSTOM', null, { vwcIrrPercent: null, vwcCmdPercent: 45, nIrrDays: 2 }), {
+    eligible: false,
+  });
+  assert.deepEqual(resolveWateringModeThresholds('CUSTOM', null, { vwcIrrPercent: 30, vwcCmdPercent: 45, nIrrDays: null }), {
+    eligible: false,
+  });
 });

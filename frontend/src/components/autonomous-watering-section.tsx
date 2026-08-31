@@ -46,6 +46,12 @@ const MODE_OPTIONS: { value: WateringMode; label: string; description: string }[
 export function AutonomousWateringSection({ deviceId, plantProfile, autonomousWateringActive }: AutonomousWateringSectionProps) {
   const queryClient = useQueryClient();
   const isCactus = plantProfile?.tags != null && (plantProfile.tags & CACTUS_TAG_BIT) !== 0;
+  // Perfect Drop / Plant Sitter need the assigned species' own Parrot classic thresholds — a
+  // WatchFlower-only species has none, and resolveWateringModeThresholds (backend) silently
+  // resolves that combination to `{eligible:false}` → the device gets pushed mode=0 (Manual) with
+  // no visible sign the requested mode was rejected. Gate the buttons instead of letting that
+  // happen silently (matches the pre-rewrite AutonomousWateringSection's own hasParrotData check).
+  const hasParrotData = plantProfile?.soilMoistureIrrigatePercent != null && plantProfile?.soilMoistureCommandPercent != null;
 
   const { data: schedule } = useQuery(trpc.schedule.get.queryOptions({ deviceId }));
   const { data: config, isLoading } = useQuery(trpc.wateringConfig.getConfig.queryOptions({ deviceId }));
@@ -95,6 +101,25 @@ export function AutonomousWateringSection({ deviceId, plantProfile, autonomousWa
       },
       onError: (error) => {
         toast.error("Échec de l'enregistrement du mode", { description: error.message });
+        // The optimistic setWateringMode below has no other rollback path — without this the
+        // selector keeps showing the mode the user clicked even though the device is still on
+        // whatever mode the server last confirmed, until an unrelated refetch happens to correct it.
+        if (schedule) setWateringMode(schedule.wateringMode);
+      },
+    }),
+  );
+
+  // "Repousser maintenant" — re-runs the config push for the CURRENTLY active mode with no field
+  // change, for recovery after a transient BLE failure. schedule.upsert's own modeChanged guard
+  // only pushes when the mode/custom fields actually differ from what's persisted, so re-clicking
+  // an already-selected mode is otherwise a complete no-op with no way to retry a failed push.
+  const repushMutation = useMutation(
+    trpc.wateringConfig.push.mutationOptions({
+      onSuccess: () => {
+        void queryClient.invalidateQueries({ queryKey: trpc.wateringConfig.pushRunStatus.queryKey({ deviceId }) });
+      },
+      onError: (error) => {
+        toast.error('Échec du lancement', { description: error.message });
       },
     }),
   );
@@ -102,6 +127,12 @@ export function AutonomousWateringSection({ deviceId, plantProfile, autonomousWa
   function saveMode(nextMode: WateringMode) {
     if (!schedule) return;
     setWateringMode(nextMode);
+    // CUSTOM only switches the local selection to reveal its own form below — it must never push
+    // the form's current values on click, since the very first time a user opens this tab those
+    // are still the component's hardcoded initial defaults, never something the user actually
+    // entered/confirmed. Only the form's own "Enregistrer" button (saveCustomValues) pushes for
+    // CUSTOM. Every other mode keeps pushing immediately on click, unchanged.
+    if (nextMode === 'CUSTOM') return;
     upsertScheduleMutation.mutate({
       deviceId,
       active: schedule.active,
@@ -109,9 +140,9 @@ export function AutonomousWateringSection({ deviceId, plantProfile, autonomousWa
       allowedEndHour: schedule.allowedEndHour,
       cooldownHours: schedule.cooldownHours,
       wateringMode: nextMode,
-      customVwcIrrPercent: nextMode === 'CUSTOM' ? customVwcIrrPercent : null,
-      customVwcCmdPercent: nextMode === 'CUSTOM' ? customVwcCmdPercent : null,
-      customNIrrDays: nextMode === 'CUSTOM' ? customNIrrDays : null,
+      customVwcIrrPercent: null,
+      customVwcCmdPercent: null,
+      customNIrrDays: null,
     });
   }
 
@@ -138,21 +169,31 @@ export function AutonomousWateringSection({ deviceId, plantProfile, autonomousWa
       </div>
 
       <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2">
-        {MODE_OPTIONS.map((option) => (
-          <button
-            key={option.value}
-            type="button"
-            disabled={upsertScheduleMutation.isPending || isRunning || !schedule}
-            onClick={() => saveMode(option.value)}
-            className={`rounded-lg border p-3 text-left transition-colors ${
-              wateringMode === option.value ? 'border-primary bg-primary/5' : 'border-border-subtle hover:bg-muted'
-            }`}
-          >
-            <div className="text-sm font-medium text-foreground">{option.label}</div>
-            <div className="mt-0.5 text-xs text-muted-foreground">{option.description}</div>
-          </button>
-        ))}
+        {MODE_OPTIONS.map((option) => {
+          const needsParrotData = option.value === 'PERFECT_DROP' || option.value === 'PLANT_SITTER';
+          const disabled = upsertScheduleMutation.isPending || isRunning || !schedule || (needsParrotData && !hasParrotData);
+          return (
+            <button
+              key={option.value}
+              type="button"
+              disabled={disabled}
+              onClick={() => saveMode(option.value)}
+              className={`rounded-lg border p-3 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+                wateringMode === option.value ? 'border-primary bg-primary/5' : 'border-border-subtle hover:bg-muted'
+              }`}
+            >
+              <div className="text-sm font-medium text-foreground">{option.label}</div>
+              <div className="mt-0.5 text-xs text-muted-foreground">{option.description}</div>
+            </button>
+          );
+        })}
       </div>
+
+      {!hasParrotData && (
+        <div className="mt-3 text-xs text-muted-foreground">
+          Cette espèce n'a pas de données Parrot — seuls les modes Manuel et Custom sont disponibles.
+        </div>
+      )}
 
       {isCactus && (wateringMode === 'PERFECT_DROP' || wateringMode === 'PLANT_SITTER') && (
         <div className="mt-3 rounded-lg border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200">
@@ -220,6 +261,15 @@ export function AutonomousWateringSection({ deviceId, plantProfile, autonomousWa
         {(upsertScheduleMutation.isPending || isRunning) && (
           <div className="mt-2 text-sm text-muted-foreground">Configuration en cours…</div>
         )}
+        <Button
+          variant="outline"
+          size="sm"
+          className="mt-3.5"
+          disabled={isRunning || repushMutation.isPending || !schedule}
+          onClick={() => repushMutation.mutate({ deviceId })}
+        >
+          Repousser maintenant
+        </Button>
       </div>
     </div>
   );
