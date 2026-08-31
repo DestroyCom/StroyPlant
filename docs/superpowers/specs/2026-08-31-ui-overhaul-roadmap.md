@@ -48,6 +48,27 @@ données :
 - `PlantProfileSearchName` : noms de recherche multi-locale (utile pour une vraie recherche FR,
   contrairement à la recherche actuelle).
 
+**Spike mapping code→libellé (fait le 2026-08-31, sur l'app iOS "Flower Power" installée sur le
+Mac de DestCom, `FilterValues.plist` + `PlantDetailsInfo.plist` + `Localizable.strings`)** :
+- Chaîne de résolution confirmée bout en bout (ex: `PT/IP` → "Plante d'intérieur").
+- **Identique dans toutes les langues** (comparé FR/EN clé par clé, même ensemble exact de 41
+  clés `filter_filterCriteria_*`) — pas un trou de traduction française.
+- Couverture réelle par catégorie (codes vus dans les 77 889 lignes déjà importées vs. codes avec
+  libellé trouvé) : `FO` couleur feuillage 12/12 (complet), `BL` couleur floraison 9/13, `PT`
+  type+cycle 9/15, `SH` forme 5/16, `SF` particularités 3/14, `SN` saison de floraison 0/12 (codes
+  totalement différents du schéma du plist). Confirmé — pas une extraction ratée : les 41 clés du
+  plist sont l'intégralité de ce que l'app définit, dans les ~1500 clés du fichier de traductions
+  entier, toutes langues confondues. Probablement une classification "encyclopédie" plus riche que
+  ce que l'app mobile n'a jamais exposé comme filtre utilisateur — exclure les codes non mappés des
+  filtres proposés est donc fidèle au comportement réel de l'app, pas une régression.
+- **Bonus trouvé au passage, mapping complet** : `fertilizer_type_1..22` résout entièrement
+  `PlantProfileFertilizerType.code` (déjà importé, 9308 lignes) ; `tags_categoryName_*` (8-9
+  clés) résout le bitmask `PlantProfile.tags` (indoor/outdoor/cactus_and_succulent/
+  orchid_and_original/etc., confirme et complète le bit 256 = orchidée déjà connu).
+- **Décision validée avec DestCom (2026-08-31)** : avancer avec cette couverture — libellés là où
+  le mapping existe, codes non mappés simplement exclus des filtres proposés à l'utilisateur (pas
+  affichés en brut).
+
 **Ce qui n'existe pas encore et devra être conçu dans la spec** :
 - Le tRPC `health.plantProfiles` actuel (`backend/src/api/trpc/routers/health.ts:26`) ne cherche
   que sur `PlantProfile.name` (nom latin), pas sur les traductions/noms de recherche, pas de
@@ -89,6 +110,18 @@ trancher dans la spec de ce sous-projet :
   la fois" (un autre appareil en cours de poll ne doit pas être interprété comme un échec
   définitif — actuellement `CONFLICT` immédiat sur une 2e session, à re-vérifier pour ce nouveau
   flux).
+
+**Nouveau point ajouté par DestCom (2026-08-31)** — unité de luminosité en mode live incorrecte :
+captures `docs/flowerpower_screenshot/20260831_ForBetterUI/parrotapp_lux_unit_example_{1,2}.png` —
+l'app officielle affiche un **nombre entier en lux ou klux** ("8232 live lux" / "72 live klux") en
+mode live, alors que notre `LiveModeSection` affiche la valeur calibrée `39e1fa0b` telle quelle,
+étiquetée "Luminosité (DLI)" en mol/m²/j (une unité d'intégrale journalière appliquée à une lecture
+instantanée — déjà incohérent en soi, voir `CLAUDE.md` Part H sur le vrai calcul de DLI journalier
+utilisé ailleurs pour le Health Engine). Le raw ADC (`fa01`, `lightRaw`) est déjà lu et stocké dans
+`RawSensorLog` mais jamais utilisé pour l'affichage. **Pas encore résolu** : la formule de
+conversion raw→lux/klux que l'app officielle applique n'est pas connue de ce projet — à rechercher
+(décompilation existante, ou nouvelle capture BLE) avant de finaliser la spec de ce sous-projet, ne
+pas deviner une formule.
 
 ---
 
@@ -139,6 +172,30 @@ prise).**
 
 ---
 
+## Sous-projet 5 — Affichage d'erreurs lisible
+
+**Statut : bounded, indépendant des 4 précédents — peut se faire à tout moment.**
+
+**Demande de DestCom (2026-08-31)** : capture `docs/flowerpower_screenshot/20260831_ForBetterUI/
+errors_displayed_in_App.png` — la page Historique (et probablement d'autres endroits affichant
+`errorDetail`) montre des messages techniques bruts directement à l'utilisateur : "Unexpected
+token '<', "<!DOCTYPE "... is not valid JSON" (l'erreur Cloudflare 502 déjà documentée dans
+`CLAUDE.md`, gotcha "Cloudflare's origin timeout..."), "le-connection-abort-by-local", etc. — sous
+des titres génériques ("Échec de la synchronisation"/"Échec de la configuration"). DestCom :
+"à chaque fois qu'il doit afficher des erreurs il recrit de la merde".
+
+**Périmètre à couvrir dans la spec de ce sous-projet** (inventaire à faire, pas encore fait) :
+tout endroit qui affiche `SyncEvent.errorDetail`/`WateringEvent.errorDetail` brut ou un message
+d'erreur tRPC brut — la page Historique en priorité (capture ci-dessus), mais probablement aussi
+les toasts d'erreur (`toast.error(..., { description: error.message })`, plusieurs composants) et
+la page de calibration Plant Dr. Approche à concevoir : une fonction de traduction
+erreur-technique → message humain FR (mapping sur des motifs connus : timeout, erreur Cloudflare,
+`le-connection-abort-by-local`, `GATT_ERROR`, etc.), avec un repli explicite et honnête (pas un
+message inventé) pour un motif non reconnu — probablement le message technique conservé mais dans
+un second niveau (accordéon "détails techniques"), jamais comme titre principal.
+
+---
+
 ## Refonte UI/UX transverse
 
 Pas un sous-projet séparé avec sa propre spec : à appliquer progressivement à chaque page touchée
@@ -150,10 +207,11 @@ conception visuelle de chaque sous-projet plutôt qu'ici.
 
 ## Suivi
 
-- [ ] Sous-projet 1 — Base de plantes : brainstorming → spec → plan → implémentation
-- [ ] Sous-projet 2 — Mode live par défaut : brainstorming → spec → plan → implémentation
+- [x] Sous-projet 1 — Base de plantes : spike mapping filtres fait (2026-08-31) → brainstorming fait → **spec en cours de rédaction**
+- [ ] Sous-projet 2 — Mode live par défaut (+ unité luminosité live à corriger) : brainstorming → spec → plan → implémentation
 - [ ] Sous-projet 3 — Onglet "Plante" + conseils : spike (extraction des conseils) → brainstorming → spec → plan → implémentation
 - [ ] Sous-projet 4 — Image plante/pot : brainstorming (avec décision d'infra) → spec → plan → implémentation
+- [ ] Sous-projet 5 — Affichage d'erreurs lisible : brainstorming → spec → plan → implémentation (indépendant, peut être avancé n'importe quand)
 
 D'autres idées pourront être ajoutées par DestCom au fil de l'eau — les intégrer ici comme nouvelle
 section datée plutôt que de les perdre dans la conversation.
