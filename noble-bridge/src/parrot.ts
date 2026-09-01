@@ -3,7 +3,7 @@ import { log } from './logger.js';
 import { UUIDS, WATER_TRIGGER_PAYLOAD } from './uuids.js';
 
 export interface ParrotSensorReading {
-  soilMoisturePercent: number;
+  soilMoisturePercent?: number;
   temperatureC: number;
   luminosity: number;
   waterTankLevelPercent?: number;
@@ -37,8 +37,9 @@ export async function readParrotSensors(logicalId: string): Promise<ParrotSensor
   return withDevice(logicalId, async (pot) => {
     await writeCharacteristic(pot, UUIDS.live.measurePeriod, 'Activate live measure period', Buffer.from([1]), false, logicalId);
 
-    const soilMoisture = await readCharacteristic(pot, UUIDS.live.soilMoisturePercent, 'Soil moisture (calibrated)', logicalId);
-    const temperature = await readCharacteristic(pot, UUIDS.live.temperatureC, 'Temperature (calibrated)', logicalId);
+    // soilMoisturePercent is derived below from soilMoistureRaw (fa05) — see uuids.ts's
+    // 2026-09-02 correction, fa07 was never a sensor (UUID_LIVE_LED_STATE).
+    const temperature = await readCharacteristic(pot, UUIDS.live.temperatureValue, 'Temperature (calibrated)', logicalId);
     const luminosity = await readCharacteristic(pot, UUIDS.live.luminosity, 'Luminosity (calibrated)', logicalId);
 
     let waterTankLevelPercent: number | undefined;
@@ -111,7 +112,9 @@ export async function readParrotSensors(logicalId: string): Promise<ParrotSensor
     }
 
     return {
-      soilMoisturePercent: soilMoisture.readFloatLE(0),
+      // fa05 is uint16 LE, percent×10 (same fixed-point convention as the watering service's
+      // vwcIrrRaw/vwcCmdRaw), not a float32.
+      soilMoisturePercent: soilMoistureRaw != null ? soilMoistureRaw / 10 : undefined,
       temperatureC: temperature.readFloatLE(0),
       luminosity: luminosity.readFloatLE(0),
       waterTankLevelPercent,

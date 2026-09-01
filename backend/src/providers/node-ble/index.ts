@@ -434,29 +434,18 @@ export function createNodeBleProvider(): DeviceProvider {
               result: 'OK',
             });
 
-            // Independently best-effort since the 2026-09-01 fa07 outage (all 3 real Parrot Pots
-            // stuck for 46h+ on a truncated fa07 buffer that a physical battery-pull did not
-            // resolve — see docs/superpowers/specs/2026-09-01-parrot-fa07-independent-decode-fix.md):
-            // a malformed buffer on any one of these must not discard the other two, which read
-            // fine on the same cycle. Each is decoded right after its own read (not deferred to
-            // reading construction ~300 lines below) so a failure is logged with an accurate label
-            // instead of being misattributed to a connection failure, matching the pattern already
-            // used for every other best-effort field in this function (readRawBestEffort).
-            const soilMoisturePercent = await readRawBestEffort(
-              sensorService,
-              UUIDS.live.soilMoisturePercent,
-              characteristics,
-              deviceId,
-              'Soil moisture (fa07)',
-              (buf) => readFloatLESafe(buf, 'soilMoisturePercent (fa07)'),
-            );
+            // 2026-09-02 correction (ble/parrot/uuids.ts's header comment has the full story):
+            // fa07 is `UUID_LIVE_LED_STATE`, not a sensor — no longer read here at all.
+            // `soilMoisturePercent` is derived below from `soilMoistureRaw` (fa05) once that's
+            // read alongside the other raw sensors. Each remaining field stays independently
+            // best-effort (readRawBestEffort) so one malformed buffer never discards the others.
             const temperatureC = await readRawBestEffort(
               sensorService,
-              UUIDS.live.temperatureC,
+              UUIDS.live.temperatureValue,
               characteristics,
               deviceId,
-              'Temperature (fa09)',
-              (buf) => readFloatLESafe(buf, 'temperatureC (fa09)'),
+              'Temperature (fa0a)',
+              (buf) => readFloatLESafe(buf, 'temperatureC (fa0a)'),
             );
             const luminosity = await readRawBestEffort(
               sensorService,
@@ -530,6 +519,10 @@ export function createNodeBleProvider(): DeviceProvider {
               'Soil moisture raw',
               readU16,
             );
+            // fa05 is percent×10 (same fixed-point convention as the watering service's
+            // vwcIrrRaw/vwcCmdRaw) — see uuids.ts's soilMoistureRaw comment for the 2026-09-02
+            // correction that made this the real soilMoisturePercent source instead of fa07.
+            const soilMoisturePercent = soilMoistureRaw != null ? soilMoistureRaw / 10 : undefined;
             const eaRaw = await readRawBestEffort(sensorService, UUIDS.live.eaCal, characteristics, deviceId, 'Ea raw', (b) =>
               b.readFloatLE(0),
             );
@@ -993,8 +986,11 @@ export function createNodeBleProvider(): DeviceProvider {
         try {
           if (signal.aborted) return;
 
-          const soilChar = await trackedCharacteristic(sensorService, UUIDS.live.soilMoisturePercent, characteristics);
-          const tempChar = await trackedCharacteristic(sensorService, UUIDS.live.temperatureC, characteristics);
+          // fa05/fa0a per the 2026-09-02 correction (uuids.ts) — fa07 (previously used here) is
+          // `UUID_LIVE_LED_STATE`, has no Notify property at all, and made this startNotifications()
+          // call fail immediately with "Operation is not supported" on real hardware.
+          const soilChar = await trackedCharacteristic(sensorService, UUIDS.live.soilMoistureRaw, characteristics);
+          const tempChar = await trackedCharacteristic(sensorService, UUIDS.live.temperatureValue, characteristics);
           const luxChar = await trackedCharacteristic(sensorService, UUIDS.live.luminosity, characteristics);
           if (signal.aborted) return;
 
@@ -1040,7 +1036,10 @@ export function createNodeBleProvider(): DeviceProvider {
               // the whole live session over one bad sample.
               const onSoil = (buf: Buffer) => {
                 try {
-                  pending.soilMoisturePercent = readFloatLESafe(buf, 'soilMoisturePercent (fa07)');
+                  // fa05 is uint16 LE, percent×10 (uuids.ts's soilMoistureRaw comment) — not a
+                  // float32, unlike temp/lux, so no readFloatLESafe here.
+                  if (buf.length < 2) throw new RangeError(`Malformed soilMoistureRaw (fa05) buffer: ${buf.length} byte(s), expected 2`);
+                  pending.soilMoisturePercent = buf.readUInt16LE(0) / 10;
                 } catch (error) {
                   log({
                     direction: 'READ',
@@ -1055,7 +1054,7 @@ export function createNodeBleProvider(): DeviceProvider {
               };
               const onTemp = (buf: Buffer) => {
                 try {
-                  pending.temperatureC = readFloatLESafe(buf, 'temperatureC (fa09)');
+                  pending.temperatureC = readFloatLESafe(buf, 'temperatureC (fa0a)');
                 } catch (error) {
                   log({
                     direction: 'READ',

@@ -1,5 +1,16 @@
 # Parrot official app BLE sniffing — findings (2026-08-29)
 
+> **SUPERSEDED 2026-09-02** — section 3's conclusion below (`fa07`=soil moisture, `fa09`=temperature)
+> is wrong. `docs/PARROT_BLE_REVERSE_ENGINEERING.md` (decompiled source, "Certain" confidence)
+> names `fa07` `UUID_LIVE_LED_STATE` (not a sensor at all), `fa05`=soil moisture,
+> `fa0a`=temperature — confirmed live via 2 independent Bluetooth stacks and 2 real watering
+> triggers. This session's heat-stimulus test wasn't fabricated, but its interpretation was: a
+> hand-held probe's moisture/capacitance reading (`fa09`, moisture-adjacent) responds to touch
+> far faster than a temperature sensor's thermal mass responds to hand warmth, which likely
+> explains why `fa09` moved and `fa0a` looked "flat" over a 15-20s hold. See CLAUDE.md's "Round 5"
+> entry and `docs/superpowers/specs/2026-09-02-parrot-fa07-led-state-not-moisture.md` for the full
+> correction. Left as-is below for the historical record.
+
 Real BLE captures of the official Flower Power app talking to 2 real Parrot Pots
 (`A0:14:3D:CD:A3:D3` "Figuier Pleureur"/Ficus benjamina, and a second exposed-sensor unit with no
 plant), using PacketLogger (macOS's Bluetooth HCI snoop tool) + `tshark` for analysis. Raw

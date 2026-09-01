@@ -495,6 +495,59 @@ production server:
       species floor), so no immediate stress was indicated at the time sync broke — but this gap is
       the direct motivation for treating this fix as urgent rather than deferring further root-cause
       investigation.
+  - **Round 5 — real root cause found: `fa07` was never soil moisture at all** (2026-09-02, on
+    `main`) — Round 4 contained the blast radius but didn't explain *why* `fa07` was truncated.
+    DestCom pushed back hard on the "device firmware is broken" framing (`fa07` had been confirmed
+    working via a controlled heat-stimulus test on 2026-08-29) and pointed out the official app
+    works perfectly for every feature — meaning it can't actually depend on whatever `fa07` was
+    supposed to be. That challenge was correct. Full writeup:
+    `docs/superpowers/specs/2026-09-02-parrot-fa07-led-state-not-moisture.md`.
+    - **The 2026-08-29 mapping was itself wrong.** `docs/PARROT_BLE_REVERSE_ENGINEERING.md`
+      (decompiled official app, "Certain" confidence for most entries) names `fa07`
+      `UUID_LIVE_LED_STATE` — not a sensor. A fresh PacketLogger capture of the real iOS app
+      running natively on DestCom's Apple Silicon Mac (`docs/ble-captures/16_test_2SEPT.pklg`,
+      `17_test_2SEPT.pklg`) confirmed `fa07`'s real GATT declaration is Read+Write with **no
+      Notify property at all**, and the app never reads, writes, or subscribes to it in either
+      capture, across 2 different real pots (`87:33`, `A3:D3`) and 3 separate test sessions
+      (moisture touch-test, temperature blow-test, 2 real watering triggers). A 1-byte cold read
+      is the *correct* length for a single-byte LED-state register — not corruption.
+    - **Reproduced identically from a second, completely independent Bluetooth stack**: a
+      throwaway `@abandonware/noble`/CoreBluetooth script run directly on the Mac (physically next
+      to the pots) got the exact same 1-byte `0x00` from `fa07` as the Linux/BlueZ production
+      server, ruling out anything BlueZ- or Linux-specific.
+    - **Real fix, `UUID_LIVE_SOIL_PERCENT_VWC` (`fa05`) is the actual soil-moisture characteristic**
+      per the same "Certain"-confidence decompiled-source table — already read by this codebase
+      every poll, but only ever stored as an unused-for-scoring debug field
+      (`RawSensorLog.soilMoistureRaw`). Confirmed live twice: a cold read on a real planted pot
+      (`A3:D3`) returned a plausible `304` (percent×10 → 30.4%, the same fixed-point convention
+      already used by the watering service's `vwcIrrRaw`/`vwcCmdRaw`), and in `17_test_2SEPT.pklg`
+      the wire-equivalent characteristic (`fa09`, see below) jumped from 46.6% to 69.6% right after
+      DestCom triggered a real watering through the official app on `A3:D3`, with an independent,
+      separate characteristic (`f907`, the tank-level drain) corroborating in the same window.
+    - **`temperatureC` was also wrong** — switched from `fa09` to `fa0a`
+      (`UUID_LIVE_TEMPERATURE_VALUE`, "Certain"). `fa09` is `UUID_LIVE_VMC_VALUE`, moisture-adjacent
+      (the touch/watering reactivity above), not temperature; `fa0a` read a plausible `21.7°C` live
+      on a real pot. `luminosity` (`fa0b`) was never wrong and is unchanged.
+    - **`ParrotPotReading.soilMoisturePercent`/`temperatureC` (`providers/types.ts`) stay optional**
+      from Round 4 — no reversal needed, the independent-decode fix's shape is still correct, only
+      the UUID sources and one decode formula (uint16×10, not float32) changed.
+      `subscribeLive()`'s Live Mode crash (Round 4's "Operation is not supported", `startNotifications()`
+      on a characteristic with no Notify property) is fixed as a side effect: `fa05`/`fa0a` both
+      genuinely support Notify (confirmed in the same captures), unlike `fa07`.
+    - **Live-fire testing discipline**: DestCom explicitly asked for the watering-trigger
+      confirmation test to run only against `87:33` (no plant) — a first attempt accidentally
+      targeted `A3:D3` (a real planted pot) and hung mid-write with no confirmation either way.
+      Killed immediately per DestCom's correction; a read-only follow-up found `algorithm_status=1`
+      ("Ready", not "2=Watering"), suggesting no full pump cycle fired, but this was never fully
+      confirmed — worth keeping in mind if `A3:D3`'s reservoir looks unexpectedly lower than
+      expected next check. No further live triggers were run against either real planted pot for
+      the rest of this investigation; the final confirmation reused DestCom's own already-completed
+      watering from `17_test_2SEPT.pklg` instead of triggering a new one.
+    - **Verified**: `cd backend && pnpm exec tsc --noEmit && pnpm test` (197/197),
+      `cd frontend && pnpm typecheck`, and `cd noble-bridge && pnpm exec tsc --noEmit` all clean.
+      **Not yet deployed** — next deploy should confirm real, plausible `soilMoisturePercent`
+      values (not null) start appearing for all 3 real pots, and that a real Live Mode session no
+      longer ends abnormally within seconds of starting.
 - **Device location + indoor/outdoor, and post-deploy triage fixes** (commit `3d5b312`, same day as
   the incident above, not previously documented here) — bundled alongside round 1's match-rule fix:
   - `Device` gained `location` (free text) and `environment` (`INDOOR`/`OUTDOOR`, nullable) columns

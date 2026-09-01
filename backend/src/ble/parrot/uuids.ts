@@ -4,7 +4,7 @@
 // Real GATT service containing the watering characteristics (f901-f912) — also the UUID advertised
 // in the advertisement to identify a Parrot Pot (as opposed to a plain Flower Power sensor).
 export const WATERING_SERVICE_UUID = '39e1f900-84a8-11e2-afba-0002a5d5c51b';
-// Real "Live" GATT service containing the sensor characteristics (fa06, fa09, fa0a, fa0b) —
+// Real "Live" GATT service containing the sensor characteristics (fa05, fa06, fa0a, fa0b) —
 // present on EVERY Parrot device (Pot or plain Flower Power), also the UUID advertised
 // in the advertisement by a plain Flower Power that doesn't have the Watering service.
 export const SENSOR_SERVICE_UUID = '39e1fa00-84a8-11e2-afba-0002a5d5c51b';
@@ -23,16 +23,22 @@ export const UUIDS = {
     // the firmware doesn't refresh its values (readings silently frozen). Write 0 at the end of the
     // session. See docs/STROYPLANT_SPEC.md section 8.
     measurePeriod: '39e1fa06-84a8-11e2-afba-0002a5d5c51b',
-    // float32 LE, already calibrated by the firmware, no conversion formula needed.
-    // Confirmed via real BLE sniffing of the official app on real hardware (2026-08-29,
-    // docs/superpowers/specs/2026-08-29-parrot-official-app-ble-sniffing-findings.md) — fa07 rises
-    // in real time during an actual watering, fa09 rises/falls in real time under a controlled
-    // heat stimulus. Previously assumed fa09=moisture/fa0a=temperature (this project's own docs
-    // and the transcribed official PDF both said so); both were wrong, swapped here after two
-    // independent real-hardware confirmations. fa0b (luminosity) unchanged — not re-verified this
-    // pass, fa0a itself is confirmed light-reactive (not luminosity's official slot) and unused.
-    soilMoisturePercent: '39e1fa07-84a8-11e2-afba-0002a5d5c51b',
-    temperatureC: '39e1fa09-84a8-11e2-afba-0002a5d5c51b',
+    // 2026-09-02 correction (docs/superpowers/specs/2026-09-02-parrot-fa07-led-state-not-moisture.md)
+    // — the 2026-08-29 fa07/fa09 "swap" entry below was itself wrong. `docs/PARROT_BLE_
+    // REVERSE_ENGINEERING.md` (decompiled official app, "Certain" confidence) names fa07
+    // `UUID_LIVE_LED_STATE` — not a sensor at all, which is exactly why a cold read of it kept
+    // coming back as a 1-byte value (correct length for an LED-state byte, wrong characteristic
+    // for a soil-moisture float): confirmed identically from both the production server (BlueZ)
+    // and a Mac (`noble`/CoreBluetooth) as of today, so this was never a per-stack bug to chase.
+    // fa07 is no longer read as a sensor anywhere in this codebase. `soilMoisturePercent` is now
+    // derived from `soilMoistureRaw` (fa05, `UUID_LIVE_SOIL_PERCENT_VWC`, "Certain") — already
+    // read every poll for the raw sensor debug log, just never used for the calibrated value
+    // before. `temperatureC` now reads `temperatureValue` (fa0a, `UUID_LIVE_TEMPERATURE_VALUE`,
+    // "Certain") instead of fa09 — fa09 (`UUID_LIVE_VMC_VALUE`) is moisture-adjacent, not
+    // temperature (confirmed live: it jumped from 46.6% to 69.6% right after a real watering
+    // trigger on a real planted pot, docs/ble-captures/17_test_2SEPT.pklg) but on a different
+    // scale than fa05's calibrated percent, and isn't used by this codebase for now.
+    temperatureValue: '39e1fa0a-84a8-11e2-afba-0002a5d5c51b',
     luminosity: '39e1fa0b-84a8-11e2-afba-0002a5d5c51b',
     // Soil conductivity (fertility index) — RAW characteristic, confirmed "Certain" in
     // docs/PARROT_BLE_REVERSE_ENGINEERING.md. This project originally tried the "calibrated"
@@ -47,6 +53,10 @@ export const UUIDS = {
     lightRaw: '39e1fa01-84a8-11e2-afba-0002a5d5c51b',
     soilTempRaw: '39e1fa03-84a8-11e2-afba-0002a5d5c51b',
     airTempRaw: '39e1fa04-84a8-11e2-afba-0002a5d5c51b',
+    // NOT vestigial, unlike its siblings above — `UUID_LIVE_SOIL_PERCENT_VWC` per the decompiled
+    // doc, "Certain". uint16 LE, percent×10 (same fixed-point convention as the watering service's
+    // vwcIrrRaw/vwcCmdRaw) — this is now the real source for `soilMoisturePercent` (see the
+    // 2026-09-02 correction above), not just a debug-log field.
     soilMoistureRaw: '39e1fa05-84a8-11e2-afba-0002a5d5c51b',
     // "Calibrated" Ea/Ecb/EcPorous — confirmed "Characteristic not available" on both real Parrot
     // Pots (docs/HEALTH_ENGINE.md). Still attempted every poll and logged raw (null expected).
