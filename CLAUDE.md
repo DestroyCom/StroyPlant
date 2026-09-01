@@ -1484,12 +1484,13 @@ production server:
     deployed to the real production server or tested against real hardware beyond the Part 2
     checksum-persistence confirmation on pot 8733.
 - **Base de plantes** — nouvelle page de recherche/consultation ✅ (2026-09-01, on branch
-  `feature/plant-database-page`) — a browsable/searchable UI over the 9120 already-imported
+  `worktree-plant-database-page`) — a browsable/searchable UI over the 9120 already-imported
   `PlantProfile` rows (WatchFlower + Parrot overlay, see the Parrot plant database import entry
   above), the first consumer this data has ever had beyond the Health Engine's species-assignment
   picker. New `plants` tRPC router (`search` — name/common-name/French-search-name substring match,
-  orchid-only, and advanced attribute filters, paginated; `listFilters` — the filter groups safe to
-  offer; `getById` — full detail incl. resolved attributes/fertilizer types) + two frontend routes,
+  `tags`-bitmask and advanced attribute filters, paginated; `listFilters` — the attribute filter
+  groups safe to offer; `listTags` — the 9 confirmed `tags` bit/label pairs; `getById` — full detail
+  incl. resolved attributes/fertilizer types) + two frontend routes,
   `/plants` (grid, search, filter dialog) and `/plants/$id` (tabs: Description/Entretien, gauges for
   Arrosage/Ensoleillement/Engrais). Key decisions:
   - **`sunCategory`/`waterCategory`/`fertilizerCategory` are Parrot's own real categorical ratings
@@ -1506,18 +1507,37 @@ production server:
     Parrot BLE docs hierarchy). A code with no confirmed label is never shown to the user — the
     module is the single source of truth for which codes are safe to surface, ~50 codes remain
     uncovered and are just silently omitted from `resolvedAttributes`, not guessed at.
-  - **Orchid detection trusts only `PlantProfile.tags` bit 256** — the field is a wider bitmask
-    (confirmed real usage beyond bit 256 during the autonomous-watering work's cactus/orchid
-    investigation, see the 4-mode watering system entry above) but only the orchid bit's meaning is
-    confirmed; the other ~8 bits are not guessed at or surfaced anywhere on this page.
+  - **All 9 real `PlantProfile.tags` bits resolved, not just orchid** (`backend/src/health/
+    parrotTags.ts`, added 2026-09-01 as a same-day follow-up once this was confirmed) — initially
+    shipped orchid-only (bit 256) since that was the only bit this project had confirmed at the
+    time. Reopened the same day: reading `PlantDBManager.java`'s `MASK_*` constants directly in the
+    decompiled Android source already used for the 4-mode watering system's orchid/cactus
+    investigation (`/Users/destcom/Documents/PERSO/parrot-pot-debug/analyse/decoded_jadx/`) gave the
+    exact bit for every category (1=cactus/succulente, 2=feuillage décoratif, 4=fleurie,
+    8=fruits/légumes, 16=intérieur, 32=extérieur, 64=bien-être, 128=arbuste, 256=orchidée), plus its
+    French label from `res/values-fr/strings.xml`'s `tags_categoryName_*` — independently confirmed
+    against this project's own earlier empirical single-bit spot-checks (e.g. bit 1 → real cacti in
+    `dev.db`), which had been correct but left unconfirmed at ship time. A 10th constant,
+    `MASK_CANNABIS=512`, exists in the same source but has no localized label anywhere in the app —
+    deliberately excluded, matching the app's own choice never to surface it. `plants.search`'s
+    `orchidOnly: boolean` generalized to `tags: number[]` (OR semantics — a species can carry
+    several tags at once), and `isOrchid: boolean` generalized to `tagLabels: string[]` on both
+    `search` and `getById`. Frontend: the single "Orchidées uniquement" checkbox replaced by a row
+    of 9 toggleable quick-filter chips on `/plants`, and every card/detail page shows all matching
+    tags as badges instead of a special-cased orchid-only one.
   - **`plants_.$id.tsx` filename** (not `plants.$id.tsx`) — this project's TanStack Router
     un-nesting trap, see the new Gotchas bullet below; this is the file that prompted writing that
     bullet down as a recurring pattern rather than a one-off.
-  - **Not done**: the ~50 uncovered attribute codes above, the ~8 unconfirmed `tags` bits beyond
-    orchid, no plant images (Parrot's dataset has them, deliberately out of scope — see the design
-    doc), and no "assign this species to a device" action from this page — species assignment stays
-    solely on the device detail page's existing `SpeciesPickerDialog`/`species-search.tsx`, this page
-    is browse/consult only.
+  - **Not done**: the ~50 uncovered attribute codes above — confirmed genuinely unresolvable while
+    investigating the `tags` bitmask (below), not merely unlooked-for: the Android app's own filter
+    UI (`LibraryFilterAmazingAdapter.java`) offers the exact same 39 options as the iOS resources
+    (6 type + 5 shape + 9 bloom color + 12 leaf color + 3 lifetime + 4 bloom season), and its bloom
+    season filter uses a *third*, still different value scheme (`"spring"/"summer"/"FALL"/"WINTER"`)
+    from both iOS and this project's own imported `SN` codes — two independent official app builds
+    agree these codes were never given a user-facing label anywhere. No plant images (Parrot's
+    dataset has them, deliberately out of scope — see the design doc), and no "assign this species
+    to a device" action from this page — species assignment stays solely on the device detail page's
+    existing `SpeciesPickerDialog`/`species-search.tsx`, this page is browse/consult only.
   - **Final-review fix wave (2026-09-01)**, 5 findings from the whole-branch review, all fixed in one
     pass: (1, Critical) the Ensoleillement gauge on `/plants/$id` was passing `lightMinMmol`/
     `lightMaxMmol` (stored in **mmol**/m²/day) straight into the mol/m²/day display with no /1000
