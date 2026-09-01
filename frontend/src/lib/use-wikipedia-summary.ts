@@ -11,11 +11,30 @@ export interface WikipediaSummary {
   thumbnailUrl: string | null;
 }
 
+// The summary API needs an exact (or redirect-resolvable) page title — it has no fuzzy matching.
+// Cultivar/hybrid botanical names never have their own Wikipedia article by nomenclature
+// convention (a cultivar is a cultivated variant, not a distinct taxon), so querying them verbatim
+// reliably 404s: strips a quoted cultivar epithet (e.g. "Abutilon x 'Bella Yellow'" → "Abutilon"),
+// collapses the standalone hybrid marker " x " into the genus+epithet it separates (e.g. "Rosa x
+// damascena" → "Rosa damascena", which does commonly have an article), and drops a trailing
+// "spp."/"sp." (genus with no determined species, e.g. "Acacia spp." → "Acacia") — falling back to
+// the genus/base-species article instead of nothing.
+function cleanBotanicalNameForWikipedia(name: string): string {
+  return name
+    .replace(/'[^']*'/g, '')
+    .replace(/\s+x\s+/g, ' ')
+    .replace(/\s+x\s*$/i, '')
+    .replace(/\s+spp?\.?\s*$/i, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 // Wikipedia's REST summary API (`/api/rest_v1/page/summary/<title>`) sets permissive CORS headers
 // specifically to support this exact browser-embedding use case — no backend proxy needed, and
 // nothing is stored: images/links are resolved live, on demand, per species (never all 9120 up
 // front — React Query's cache naturally limits this to whatever the user has actually viewed).
-async function fetchWikipediaSummary(title: string): Promise<WikipediaSummary | null> {
+async function fetchWikipediaSummary(rawTitle: string): Promise<WikipediaSummary | null> {
+  const title = cleanBotanicalNameForWikipedia(rawTitle) || rawTitle;
   const response = await fetch(`https://${WIKIPEDIA_LANGUAGE}.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(title)}`);
   if (!response.ok) return null;
   const data = await response.json();

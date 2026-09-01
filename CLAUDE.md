@@ -1694,9 +1694,27 @@ production server:
   - **Docs**: reworded every CDN/edge-proxy Gotchas/history mention to generic terms (no product
     names or internal paths) per DestCom's explicit request — a public repo's committed docs
     shouldn't hand out infra topology detail, even though this doesn't rewrite the already-public
-    git history that predates this pass.
+    git history that predates this pass. Also deleted 3 already-merged stale branches (local +
+    origin: `worktree-plant-database-page`, `feature/parrot-plant-database-import`,
+    `feature/parrot-device-side-autonomous-watering`) that still carried the old un-reworded text —
+    this removed the duplicate exposure of those branch tips, but since all 3 were fully merged
+    ancestors of `main`, the original wording is still recoverable from `main`'s own commit history
+    (`git log -p`), which DestCom explicitly chose not to rewrite.
+  - **Wikipedia title-matching fix** (same day, DestCom reported many 404s in the console): cultivar
+    and hybrid botanical names (e.g. `Abutilon x 'Bella Yellow'`, `Acacia spp.`) never have their own
+    Wikipedia article by nomenclature convention, so querying them verbatim against the summary
+    API's exact-title lookup reliably 404s — expected per the original design (~50%+ of species have
+    no French article) but avoidable for this specific subset. `use-wikipedia-summary.ts`'s new
+    `cleanBotanicalNameForWikipedia()` strips a quoted cultivar epithet, collapses the standalone " x
+    " hybrid marker into the genus+epithet it separates (e.g. `Rosa x damascena` → `Rosa damascena`,
+    which commonly does have an article), and drops a trailing `spp.`/`sp.` — falling back to the
+    genus/base-species article's photo instead of nothing. Only applied to the summary-API lookup,
+    not to `wikipediaSearchUrl()`'s fallback search link (MediaWiki's free-text search already
+    tolerates the messier literal name better than the strict exact-title endpoint does).
   - **Verified**: `cd backend && pnpm exec tsc --noEmit` and `cd frontend && pnpm typecheck` both
-    clean, `npx biome check` clean on every touched file. **Not yet re-verified against the live
+    clean, `npx biome check` clean on every touched file; `cleanBotanicalNameForWikipedia` manually
+    verified against the exact reported examples plus a hybrid case (`Rosa x damascena` → `Rosa
+    damascena`) and a plain unaffected name. **Not yet re-verified against the live
     production CSP** — next real page load of `/plants`/`/plants/$id` should confirm no more CSP
     console errors and that a real thumbnail image renders.
 - **Production bug: CSP also blocked the GlitchTip/Sentry error reporting itself** ✅ (2026-09-01,
