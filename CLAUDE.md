@@ -1000,16 +1000,16 @@ production server:
     need a real stale production container or a deliberately wrong `GIT_SHA` build) — the
     match/no-warning case was confirmed via a local dev build (`gitSha: null` → no badge, "build
     de développement local" message).
-- **`plantDr.calibrateWet` made non-blocking — Cloudflare 502 root-caused** (2026-08-29) — DestCom
+- **`plantDr.calibrateWet` made non-blocking — edge-proxy 502 root-caused** (2026-08-29) — DestCom
   ran a real wet-point capture on `PARROT-A073` (Pot blanc) after acquiring 3 more secondhand
   Parrot Pots and revisiting the still-never-calibrated device flagged in the soil-conductivity
   work; the UI showed "Échec de la calibration" with a description mentioning "DOCTYPE" every time.
-  Root-caused with real evidence rather than guessed (systematic-debugging): first hypothesis
-  (SWAG's reverse-proxy timeout) was checked directly against `/config/nginx/proxy.conf` on the
-  server and **falsified** (240s, far more than needed) before being ruled out — the real cause,
-  confirmed from the browser's own Network tab, was **Cloudflare** (`plant.stroyco.eu` sits behind
-  it, in front of SWAG) returning its own 502 HTML page once its origin timeout (~100s, not
-  configurable on a standard plan) elapsed, which the tRPC client then failed to `JSON.parse`,
+  Root-caused with real evidence rather than guessed (systematic-debugging): first hypothesis (the
+  origin reverse-proxy's own read timeout) was checked directly against its config on the server
+  and **falsified** (240s, far more than needed) before being ruled out — the real cause, confirmed
+  from the browser's own Network tab, was the **CDN/edge proxy in front of the origin** returning
+  its own 502 HTML page once its own origin timeout (~100s, not configurable on a standard plan)
+  elapsed, which the tRPC client then failed to `JSON.parse`,
   surfacing as `Unexpected token '<', "<!DOCTYPE "... is not valid JSON`. `calibrateWet` ran 2
   sequential `connectionQueue`-serialized BLE operations (read then write), each with its own
   up-to-3-attempt/backoff/adapter-restart retry policy — easily exceeding ~100s when queued behind
@@ -1036,7 +1036,7 @@ production server:
     immediately, `calibrationRunStatus` reflects `running` then `success` with the correct written
     values, `getCalibration` reflects them afterward, and the synchronous no-species-assigned guard
     still fails immediately as before (not deferred into the async path). **Not yet re-verified
-    against the real Cloudflare/SWAG path in production** — next real capture attempt on Pot blanc
+    against the real production edge-proxy path** — next real capture attempt on Pot blanc
     (or any future manual BLE action) should confirm the button now returns instantly with no
     DOCTYPE error, regardless of how long the actual BLE sequence takes underneath.
 - **In-app notification bell** ✅ (2026-08-29) — the first, minimal piece of the "alertes réservoir
@@ -1365,7 +1365,7 @@ production server:
     review measured the real cost directly): this import runs once, automatically, the first time
     `docker-entrypoint.sh` boots against a database that doesn't have it yet — no manual step needed
     — but expect it to genuinely block: `docker-entrypoint.sh` runs it before the HTTP server starts
-    listening, so the app is unreachable (502s through SWAG/Cloudflare) for the full ~2.5 minutes
+    listening, so the app is unreachable (502s through the reverse-proxy chain) for the full ~2.5 minutes
     measured locally, plausibly longer on the production server's CPU (the cost is CPU-bound, not
     I/O-bound, so it doesn't parallelize with anything else happening at boot). **Do not interrupt
     this first boot** (no `docker compose down`, no reboot) — each import step's idempotency gate
@@ -1494,7 +1494,7 @@ production server:
     - **Frontend**: `AutonomousWateringSection` rewritten from a read-only threshold display into 4
       clickable mode buttons + a Custom-mode input form, polling `wateringConfig.pushRunStatus` for
       push completion (same pattern as the Plant Dr calibration page — the BLE sequence can exceed
-      Cloudflare's ~100s origin timeout, so the mutation only confirms the push was *queued*).
+      the edge proxy's ~100s origin timeout, so the mutation only confirms the push was *queued*).
     - **Final-review fixes (2026-08-31, caught only by the whole-branch review, not any single task's
       diff)**: (1) Task 4 made `schedule.upsert`'s 4 new fields non-optional zod, silently breaking a
       second, untouched caller (`AutoWateringSection`, the pre-existing server-toggle component) —
@@ -1672,6 +1672,33 @@ production server:
       `cd frontend && pnpm typecheck` both clean; `npx biome check` clean on all 3 touched files;
       the debounce-guard fix, the `parrotOnly` filter, and the equal-height card fix were each
       confirmed live in a real browser (Playwright) against the mock provider, not just typechecked.
+- **Production bug: CSP blocked Wikipedia + raw proxy-timeout errors shown to the user** ✅
+  (2026-09-01) — DestCom reported two issues on the live "Base de plantes" pages: the browser
+  console showing `Refused to connect because it violates the document's Content Security Policy`
+  for every `fr.wikipedia.org` summary fetch (`use-wikipedia-summary.ts`), and error toasts
+  occasionally showing raw `Unexpected token '<', "<!DOCTYPE "...` text instead of a real message
+  (the edge-proxy-timeout symptom already documented in the Gotchas section).
+  - **CSP fix**: `backend/src/api/server.ts`'s helmet `connectSrc`/`imgSrc` only ever allowed
+    `api.github.com` (the version-check card) — never updated when the Wikipedia integration was
+    added the same day as the "Base de plantes" page itself, so it worked in dev (Vite's dev server
+    has no CSP) but was silently blocked in the real production build. Added
+    `https://fr.wikipedia.org` (connectSrc, the summary API call) and
+    `https://upload.wikimedia.org` (imgSrc, the thumbnail images the summary response points at).
+  - **Error-display fix**: new `frontend/src/lib/format-error.ts` (`getErrorMessage()`) detects the
+    `<!DOCTYPE` signature the browser's `JSON.parse` SyntaxError always quotes back and returns a
+    generic French "server is taking too long, check before retrying" message instead — every one
+    of the ~20 `toast.error(...) { description: error.message }` / inline `{error.message}` sites
+    across the frontend now goes through it, so this failure mode reads the same everywhere instead
+    of leaking raw HTML/JSON-parse text at whichever call site happens to hit it next. Deliberately
+    a display-level safety net only, not a fix for the underlying timeout (see the Gotchas entry).
+  - **Docs**: reworded every CDN/edge-proxy Gotchas/history mention to generic terms (no product
+    names or internal paths) per DestCom's explicit request — a public repo's committed docs
+    shouldn't hand out infra topology detail, even though this doesn't rewrite the already-public
+    git history that predates this pass.
+  - **Verified**: `cd backend && pnpm exec tsc --noEmit` and `cd frontend && pnpm typecheck` both
+    clean, `npx biome check` clean on every touched file. **Not yet re-verified against the live
+    production CSP** — next real page load of `/plants`/`/plants/$id` should confirm no more CSP
+    console errors and that a real thumbnail image renders.
 
 ## Repo structure
 
@@ -1941,16 +1968,21 @@ Dockerfile, docker-entrypoint.sh, docker-compose.prod.yml, docker-compose.test.y
   handful of queries. Fixed by raising it explicitly: `Fastify({ maxParamLength: 2000 })` in
   `api/server.ts`. If this ever gets hit again as more simultaneous queries get added, raise it
   further rather than treating 100 as a real constraint — it never reflected sound API design.
-- **Cloudflare's origin timeout (~100s) is shorter than SWAG's own `proxy_read_timeout` (240s,
-  `/config/nginx/proxy.conf`)** — `plant.stroyco.eu` sits behind Cloudflare in front of SWAG. Any
-  mutation whose worst-case duration can exceed ~100s (e.g. 2+ sequential `connectionQueue`-
-  serialized BLE operations, each with its own up-to-3-attempt/backoff/adapter-restart retry
-  policy, especially if queued behind another device's poll) gets Cloudflare's own 502 HTML error
-  page instead of the real backend response — surfacing to the frontend as an unparseable-JSON
-  "`Unexpected token '<', "<!DOCTYPE "... is not valid JSON`" error, even on runs where the backend
-  went on to complete successfully afterward (found 2026-08-29 on `plantDr.calibrateWet`, see the
-  entry below). Not fixable by raising a timeout we don't control — the real fix is to never hold
-  the HTTP response open for a slow BLE sequence in the first place.
+- **The CDN/edge proxy in front of production has a shorter origin timeout (~100s) than the origin
+  reverse-proxy's own read timeout (240s)** — production sits behind an edge proxy layer in front
+  of the origin reverse-proxy (infra topology deliberately not detailed here, see the private ops
+  notes). Any mutation whose worst-case duration can exceed ~100s (e.g. 2+ sequential
+  `connectionQueue`-serialized BLE operations, each with its own up-to-3-attempt/backoff/
+  adapter-restart retry policy, especially if queued behind another device's poll) gets the edge
+  proxy's own 502 HTML error page instead of the real backend response — surfacing to the frontend
+  as an unparseable-JSON "`Unexpected token '<', "<!DOCTYPE "... is not valid JSON`" error, even on
+  runs where the backend went on to complete successfully afterward (found 2026-08-29 on
+  `plantDr.calibrateWet`, see the entry below). Not fixable by raising a timeout we don't control —
+  the real fix is to never hold the HTTP response open for a slow BLE sequence in the first place.
+  As a display-level safety net (2026-09-01, not a substitute for the real fix above),
+  `frontend/src/lib/format-error.ts`'s `getErrorMessage()` detects the `<!DOCTYPE` signature in a
+  caught error and shows a generic "the server is taking too long" French message instead of the
+  raw unparseable-JSON text — every mutation error toast/inline message in the app goes through it.
 - Prisma `DATABASE_URL` is relative to `prisma/schema.prisma`, not the cwd (see above).
 - Xiaomi LYWSD03MMC: GATT is mandatory, no passive reading possible on stock firmware (see above).
 - `noble-bridge` (macOS) never exposes the real MAC (see above).
