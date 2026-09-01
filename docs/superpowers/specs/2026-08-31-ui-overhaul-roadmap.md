@@ -123,6 +123,15 @@ conversion raw→lux/klux que l'app officielle applique n'est pas connue de ce p
 (décompilation existante, ou nouvelle capture BLE) avant de finaliser la spec de ce sous-projet, ne
 pas deviner une formule.
 
+**Nouveau point ajouté par DestCom (2026-09-01)** — température live incohérente : le mode live
+affiche des valeurs autour de 39°C alors que la température ambiante réelle chez DestCom est
+d'environ 20°C. Pas encore diagnostiqué (capteur `39e1fa09`/`airTempRaw` mal décodé ? confusion
+sonde sol/air, cf. l'historique `fixSoilMoistureTemperatureSwap.ts` du 2026-08-29 sur le swap
+fa07/fa09 déjà rencontré une fois sur ce projet ? calibration réelle du device ?) — à investiguer
+empiriquement (capture BLE réelle ou lecture directe sur un pot en conditions connues) avant de
+conclure, ne pas deviner une correction. À traiter dans le même sous-projet que l'unité de
+luminosité puisque les deux touchent le même `LiveModeSection`/mode live par défaut.
+
 ---
 
 ## Sous-projet 3 — Onglet "Plante" sur la page detail
@@ -207,8 +216,14 @@ conception visuelle de chaque sous-projet plutôt qu'ici.
 
 ## Suivi
 
-- [x] Sous-projet 1 — Base de plantes : spike mapping filtres fait (2026-08-31) → brainstorming fait → **spec en cours de rédaction**
-- [ ] Sous-projet 2 — Mode live par défaut (+ unité luminosité live à corriger) : brainstorming → spec → plan → implémentation
+- [x] Sous-projet 1 — Base de plantes : spike mapping filtres fait (2026-08-31) → brainstorming →
+  spec → plan → **implémenté** (2026-09-01, voir `CLAUDE.md` "Base de plantes", incl. les
+  post-PR follow-ups du même jour)
+- [ ] Sous-projet 2 — Mode live par défaut (+ unité luminosité live à corriger, + température live
+  incohérente) : brainstorming fait (2026-09-02) → **spec écrite**
+  (`2026-09-02-live-mode-default-design.md`, en relecture) → plan → implémentation. Le bug de
+  température s'est avéré déjà corrigé sur `main` avant même ce brainstorming (voir la spec, section
+  "Hors scope") — reste à déployer, pas à concevoir.
 - [ ] Sous-projet 3 — Onglet "Plante" + conseils : spike (extraction des conseils) → brainstorming → spec → plan → implémentation
 - [ ] Sous-projet 4 — Image plante/pot : brainstorming (avec décision d'infra) → spec → plan → implémentation
 - [ ] Sous-projet 5 — Affichage d'erreurs lisible : brainstorming → spec → plan → implémentation (indépendant, peut être avancé n'importe quand)
