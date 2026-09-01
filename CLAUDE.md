@@ -1699,6 +1699,19 @@ production server:
     clean, `npx biome check` clean on every touched file. **Not yet re-verified against the live
     production CSP** — next real page load of `/plants`/`/plants/$id` should confirm no more CSP
     console errors and that a real thumbnail image renders.
+- **Production bug: CSP also blocked the GlitchTip/Sentry error reporting itself** ✅ (2026-09-01,
+  same day as the entry above) — DestCom pasted real production browser console output showing
+  every GlitchTip envelope send (`instrument.ts`'s frontend SDK, direct browser→DSN-host fetch)
+  blocked by the same class of miss: `connectSrc` was never updated for it either, so error
+  monitoring silently sent nothing in production despite `SENTRY_DSN` being configured server-side.
+  Fixed by deriving the DSN's origin at server startup (`new URL(env.sentryDsn).origin`) and
+  appending it to `connectSrc` only when `env.sentryDsn` is set, instead of hardcoding this
+  deployment's real error-reporting domain into the committed file — keeps the existing "DSN is a
+  runtime-only value, never build-time" property (see the GlitchTip Project status entry) and
+  avoids naming the domain in committed docs (no-infra-details-public preference). **Verified**:
+  `cd backend && pnpm exec tsc --noEmit` and `cd frontend && pnpm typecheck` both clean. **Not yet
+  re-verified against the live production CSP** — next deploy should confirm no more
+  `errors.<domain>` CSP console errors and that a real error event lands in GlitchTip.
 
 ## Repo structure
 

@@ -31,6 +31,15 @@ export async function buildServer(provider: DeviceProvider, connectionQueue: Con
   // (version-settings-section.tsx); fr.wikipedia.org + upload.wikimedia.org are the "Base de
   // plantes" page's direct browser-side Wikipedia summary/thumbnail fetches
   // (use-wikipedia-summary.ts) — everything else this app talks to is same-origin.
+  //
+  // The frontend Sentry/GlitchTip SDK (instrument.ts) sends error envelopes directly from the
+  // browser to the DSN's own host — found missing 2026-09-01 (real production console errors:
+  // "Refused to connect ... violates ... connect-src"), since connectSrc was never updated when
+  // GlitchTip was wired in. env.sentryDsn is a runtime-only value (never baked into the frontend
+  // bundle, see GET /api/public-config) so its origin is derived here rather than hardcoded, both
+  // to keep that same runtime-only property and to avoid committing this deployment's real
+  // error-reporting domain into a public repo.
+  const sentryOrigin = env.sentryDsn ? new URL(env.sentryDsn).origin : null;
   await app.register(helmet, {
     contentSecurityPolicy: {
       directives: {
@@ -38,7 +47,12 @@ export async function buildServer(provider: DeviceProvider, connectionQueue: Con
         scriptSrc: ["'self'"],
         styleSrc: ["'self'", "'unsafe-inline'"],
         imgSrc: ["'self'", 'data:', 'https://upload.wikimedia.org'],
-        connectSrc: ["'self'", 'https://api.github.com', 'https://fr.wikipedia.org'],
+        connectSrc: [
+          "'self'",
+          'https://api.github.com',
+          'https://fr.wikipedia.org',
+          ...(sentryOrigin ? [sentryOrigin] : []),
+        ],
         frameAncestors: ["'none'"],
         baseUri: ["'self'"],
         formAction: ["'self'"],
