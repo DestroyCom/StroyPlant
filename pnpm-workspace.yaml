@@ -11,3 +11,21 @@ allowBuilds:
   usocket: true
 patchedDependencies:
   dbus-next@0.10.2: patches/dbus-next@0.10.2.patch
+overrides:
+  # Security pins (see commit 808500c): fix moderate/high advisories — ReDoS in Hono's CORS
+  # middleware and a fast-uri host-confusion CVE — both pulled in transitively via
+  # @modelcontextprotocol/sdk and fastify's fast-json-stringify/ajv chain.
+  hono: '>=4.12.34'
+  fast-uri: '>=4.1.2'
+# pnpm 11 stopped reading package.json's "pnpm" field entirely (silent no-op, only a startup
+# warning) — this is now the one place these settings live. Also fixes the Docker/CI build:
+# verifyDepsBeforeRun defaults to "install" as of pnpm 11, meaning every `pnpm run`/`pnpm exec`
+# first verifies node_modules against the lockfile and, if anything looks out of sync, tries to
+# auto-repair by purging and reinstalling node_modules — which needs an interactive confirmation
+# that a Docker RUN step (no TTY) can never give, aborting with
+# ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY. The Dockerfile's multi-stage build (partial
+# --filter installs, `pnpm deploy --legacy` reshaping node_modules mid-build) is exactly the kind
+# of state this check flags as "out of sync" even though it's fully intentional — disabled
+# outright rather than switched to "warn"/"prompt", since this repo's Docker build already fully
+# controls its own install steps and doesn't need this safety net.
+verifyDepsBeforeRun: false

@@ -7,6 +7,12 @@
 FROM node:22-bookworm-slim AS base
 ENV PNPM_HOME="/pnpm"
 ENV PATH="$PNPM_HOME/bin:$PATH"
+# pnpm 11 (see pnpm-workspace.yaml's own comment on verifyDepsBeforeRun for the CI build-blocking
+# half of this) also interactively prompts to approve any package's build/postinstall scripts that
+# aren't already pre-approved via allowBuilds — with no TTY, that prompt would otherwise hang
+# forever instead of erroring cleanly. CI=true is pnpm's own documented way to make the whole CLI
+# behave non-interactively in a build environment like this one.
+ENV CI=true
 RUN corepack enable
 # openssl must be present here too, not just in the runtime stage: `prisma generate` (run in the
 # build stage below) probes the local libssl version to pick the right query-engine binary, and
