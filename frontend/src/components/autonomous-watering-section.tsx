@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
+import { getErrorMessage } from '@/lib/format-error';
 import { trpc } from '@/lib/trpc';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
@@ -100,7 +101,7 @@ export function AutonomousWateringSection({ deviceId, plantProfile, autonomousWa
         void queryClient.invalidateQueries({ queryKey: trpc.wateringConfig.pushRunStatus.queryKey({ deviceId }) });
       },
       onError: (error) => {
-        toast.error("Échec de l'enregistrement du mode", { description: error.message });
+        toast.error("Échec de l'enregistrement du mode", { description: getErrorMessage(error) });
         // The optimistic setWateringMode below has no other rollback path — without this the
         // selector keeps showing the mode the user clicked even though the device is still on
         // whatever mode the server last confirmed, until an unrelated refetch happens to correct it.
@@ -119,7 +120,7 @@ export function AutonomousWateringSection({ deviceId, plantProfile, autonomousWa
         void queryClient.invalidateQueries({ queryKey: trpc.wateringConfig.pushRunStatus.queryKey({ deviceId }) });
       },
       onError: (error) => {
-        toast.error('Échec du lancement', { description: error.message });
+        toast.error('Échec du lancement', { description: getErrorMessage(error) });
       },
     }),
   );

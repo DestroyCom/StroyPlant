@@ -16,6 +16,7 @@ import { Button } from '@/components/ui/button';
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { formatDeviceKind, formatRelativeTime, statusBandClasses, statusDetail, statusHeadline } from '@/lib/format';
+import { getErrorMessage } from '@/lib/format-error';
 import { trpc } from '@/lib/trpc';
 import type { ParameterHealth, Reading } from '@/lib/types';
 import { cn } from '@/lib/utils';
@@ -105,7 +106,7 @@ function DeviceDetailPage() {
         void queryClient.invalidateQueries({ queryKey: trpc.devices.wateringEvents.queryKey({ deviceId }) });
       },
       onError: (error) => {
-        toast.error("Échec de l'arrosage", { description: error.message });
+        toast.error("Échec de l'arrosage", { description: getErrorMessage(error) });
       },
     }),
   );
@@ -120,7 +121,7 @@ function DeviceDetailPage() {
         void queryClient.invalidateQueries({ queryKey: trpc.devices.history.queryKey({ deviceId, hours: PERIOD_HOURS[period] }) });
       },
       onError: (error) => {
-        toast.error('Échec de la synchronisation', { description: error.message });
+        toast.error('Échec de la synchronisation', { description: getErrorMessage(error) });
       },
     }),
   );

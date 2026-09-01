@@ -1,5 +1,6 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
+import { getErrorMessage } from '@/lib/format-error';
 import { trpc } from '@/lib/trpc';
 import type { PlantProfile } from '@/lib/types';
 import { SpeciesSearch } from './species-search';
@@ -28,7 +29,7 @@ export function SpeciesPickerDialog({
         onOpenChange(false);
       },
       onError: (error) => {
-        toast.error("Échec de l'assignation", { description: error.message });
+        toast.error("Échec de l'assignation", { description: getErrorMessage(error) });
       },
     }),
   );

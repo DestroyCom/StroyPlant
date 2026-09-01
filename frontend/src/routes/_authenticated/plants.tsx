@@ -8,6 +8,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { getErrorMessage } from '@/lib/format-error';
 import { trpc } from '@/lib/trpc';
 import { useWikipediaSummary } from '@/lib/use-wikipedia-summary';
 
@@ -204,7 +205,7 @@ function PlantsListPage() {
       )}
 
       {isFetching && !data && <p className="text-sm text-muted-foreground">Chargement…</p>}
-      {isError && <p className="text-sm text-destructive">Impossible de charger les résultats : {error.message}</p>}
+      {isError && <p className="text-sm text-destructive">Impossible de charger les résultats : {getErrorMessage(error)}</p>}
       {!isError && data && data.items.length === 0 && <p className="text-sm text-muted-foreground">Aucune espèce trouvée.</p>}
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">

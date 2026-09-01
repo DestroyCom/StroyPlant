@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { authClient } from '@/lib/auth-client';
+import { getErrorMessage } from '@/lib/format-error';
 
 interface LoginSearch {
   redirect?: string;
@@ -35,7 +36,7 @@ function LoginPage() {
     setPending(false);
 
     if (error) {
-      toast.error('Connexion impossible', { description: error.message ?? 'Vérifie ton email et ton mot de passe.' });
+      toast.error('Connexion impossible', { description: getErrorMessage(error) ?? 'Vérifie ton email et ton mot de passe.' });
       return;
     }
 

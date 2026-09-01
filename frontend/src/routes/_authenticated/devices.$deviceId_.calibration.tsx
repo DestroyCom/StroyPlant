@@ -4,6 +4,7 @@ import { ArrowLeft, Droplet } from 'lucide-react';
 import { useEffect, useRef } from 'react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
+import { getErrorMessage } from '@/lib/format-error';
 import { trpc } from '@/lib/trpc';
 
 export const Route = createFileRoute('/_authenticated/devices/$deviceId_/calibration')({
@@ -57,7 +58,7 @@ function CalibrationPage() {
         void queryClient.invalidateQueries({ queryKey: trpc.plantDr.calibrationRunStatus.queryKey({ deviceId }) });
       },
       onError: (error) => {
-        toast.error('Échec du lancement de la calibration', { description: error.message });
+        toast.error('Échec du lancement de la calibration', { description: getErrorMessage(error) });
       },
     }),
   );

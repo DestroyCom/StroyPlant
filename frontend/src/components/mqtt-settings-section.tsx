@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
+import { getErrorMessage } from '@/lib/format-error';
 import { trpc } from '@/lib/trpc';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
@@ -39,7 +40,7 @@ export function MqttSettingsSection() {
         toast.success('Configuration MQTT enregistrée');
       },
       onError: (error) => {
-        toast.error("Échec de l'enregistrement", { description: error.message });
+        toast.error("Échec de l'enregistrement", { description: getErrorMessage(error) });
       },
     }),
   );

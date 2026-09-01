@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
+import { getErrorMessage } from '@/lib/format-error';
 import { trpc } from '@/lib/trpc';
 import type { PlantProfile } from '@/lib/types';
 import { Input } from './ui/input';
@@ -32,7 +33,7 @@ export function SpeciesSearch({ deviceId, onAssigned }: { deviceId: string; onAs
         onAssigned?.(device.plantProfile);
       },
       onError: (error) => {
-        toast.error("Échec de l'assignation", { description: error.message });
+        toast.error("Échec de l'assignation", { description: getErrorMessage(error) });
       },
     }),
   );

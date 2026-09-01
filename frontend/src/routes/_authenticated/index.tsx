@@ -5,6 +5,7 @@ import { toast } from 'sonner';
 import { DeviceCard } from '@/components/device-card';
 import { Button } from '@/components/ui/button';
 import { isDeviceOnline, isTankLow } from '@/lib/format';
+import { getErrorMessage } from '@/lib/format-error';
 import { trpc } from '@/lib/trpc';
 import type { Device } from '@/lib/types';
 
@@ -41,7 +42,7 @@ function DashboardPage() {
         void queryClient.invalidateQueries({ queryKey: trpc.devices.list.queryKey() });
       },
       onError: (error) => {
-        toast.error('Échec de la synchronisation', { description: error.message });
+        toast.error('Échec de la synchronisation', { description: getErrorMessage(error) });
       },
     }),
   );

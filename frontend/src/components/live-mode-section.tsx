@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { HistoryChart, type HistoryPoint } from '@/components/history-chart';
 import { Button } from '@/components/ui/button';
+import { getErrorMessage } from '@/lib/format-error';
 import { trpc } from '@/lib/trpc';
 import type { DeviceKind } from '@/lib/types';
 
@@ -97,7 +98,7 @@ export function LiveModeSection({ deviceId, kind }: { deviceId: string; kind: De
         setIsLive(true);
       },
       onError: (error) => {
-        toast.error('Mode live indisponible', { description: error.message });
+        toast.error('Mode live indisponible', { description: getErrorMessage(error) });
       },
     }),
   );

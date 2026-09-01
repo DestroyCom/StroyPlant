@@ -4,6 +4,7 @@ import { AlertTriangle, ChevronDown, Droplets } from 'lucide-react';
 import { useState } from 'react';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { dayBucketLabel } from '@/lib/format';
+import { getErrorMessage } from '@/lib/format-error';
 import { trpc } from '@/lib/trpc';
 import type { HistoryEntry } from '@/lib/types';
 import { cn } from '@/lib/utils';
@@ -115,7 +116,7 @@ function HistoryPage() {
       {isPending ? (
         <p className="text-sm text-muted-foreground">Chargement…</p>
       ) : isError ? (
-        <p className="text-sm text-destructive">Impossible de charger l'historique : {error.message}</p>
+        <p className="text-sm text-destructive">Impossible de charger l'historique : {getErrorMessage(error)}</p>
       ) : groups.length === 0 ? (
         <p className="text-sm text-muted-foreground">Aucun événement pour cette période.</p>
       ) : (

@@ -28,15 +28,17 @@ export async function buildServer(provider: DeviceProvider, connectionQueue: Con
   // CSP scoped to what this SPA actually needs: 'unsafe-inline' on styleSrc only (Radix/shadcn
   // components set inline `style` attributes for popover/dropdown positioning — script-src stays
   // strict). api.github.com is the version-check card's direct browser-side fetch
-  // (version-settings-section.tsx); everything else this app talks to is same-origin.
+  // (version-settings-section.tsx); fr.wikipedia.org + upload.wikimedia.org are the "Base de
+  // plantes" page's direct browser-side Wikipedia summary/thumbnail fetches
+  // (use-wikipedia-summary.ts) — everything else this app talks to is same-origin.
   await app.register(helmet, {
     contentSecurityPolicy: {
       directives: {
         defaultSrc: ["'self'"],
         scriptSrc: ["'self'"],
         styleSrc: ["'self'", "'unsafe-inline'"],
-        imgSrc: ["'self'", 'data:'],
-        connectSrc: ["'self'", 'https://api.github.com'],
+        imgSrc: ["'self'", 'data:', 'https://upload.wikimedia.org'],
+        connectSrc: ["'self'", 'https://api.github.com', 'https://fr.wikipedia.org'],
         frameAncestors: ["'none'"],
         baseUri: ["'self'"],
         formAction: ["'self'"],

@@ -6,6 +6,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { getErrorMessage } from '@/lib/format-error';
 import { trpc } from '@/lib/trpc';
 import { useWikipediaSummary, wikipediaSearchUrl } from '@/lib/use-wikipedia-summary';
 
@@ -81,7 +82,7 @@ function PlantDetailPage() {
   if (isLoading) return <p className="text-sm text-muted-foreground">Chargement…</p>;
   if (error) {
     const code = (error as { data?: { code?: string } })?.data?.code;
-    const message = code === 'NOT_FOUND' ? "Cette espèce n'existe pas ou plus." : `Erreur : ${error.message}`;
+    const message = code === 'NOT_FOUND' ? "Cette espèce n'existe pas ou plus." : `Erreur : ${getErrorMessage(error)}`;
     return <p className="text-sm text-destructive">{message}</p>;
   }
   if (!plant) return <p className="text-sm text-destructive">Cette espèce n'existe pas ou plus.</p>;

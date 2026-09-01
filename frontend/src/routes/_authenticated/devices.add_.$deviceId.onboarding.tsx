@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { getErrorMessage } from '@/lib/format-error';
 import { trpc } from '@/lib/trpc';
 import type { Environment, PlantProfile } from '@/lib/types';
 import { cn } from '@/lib/utils';
@@ -79,7 +80,7 @@ function LocationStep({ deviceId, onDone, onSkip }: { deviceId: string; onDone: 
         onDone();
       },
       onError: (error) => {
-        toast.error('Échec de la mise à jour', { description: error.message });
+        toast.error('Échec de la mise à jour', { description: getErrorMessage(error) });
       },
     }),
   );

@@ -1,6 +1,7 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
+import { getErrorMessage } from '@/lib/format-error';
 import { trpc } from '@/lib/trpc';
 import type { Device, Environment } from '@/lib/types';
 import { Button } from './ui/button';
@@ -45,7 +46,7 @@ export function EditDeviceDialog({ open, onOpenChange, device }: { open: boolean
         onOpenChange(false);
       },
       onError: (error) => {
-        toast.error('Échec de la mise à jour', { description: error.message });
+        toast.error('Échec de la mise à jour', { description: getErrorMessage(error) });
       },
     }),
   );

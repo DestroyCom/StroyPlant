@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
+import { getErrorMessage } from '@/lib/format-error';
 import { trpc } from '@/lib/trpc';
 import { Button } from './ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
@@ -36,7 +37,7 @@ export function HealthEngineSettingsSection() {
         toast.success('Réglages du moteur de santé enregistrés');
       },
       onError: (error) => {
-        toast.error("Échec de l'enregistrement", { description: error.message });
+        toast.error("Échec de l'enregistrement", { description: getErrorMessage(error) });
       },
     }),
   );

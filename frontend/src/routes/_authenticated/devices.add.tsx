@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { formatDeviceKind, formatRelativeTime } from '@/lib/format';
+import { getErrorMessage } from '@/lib/format-error';
 import { trpc } from '@/lib/trpc';
 import type { Device } from '@/lib/types';
 
@@ -30,7 +31,7 @@ function UnnamedDeviceRow({ device }: { device: Device }) {
         void navigate({ to: '/devices/add/$deviceId/onboarding', params: { deviceId: renamed.id } });
       },
       onError: (error) => {
-        toast.error("Échec de l'ajout", { description: error.message });
+        toast.error("Échec de l'ajout", { description: getErrorMessage(error) });
       },
     }),
   );
@@ -85,7 +86,7 @@ function AddByAddressForm({ queryClient }: { queryClient: ReturnType<typeof useQ
         void navigate({ to: '/devices/add/$deviceId/onboarding', params: { deviceId: created.id } });
       },
       onError: (error) => {
-        toast.error("Échec de l'ajout", { description: error.message });
+        toast.error("Échec de l'ajout", { description: getErrorMessage(error) });
       },
     }),
   );
@@ -157,7 +158,7 @@ function AddDevicePage() {
       onError: (error) => {
         // CONFLICT (another session already active, e.g. a second browser tab) — not fatal,
         // the page still works for naming already-discovered devices.
-        toast.error('Recherche déjà en cours ailleurs', { description: error.message });
+        toast.error('Recherche déjà en cours ailleurs', { description: getErrorMessage(error) });
       },
     }),
   );
