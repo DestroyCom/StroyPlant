@@ -1,11 +1,13 @@
 import { useQuery } from '@tanstack/react-query';
-import { createFileRoute } from '@tanstack/react-router';
-import { Sprout } from 'lucide-react';
+import { createFileRoute, useRouter } from '@tanstack/react-router';
+import { ArrowLeft, ExternalLink, Sprout } from 'lucide-react';
 import { NeedsGauge } from '@/components/needs-gauge';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { trpc } from '@/lib/trpc';
+import { useWikipediaSummary, wikipediaSearchUrl } from '@/lib/use-wikipedia-summary';
 
 export const Route = createFileRoute('/_authenticated/plants_/$id')({
   // `parse` returns `false` (never throws) for an invalid id — the verified type in this
@@ -70,7 +72,11 @@ function TextSection({ title, text }: { title: string; text: string | null }) {
 
 function PlantDetailPage() {
   const { id } = Route.useParams();
+  const router = useRouter();
   const { data: plant, isLoading, error } = useQuery(trpc.plants.getById.queryOptions({ id }));
+  // Called unconditionally, before any early return below, per the rules of hooks — `plant?.name`
+  // is undefined until the query above resolves, which the hook itself handles (query disabled).
+  const { data: wikipedia } = useWikipediaSummary(plant?.name);
 
   if (isLoading) return <p className="text-sm text-muted-foreground">Chargement…</p>;
   if (error) {
@@ -109,12 +115,28 @@ function PlantDetailPage() {
   return (
     <div className="flex flex-col gap-4">
       <div className="flex items-center gap-3">
-        <div className="flex h-12 w-12 items-center justify-center rounded-full bg-muted">
-          <Sprout size={22} className="text-muted-foreground" />
-        </div>
+        <Button type="button" variant="outline" size="icon" onClick={() => router.history.back()} aria-label="Retour à la Base de plantes">
+          <ArrowLeft size={18} />
+        </Button>
+        {wikipedia?.thumbnailUrl ? (
+          <img src={wikipedia.thumbnailUrl} alt="" className="h-12 w-12 rounded-full object-cover" />
+        ) : (
+          <div className="flex h-12 w-12 items-center justify-center rounded-full bg-muted">
+            <Sprout size={22} className="text-muted-foreground" />
+          </div>
+        )}
         <div className="flex flex-col">
           <h1 className="text-xl font-bold text-foreground">{title}</h1>
           <span className="text-sm italic text-muted-foreground">{plant.name}</span>
+          <a
+            href={wikipedia?.pageUrl ?? wikipediaSearchUrl(plant.name)}
+            target="_blank"
+            rel="noreferrer"
+            className="flex items-center gap-1 text-xs text-primary hover:underline"
+          >
+            {wikipedia ? 'Voir sur Wikipédia' : 'Rechercher sur Wikipédia'}
+            <ExternalLink size={11} />
+          </a>
         </div>
         <div className="flex flex-wrap gap-2">
           {plant.tagLabels.map((label) => (
