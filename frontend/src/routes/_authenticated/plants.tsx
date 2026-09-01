@@ -109,12 +109,7 @@ function PlantsListPage() {
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
         {data?.items.map((item) => (
-          // `/plants/$id` is created by Task 5 of this plan, not yet present in this worktree —
-          // TanStack Router's generated route types don't know about it yet, so `to`/`params` need
-          // a temporary escape hatch here. The route still resolves correctly at runtime (file-based
-          // routing matches on the literal path string, not on the generated types) and this cast
-          // becomes unnecessary (but harmless) the moment Task 5 lands.
-          <Link key={item.id} to={'/plants/$id' as never} params={{ id: String(item.id) } as never}>
+          <Link key={item.id} to="/plants/$id" params={{ id: item.id }}>
             <Card className="flex flex-col gap-1 p-4 hover:bg-muted">
               <div className="flex items-center gap-2">
                 <Sprout size={16} className="text-muted-foreground" />
