@@ -34,6 +34,30 @@ function formatRange(min: number | null, max: number | null, unit: string, decim
   return `≤ ${(max as number).toFixed(decimals)}${unit}`;
 }
 
+// Parrot's own generic per-category defaults, not real per-species measurements — confirmed
+// against the source data (docs/superpowers/specs/2026-08-29-parrot-plant-database-import-design.md):
+// ec_min=-1 (soilConductivityMinUsCm=-1000 after unit conversion) and dli_max=99
+// (lightMaxMmol=99000 after the ×1000 mmol conversion). Kept raw in storage (an explicit past
+// decision), but this page is the first UI to show them to a user — treat the sentinel side of the
+// range as unknown rather than displaying a meaningless negative conductivity or an inflated max.
+function dropSentinel(
+  min: number | null,
+  max: number | null,
+  isMinSentinel: (value: number) => boolean,
+  isMaxSentinel: (value: number) => boolean,
+): [number | null, number | null] {
+  return [min != null && isMinSentinel(min) ? null : min, max != null && isMaxSentinel(max) ? null : max];
+}
+
+// Combines the numeric zone code range (e.g. "10"–"11") with its descriptive text, matching the
+// official app's own "Rusticité : 10 - 11 / <texte>" layout.
+function formatZone(minValue: string | null, maxValue: string | null, minText: string | null, maxText: string | null): string | null {
+  const range = minValue || maxValue ? [minValue, maxValue].filter(Boolean).join('–') : null;
+  const text = [minText, maxText].filter(Boolean).join(' — ') || null;
+  if (range && text) return `${range} · ${text}`;
+  return range ?? text;
+}
+
 function TextSection({ title, text }: { title: string; text: string | null }) {
   if (!text) return null;
   return (
@@ -49,9 +73,38 @@ function PlantDetailPage() {
   const { data: plant, isLoading, error } = useQuery(trpc.plants.getById.queryOptions({ id }));
 
   if (isLoading) return <p className="text-sm text-muted-foreground">Chargement…</p>;
-  if (error || !plant) return <p className="text-sm text-destructive">Cette espèce n'existe pas ou plus.</p>;
+  if (error) {
+    const code = (error as { data?: { code?: string } })?.data?.code;
+    const message = code === 'NOT_FOUND' ? "Cette espèce n'existe pas ou plus." : `Erreur : ${error.message}`;
+    return <p className="text-sm text-destructive">{message}</p>;
+  }
+  if (!plant) return <p className="text-sm text-destructive">Cette espèce n'existe pas ou plus.</p>;
 
   const title = plant.commonName ?? plant.name;
+
+  // Sentinel-guarded once, reused by both the full fiche's gauges and the degraded card's fallback
+  // range list below — see dropSentinel's own comment for what these sentinels are.
+  const [lightMin, lightMax] = dropSentinel(
+    plant.lightMinMmol,
+    plant.lightMaxMmol,
+    () => false,
+    (value) => value >= 99000,
+  );
+  const [conductivityMin, conductivityMax] = dropSentinel(
+    plant.soilConductivityMinUsCm,
+    plant.soilConductivityMaxUsCm,
+    (value) => value < 0,
+    () => false,
+  );
+
+  const availableRanges = [
+    formatRange(plant.soilMoistureMinPercent, plant.soilMoistureMaxPercent, '%'),
+    formatRange(plant.temperatureMinC, plant.temperatureMaxC, '°C'),
+    formatRange(lightMin != null ? lightMin / 1000 : null, lightMax != null ? lightMax / 1000 : null, ' mol/m²/j', 1),
+    formatRange(conductivityMin, conductivityMax, ' µS/cm'),
+  ]
+    .filter(Boolean)
+    .join(' · ');
 
   return (
     <div className="flex flex-col gap-4">
@@ -66,18 +119,16 @@ function PlantDetailPage() {
         {plant.isOrchid && <Badge variant="secondary">Orchidée</Badge>}
       </div>
 
+      {/* Gated on hasParrotData rather than "no FR translation" (the spec's original wording) —
+          the two are equivalent on all real data today (every Parrot-sourced profile has an FR
+          translation, every translation-less profile is WatchFlower-only), but this isn't
+          structurally guaranteed by the schema. If a future partial import ever breaks that
+          invariant, this gate would silently show the full tabs with mostly-empty sections instead
+          of the degraded card — re-check this condition if that's ever a live possibility. */}
       {!plant.hasParrotData ? (
         <Card className="flex flex-col gap-2 p-4">
           <h2 className="text-sm font-semibold text-foreground">Fiche limitée — données partielles</h2>
-          <p className="text-sm text-muted-foreground">
-            Plages disponibles :{' '}
-            {[
-              formatRange(plant.soilMoistureMinPercent, plant.soilMoistureMaxPercent, '%'),
-              formatRange(plant.temperatureMinC, plant.temperatureMaxC, '°C'),
-            ]
-              .filter(Boolean)
-              .join(' · ') || 'aucune donnée numérique disponible'}
-          </p>
+          <p className="text-sm text-muted-foreground">Plages disponibles : {availableRanges || 'aucune donnée numérique disponible'}</p>
         </Card>
       ) : (
         <Tabs defaultValue="description">
@@ -105,7 +156,8 @@ function PlantDetailPage() {
                     attribute.group === 'type' ||
                     attribute.group === 'lifetime' ||
                     attribute.group === 'leafColor' ||
-                    attribute.group === 'shape',
+                    attribute.group === 'shape' ||
+                    attribute.group === 'bloomColor',
                 )
                 .map((attribute) => (
                   <TextSection
@@ -145,12 +197,8 @@ function PlantDetailPage() {
                   label="Ensoleillement"
                   value={plant.sunCategory}
                   rangeLabel={
-                    formatRange(
-                      plant.lightMinMmol != null ? plant.lightMinMmol / 1000 : null,
-                      plant.lightMaxMmol != null ? plant.lightMaxMmol / 1000 : null,
-                      ' mol/m²/j',
-                      1,
-                    ) ?? undefined
+                    formatRange(lightMin != null ? lightMin / 1000 : null, lightMax != null ? lightMax / 1000 : null, ' mol/m²/j', 1) ??
+                    undefined
                   }
                 />
               )}
@@ -158,7 +206,7 @@ function PlantDetailPage() {
                 <NeedsGauge
                   label="Engrais"
                   value={plant.fertilizerCategory}
-                  rangeLabel={formatRange(plant.soilConductivityMinUsCm, plant.soilConductivityMaxUsCm, ' µS/cm') ?? undefined}
+                  rangeLabel={formatRange(conductivityMin, conductivityMax, ' µS/cm') ?? undefined}
                 />
               )}
               <TextSection title="Températures" text={formatRange(plant.temperatureMinC, plant.temperatureMaxC, '°C')} />
@@ -169,14 +217,35 @@ function PlantDetailPage() {
             <TextSection title="Récolte" text={plant.harvesting} />
             <TextSection title="Sol et Irrigation" text={plant.soilIrr} />
             <TextSection title="Fertilisation" text={plant.fertilizerText} />
+            {plant.fertilizerTypeLabels.length > 0 && (
+              <div className="flex flex-col gap-1.5 border-b border-border py-3 last:border-none">
+                <h3 className="text-sm font-semibold text-foreground">Types d'engrais recommandés</h3>
+                <div className="flex flex-wrap gap-2">
+                  {plant.fertilizerTypeLabels.map((label) => (
+                    <Badge key={label} variant="outline">
+                      {label}
+                    </Badge>
+                  ))}
+                </div>
+              </div>
+            )}
             <TextSection title="Elagage" text={plant.pruning} />
             <TextSection title="Éléments nuisibles" text={plant.pests} />
             <TextSection title="Conseils complémentaires" text={plant.detailCare} />
             <TextSection
-              title="Zone de pousse de la plante"
+              title="Zone de rusticité"
+              text={formatZone(
+                plant.hardinessZoneMinValue,
+                plant.hardinessZoneMaxValue,
+                plant.hardinessZoneMinText,
+                plant.hardinessZoneMaxText,
+              )}
+            />
+            <TextSection
+              title="Zone de chaleur"
               text={
-                plant.hardinessZoneMinText || plant.hardinessZoneMaxText
-                  ? [plant.hardinessZoneMinText, plant.hardinessZoneMaxText].filter(Boolean).join(' — ')
+                plant.heatZoneMinText || plant.heatZoneMaxText
+                  ? [plant.heatZoneMinText, plant.heatZoneMaxText].filter(Boolean).join(' — ')
                   : null
               }
             />

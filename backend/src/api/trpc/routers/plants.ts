@@ -5,11 +5,22 @@ import { prisma } from '../../../db/client.js';
 import { listKnownAttributeFilters, resolveAttributeLabel, resolveFertilizerTypeLabel } from '../../../health/parrotFilterLabels.js';
 import { protectedProcedure, router } from '../trpc.js';
 
+// Only this one bit of PlantProfile.tags is confirmed in this project (see CLAUDE.md) — every
+// read of the bitmask must go through this single helper, never a duplicated inline check.
 const ORCHID_TAG_BIT = 256;
 
+function isOrchid(tags: number | null): boolean {
+  return tags != null && (tags & ORCHID_TAG_BIT) !== 0;
+}
+
+// Prisma has no portable bitwise operator for a SQLite `where` clause, so filtering by a tags bit
+// can't be pushed into the query itself — this loads every profile with a non-null `tags` (8070 of
+// 9120 rows, id+tags only) and filters in JS. Fine at this volume (only 33 real orchids, static
+// data) — see docs/superpowers/specs/2026-08-31-plant-database-page-design.md's YAGNI rationale
+// for why a raw SQL bitwise query isn't worth it here.
 async function findOrchidProfileIds(): Promise<number[]> {
   const rows = await prisma.plantProfile.findMany({ where: { tags: { not: null } }, select: { id: true, tags: true } });
-  return rows.filter((row) => row.tags != null && (row.tags & ORCHID_TAG_BIT) !== 0).map((row) => row.id);
+  return rows.filter((row) => isOrchid(row.tags)).map((row) => row.id);
 }
 
 export const plantsRouter = router({
@@ -78,7 +89,7 @@ export const plantsRouter = router({
           name: profile.name,
           commonName: profile.translations[0]?.commonName ?? profile.commonName ?? null,
           hasParrotData: profile.parrotSpeciesId != null,
-          isOrchid: profile.tags != null && (profile.tags & ORCHID_TAG_BIT) !== 0,
+          isOrchid: isOrchid(profile.tags),
         })),
         total,
       };
@@ -116,7 +127,7 @@ export const plantsRouter = router({
       commonNames,
       commonName: translation?.commonName ?? profile.commonName ?? null,
       hasParrotData: profile.parrotSpeciesId != null,
-      isOrchid: profile.tags != null && (profile.tags & ORCHID_TAG_BIT) !== 0,
+      isOrchid: isOrchid(profile.tags),
       heightMinCm: profile.heightMinCm,
       heightMaxCm: profile.heightMaxCm,
       spreadMinCm: profile.spreadMinCm,
