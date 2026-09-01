@@ -1564,6 +1564,63 @@ production server:
     clean; findings 1 and 3 additionally confirmed against the real 9120-row `dev.db` via curl
     (not just read as correct) — see the finding-3 numbers above and the mmol/mol conversion math
     for finding 1.
+  - **Post-PR follow-ups** (2026-09-01, same branch, in direct response to user feedback after the
+    PR was pushed): back button + URL-persisted search/filters/page, Wikipedia links/photos,
+    `parrotOnly` filter, and a card/header redesign matching two hand-drawn wireframes.
+    - **List-page state moved from local component state into the route's own URL search params**
+      (`validatePlantsSearch`, hand-rolled like `/login`'s, not zod-based) — `q`/`tags`/`attrs`/
+      `parrotOnly`/`page` all live in the URL, `replace: true` on every update so filtering doesn't
+      spam browser history (one "back" from a detail page restores the list exactly as it was, not
+      one history entry per keystroke/filter click).
+    - **Real bug found and fixed**: the debounced search-sync `useEffect` fired on every mount
+      (React's own behavior, sharpened by `<StrictMode>`'s dev double-invoke — confirmed enabled in
+      `main.tsx`) and its navigate call unconditionally included `page: undefined`, silently
+      resetting the page to 1 on a direct/bookmarked load of e.g. `/plants?page=2`, and on the back
+      button's restore. A first fix attempt (a `useRef` "skip first render" guard) did not work
+      *because of* StrictMode's double-invoke, which defeats mount-order-based ref tricks. Fixed
+      with a value-comparison guard instead (`if (searchInput === (search.q ?? '')) return;` before
+      navigating) — the effect only ever touches the URL when the debounced text has genuinely
+      diverged from what's already there. Verified via Playwright: direct load of `/plants?page=2`
+      stays on page 2, and a full round trip (page 2 → open a detail page → back button) restores
+      `?page=2` correctly.
+    - **Detail-page back button** (`router.history.back()`) — real browser-history back, not a
+      hardcoded `navigate({to: '/plants'})`, so it lands on whatever `/plants` URL (search/filters/
+      page) the user actually came from.
+    - **Wikipedia integration, zero backend/storage involvement**: `frontend/src/lib/
+      use-wikipedia-summary.ts` (`useWikipediaSummary(title)`) calls the public, CORS-enabled
+      `https://fr.wikipedia.org/api/rest_v1/page/summary/<title>` REST API directly from the
+      browser, keyed off the plant's Latin name (higher match rate than the French common name).
+      Powers both a "Voir sur Wikipédia" link under the name (falls back to a pre-filled
+      `wikipediaSearchUrl()` search link when no article matches) and the thumbnail images on cards
+      and the detail page — `retry: false` (a 404 is a normal, expected outcome for the ~50%+ of
+      species/cultivars with no French article, not a transient failure) and `staleTime: Infinity`
+      (static reference data). `WIKIPEDIA_LANGUAGE` is a single named constant, the explicit
+      i18n-readiness seam for a future locale-aware version. **No images are ever stored** — this
+      was the user's explicit constraint (thousands of species, "flemme de stocker 8000+ photos") —
+      and a card only fetches a thumbnail for what's actually rendered (≤24 items, pagination-bound,
+      each card owning its own `useWikipediaSummary` call), never all 9120 up front.
+    - **`parrotOnly` filter** ("Compatible Parrot Pot uniquement" checkbox) — `plants.search` gained
+      a `parrotOnly: z.boolean().optional()` input, pushed into the query as
+      `{ parrotSpeciesId: { not: null } }`. Lets a user skip straight to the ~8070 species with the
+      full Parrot-sourced experience (needs gauges, resolved attributes, fertilizer types) instead
+      of the degraded WatchFlower-only card.
+    - **`plants.search` also returns `description`** (the FR translation's plant description,
+      distinct from Wikipedia's own extract) — shown as a 2-line clamp on each search-result card.
+    - **Card/header redesign to match user-supplied wireframes**: cards are now full-width
+      `aspect-video` image on top (was `aspect-4/3`, which silently failed to compile in this
+      Tailwind v4 setup — bare-fraction shorthand doesn't reliably work here, only bracket
+      (`aspect-[4/3]`) or canonical named utilities like `aspect-video` do), then name/scientific
+      name/tags (plain interpunct-joined text, not badges)/description — and equal-height within a
+      grid row via `Link className="flex h-full"` + `Card className="h-full w-full"` + a `flex-1`
+      content area (CSS Grid's default `align-items: stretch` otherwise leaves shorter cards visibly
+      shorter than their row siblings). The detail-page header is a responsive two-column layout
+      (`flex-col sm:flex-row`) — back button + name/latin/tags/wiki-link on the left, a larger
+      square Wikipedia image (or a `Sprout` icon placeholder) on the right — confirmed on a 390×844
+      mobile viewport via Playwright screenshot, stacking cleanly with no overflow.
+    - **Verified**: `cd backend && pnpm exec tsc --noEmit && pnpm test` (195/195) and
+      `cd frontend && pnpm typecheck` both clean; `npx biome check` clean on all 3 touched files;
+      the debounce-guard fix, the `parrotOnly` filter, and the equal-height card fix were each
+      confirmed live in a real browser (Playwright) against the mock provider, not just typechecked.
 
 ## Repo structure
 
