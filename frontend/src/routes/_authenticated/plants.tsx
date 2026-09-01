@@ -20,7 +20,7 @@ const PAGE_SIZE = 24;
 function PlantsListPage() {
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
-  const [orchidOnly, setOrchidOnly] = useState(false);
+  const [selectedTags, setSelectedTags] = useState<number[]>([]);
   const [selectedFilters, setSelectedFilters] = useState<{ category: string; value: string }[]>([]);
   const [page, setPage] = useState(1);
 
@@ -32,14 +32,15 @@ function PlantsListPage() {
   // biome-ignore lint/correctness/useExhaustiveDependencies: intentional — reset to page 1 whenever any filter input changes, none of them are read inside the effect body
   useEffect(() => {
     setPage(1);
-  }, [debouncedSearch, orchidOnly, selectedFilters]);
+  }, [debouncedSearch, selectedTags, selectedFilters]);
 
+  const { data: tags } = useQuery(trpc.plants.listTags.queryOptions());
   const { data: filterGroups } = useQuery(trpc.plants.listFilters.queryOptions());
 
   const { data, isFetching, isError, error } = useQuery(
     trpc.plants.search.queryOptions({
       search: debouncedSearch || undefined,
-      orchidOnly: orchidOnly || undefined,
+      tags: selectedTags.length > 0 ? selectedTags : undefined,
       attributeFilters: selectedFilters.length > 0 ? selectedFilters : undefined,
       page,
       pageSize: PAGE_SIZE,
@@ -51,6 +52,10 @@ function PlantsListPage() {
       if (checked) return [...prev, { category, value }];
       return prev.filter((filter) => !(filter.category === category && filter.value === value));
     });
+  }
+
+  function toggleTag(bit: number) {
+    setSelectedTags((prev) => (prev.includes(bit) ? prev.filter((value) => value !== bit) : [...prev, bit]));
   }
 
   const totalPages = data ? Math.max(1, Math.ceil(data.total / PAGE_SIZE)) : 1;
@@ -68,10 +73,6 @@ function PlantsListPage() {
           onChange={(event) => setSearch(event.target.value)}
           className="max-w-xs"
         />
-        <div className="flex items-center gap-2">
-          <Checkbox id="orchid-only" checked={orchidOnly} onCheckedChange={(checked) => setOrchidOnly(checked === true)} />
-          <Label htmlFor="orchid-only">Orchidées uniquement</Label>
-        </div>
         <Dialog>
           <DialogTrigger asChild>
             <Button variant="outline">Filtres avancés{selectedFilters.length > 0 ? ` (${selectedFilters.length})` : ''}</Button>
@@ -104,6 +105,22 @@ function PlantsListPage() {
         </Dialog>
       </div>
 
+      {tags && tags.length > 0 && (
+        <div className="flex flex-wrap gap-2">
+          {tags.map((tag) => (
+            <Button
+              key={tag.bit}
+              type="button"
+              size="sm"
+              variant={selectedTags.includes(tag.bit) ? 'default' : 'outline'}
+              onClick={() => toggleTag(tag.bit)}
+            >
+              {tag.label}
+            </Button>
+          ))}
+        </div>
+      )}
+
       {isFetching && !data && <p className="text-sm text-muted-foreground">Chargement…</p>}
       {isError && <p className="text-sm text-destructive">Impossible de charger les résultats : {error.message}</p>}
       {!isError && data && data.items.length === 0 && <p className="text-sm text-muted-foreground">Aucune espèce trouvée.</p>}
@@ -112,9 +129,13 @@ function PlantsListPage() {
         {data?.items.map((item) => (
           <Link key={item.id} to="/plants/$id" params={{ id: item.id }}>
             <Card className="flex flex-col gap-1 p-4 hover:bg-muted">
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <Sprout size={16} className="text-muted-foreground" />
-                {item.isOrchid && <Badge variant="secondary">Orchidée</Badge>}
+                {item.tagLabels.map((label) => (
+                  <Badge key={label} variant="secondary">
+                    {label}
+                  </Badge>
+                ))}
               </div>
               <span className="text-sm font-medium text-foreground">{item.commonName ?? item.name}</span>
               <span className="text-xs italic text-muted-foreground">{item.name}</span>

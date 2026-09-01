@@ -116,7 +116,13 @@ function PlantDetailPage() {
           <h1 className="text-xl font-bold text-foreground">{title}</h1>
           <span className="text-sm italic text-muted-foreground">{plant.name}</span>
         </div>
-        {plant.isOrchid && <Badge variant="secondary">Orchidée</Badge>}
+        <div className="flex flex-wrap gap-2">
+          {plant.tagLabels.map((label) => (
+            <Badge key={label} variant="secondary">
+              {label}
+            </Badge>
+          ))}
+        </div>
       </div>
 
       {/* Gated on hasParrotData rather than "no FR translation" (the spec's original wording) —

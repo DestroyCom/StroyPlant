@@ -3,34 +3,32 @@ import { TRPCError } from '@trpc/server';
 import { z } from 'zod';
 import { prisma } from '../../../db/client.js';
 import { listKnownAttributeFilters, resolveAttributeLabel, resolveFertilizerTypeLabel } from '../../../health/parrotFilterLabels.js';
+import { listKnownTags, resolveTagLabels } from '../../../health/parrotTags.js';
 import { protectedProcedure, router } from '../trpc.js';
 
-// Only this one bit of PlantProfile.tags is confirmed in this project (see CLAUDE.md) — every
-// read of the bitmask must go through this single helper, never a duplicated inline check.
-const ORCHID_TAG_BIT = 256;
-
-function isOrchid(tags: number | null): boolean {
-  return tags != null && (tags & ORCHID_TAG_BIT) !== 0;
-}
-
-// Prisma has no portable bitwise operator for a SQLite `where` clause, so filtering by a tags bit
+// Prisma has no portable bitwise operator for a SQLite `where` clause, so filtering by tags bits
 // can't be pushed into the query itself — this loads every profile with a non-null `tags` (8070 of
-// 9120 rows, id+tags only) and filters in JS. Fine at this volume (only 33 real orchids, static
-// data) — see docs/superpowers/specs/2026-08-31-plant-database-page-design.md's YAGNI rationale
-// for why a raw SQL bitwise query isn't worth it here.
-async function findOrchidProfileIds(): Promise<number[]> {
+// 9120 rows, id+tags only) and filters in JS. Fine at this volume (static data, the largest
+// confirmed category — indoor — is a few thousand rows) — see
+// docs/superpowers/specs/2026-08-31-plant-database-page-design.md's YAGNI rationale for why a raw
+// SQL bitwise query isn't worth it here. OR semantics across the requested bits, matching the
+// bitmask's own nature (a profile can carry several tags at once).
+async function findProfileIdsMatchingAnyTag(bits: number[]): Promise<number[]> {
+  if (bits.length === 0) return [];
   const rows = await prisma.plantProfile.findMany({ where: { tags: { not: null } }, select: { id: true, tags: true } });
-  return rows.filter((row) => isOrchid(row.tags)).map((row) => row.id);
+  return rows.filter((row) => row.tags != null && bits.some((bit) => (row.tags as number) & bit)).map((row) => row.id);
 }
 
 export const plantsRouter = router({
   listFilters: protectedProcedure.query(() => listKnownAttributeFilters()),
 
+  listTags: protectedProcedure.query(() => listKnownTags()),
+
   search: protectedProcedure
     .input(
       z.object({
         search: z.string().optional(),
-        orchidOnly: z.boolean().optional(),
+        tags: z.array(z.number().int()).optional(),
         attributeFilters: z.array(z.object({ category: z.string(), value: z.string() })).optional(),
         page: z.number().int().min(1),
         pageSize: z.number().int().min(1).max(100),
@@ -50,8 +48,8 @@ export const plantsRouter = router({
         });
       }
 
-      if (input.orchidOnly) {
-        and.push({ id: { in: await findOrchidProfileIds() } });
+      if (input.tags && input.tags.length > 0) {
+        and.push({ id: { in: await findProfileIdsMatchingAnyTag(input.tags) } });
       }
 
       // Bucket by the resolved logical group (not the raw category) — PlantProfileAttribute.category
@@ -89,7 +87,7 @@ export const plantsRouter = router({
           name: profile.name,
           commonName: profile.translations[0]?.commonName ?? profile.commonName ?? null,
           hasParrotData: profile.parrotSpeciesId != null,
-          isOrchid: isOrchid(profile.tags),
+          tagLabels: resolveTagLabels(profile.tags),
         })),
         total,
       };
@@ -127,7 +125,7 @@ export const plantsRouter = router({
       commonNames,
       commonName: translation?.commonName ?? profile.commonName ?? null,
       hasParrotData: profile.parrotSpeciesId != null,
-      isOrchid: isOrchid(profile.tags),
+      tagLabels: resolveTagLabels(profile.tags),
       heightMinCm: profile.heightMinCm,
       heightMaxCm: profile.heightMaxCm,
       spreadMinCm: profile.spreadMinCm,
