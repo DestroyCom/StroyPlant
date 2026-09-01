@@ -36,7 +36,7 @@ function PlantsListPage() {
 
   const { data: filterGroups } = useQuery(trpc.plants.listFilters.queryOptions());
 
-  const { data, isFetching } = useQuery(
+  const { data, isFetching, isError, error } = useQuery(
     trpc.plants.search.queryOptions({
       search: debouncedSearch || undefined,
       orchidOnly: orchidOnly || undefined,
@@ -105,7 +105,8 @@ function PlantsListPage() {
       </div>
 
       {isFetching && !data && <p className="text-sm text-muted-foreground">Chargement…</p>}
-      {data && data.items.length === 0 && <p className="text-sm text-muted-foreground">Aucune espèce trouvée.</p>}
+      {isError && <p className="text-sm text-destructive">Impossible de charger les résultats : {error.message}</p>}
+      {!isError && data && data.items.length === 0 && <p className="text-sm text-muted-foreground">Aucune espèce trouvée.</p>}
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
         {data?.items.map((item) => (

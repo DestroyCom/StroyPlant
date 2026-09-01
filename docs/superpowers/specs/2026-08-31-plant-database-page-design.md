@@ -88,7 +88,7 @@ juste à côté** :
 | Ligne | Jauge (donnée Parrot réelle) | Plage réelle affichée |
 |---|---|---|
 | Arrosage | `waterCategory` | `soilMoistureMinPercent`–`soilMoistureMaxPercent` (%) |
-| Ensoleillement | `sunCategory` | `lightMinMmol`–`lightMaxMmol` (mol/m²/j DLI, même unité que le reste de StroyPlant) |
+| Ensoleillement | `sunCategory` | `lightMinMmol`–`lightMaxMmol` (stockées en **mmol**/m²/j — diviser par 1000 pour l'affichage en mol/m²/j DLI, même unité que le reste de StroyPlant) |
 | Engrais | `fertilizerCategory` | `soilConductivityMinUsCm`–`soilConductivityMaxUsCm` (µS/cm) |
 
 **Température** : contrairement aux 3 lignes ci-dessus, l'app officielle l'affiche comme deux

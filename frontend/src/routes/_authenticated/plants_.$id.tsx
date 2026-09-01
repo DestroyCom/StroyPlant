@@ -27,11 +27,11 @@ export const Route = createFileRoute('/_authenticated/plants_/$id')({
   component: PlantDetailPage,
 });
 
-function formatRange(min: number | null, max: number | null, unit: string): string | null {
+function formatRange(min: number | null, max: number | null, unit: string, decimals = 0): string | null {
   if (min == null && max == null) return null;
-  if (min != null && max != null) return `${Math.round(min)}–${Math.round(max)}${unit}`;
-  if (min != null) return `≥ ${Math.round(min)}${unit}`;
-  return `≤ ${Math.round(max as number)}${unit}`;
+  if (min != null && max != null) return `${min.toFixed(decimals)}–${max.toFixed(decimals)}${unit}`;
+  if (min != null) return `≥ ${min.toFixed(decimals)}${unit}`;
+  return `≤ ${(max as number).toFixed(decimals)}${unit}`;
 }
 
 function TextSection({ title, text }: { title: string; text: string | null }) {
@@ -144,7 +144,14 @@ function PlantDetailPage() {
                 <NeedsGauge
                   label="Ensoleillement"
                   value={plant.sunCategory}
-                  rangeLabel={formatRange(plant.lightMinMmol, plant.lightMaxMmol, ' mol/m²/j') ?? undefined}
+                  rangeLabel={
+                    formatRange(
+                      plant.lightMinMmol != null ? plant.lightMinMmol / 1000 : null,
+                      plant.lightMaxMmol != null ? plant.lightMaxMmol / 1000 : null,
+                      ' mol/m²/j',
+                      1,
+                    ) ?? undefined
+                  }
                 />
               )}
               {plant.fertilizerCategory != null && (

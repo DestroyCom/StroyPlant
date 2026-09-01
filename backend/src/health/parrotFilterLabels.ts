@@ -160,6 +160,11 @@ export function listKnownAttributeFilters(): AttributeFilterGroup[] {
   const result: AttributeFilterGroup[] = [];
   for (const [category, groups] of Object.entries(ATTRIBUTE_GROUPS_BY_CATEGORY)) {
     for (const groupDef of groups) {
+      // bloomSeason is excluded from the filter UI: real PlantProfileAttribute rows for "SN" use a
+      // different code scheme than this plist-derived one (0/12 overlap, confirmed against real
+      // data) — offering it as a filter would always return zero results. Kept in
+      // ATTRIBUTE_GROUPS_BY_CATEGORY (and still resolvable) in case real data ever matches it.
+      if (groupDef.group === 'bloomSeason') continue;
       result.push({
         category,
         group: groupDef.group,

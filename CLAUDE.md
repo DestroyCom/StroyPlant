@@ -1483,6 +1483,67 @@ production server:
     being tied to the assigned species rather than the mode, but not conclusive on its own). Not yet
     deployed to the real production server or tested against real hardware beyond the Part 2
     checksum-persistence confirmation on pot 8733.
+- **Base de plantes** — nouvelle page de recherche/consultation ✅ (2026-09-01, on branch
+  `feature/plant-database-page`) — a browsable/searchable UI over the 9120 already-imported
+  `PlantProfile` rows (WatchFlower + Parrot overlay, see the Parrot plant database import entry
+  above), the first consumer this data has ever had beyond the Health Engine's species-assignment
+  picker. New `plants` tRPC router (`search` — name/common-name/French-search-name substring match,
+  orchid-only, and advanced attribute filters, paginated; `listFilters` — the filter groups safe to
+  offer; `getById` — full detail incl. resolved attributes/fertilizer types) + two frontend routes,
+  `/plants` (grid, search, filter dialog) and `/plants/$id` (tabs: Description/Entretien, gauges for
+  Arrosage/Ensoleillement/Engrais). Key decisions:
+  - **`sunCategory`/`waterCategory`/`fertilizerCategory` are Parrot's own real categorical ratings
+    (1-4/1-4/1-3), not an invented 0-5 formula** — same "no invention, use the real manufacturer
+    data" principle already established for soil conductivity calibration and the Parrot plant
+    database import. Displayed as a dot gauge (fixed 5-point scale, matching the official app —
+    no species ever reaching 5 on `fertilizerCategory` is a fact of the data, not a bug) next to the
+    real numeric range for the same quantity.
+  - **Attribute code→label mapping is a manual spike, deliberately partial**
+    (`backend/src/health/parrotFilterLabels.ts`) — ~65 of the real `PlantProfileAttribute`/
+    `PlantProfileFertilizerType` codes have a confirmed French label, extracted by hand from the
+    official Flower Power iOS app's own `FilterValues.plist`/`PlantDetailsInfo.plist`/
+    `fr.lproj/Localizable.strings` (same APK/IPA-decompilation-outranks-inference precedent as the
+    Parrot BLE docs hierarchy). A code with no confirmed label is never shown to the user — the
+    module is the single source of truth for which codes are safe to surface, ~50 codes remain
+    uncovered and are just silently omitted from `resolvedAttributes`, not guessed at.
+  - **Orchid detection trusts only `PlantProfile.tags` bit 256** — the field is a wider bitmask
+    (confirmed real usage beyond bit 256 during the autonomous-watering work's cactus/orchid
+    investigation, see the 4-mode watering system entry above) but only the orchid bit's meaning is
+    confirmed; the other ~8 bits are not guessed at or surfaced anywhere on this page.
+  - **`plants_.$id.tsx` filename** (not `plants.$id.tsx`) — this project's TanStack Router
+    un-nesting trap, see the new Gotchas bullet below; this is the file that prompted writing that
+    bullet down as a recurring pattern rather than a one-off.
+  - **Not done**: the ~50 uncovered attribute codes above, the ~8 unconfirmed `tags` bits beyond
+    orchid, no plant images (Parrot's dataset has them, deliberately out of scope — see the design
+    doc), and no "assign this species to a device" action from this page — species assignment stays
+    solely on the device detail page's existing `SpeciesPickerDialog`/`species-search.tsx`, this page
+    is browse/consult only.
+  - **Final-review fix wave (2026-09-01)**, 5 findings from the whole-branch review, all fixed in one
+    pass: (1, Critical) the Ensoleillement gauge on `/plants/$id` was passing `lightMinMmol`/
+    `lightMaxMmol` (stored in **mmol**/m²/day) straight into the mol/m²/day display with no /1000
+    conversion — a real species (Ficus benjamina) showed "300–20000 mol/m²/j" instead of
+    "0.3–20.0 mol/m²/j"; fixed to match this project's own existing `devices.$deviceId.tsx`
+    precedent for the same quantity, `formatRange` gained an optional `decimals` parameter for the
+    1-decimal display this needs. (2) `listKnownAttributeFilters()` was unconditionally offering a
+    "Saison de floraison" filter group whose codes (`SN_BLOOM_SEASON_VALUES`) have zero overlap with
+    the real `PlantProfileAttribute` rows for that category (a mismatch the module's own comment
+    already documented but the filter-offering function ignored) — always returned zero results;
+    excluded from `listKnownAttributeFilters()` specifically (kept in
+    `ATTRIBUTE_GROUPS_BY_CATEGORY`/still resolvable by `resolveAttributeLabel`, in case real data
+    ever matches it). (3) `plants.search`'s attribute-filter grouping bucketed by the raw
+    `category` field, so selecting "Arbre" (type) + "Vivace" (lifetime) — both raw category `PT`,
+    which mixes two distinct dimensions — collapsed into one OR'd clause instead of ANDing; fixed by
+    bucketing on `resolveAttributeLabel`'s resolved logical group instead, verified against real
+    data (Arbre alone: 704, Vivace alone: 6094, both together: 683 — a subset of each, confirming
+    AND). (4) `/plants`'s query used bare `{data, isFetching}`, so a genuine query error left the
+    results area blank with no message; matched `history.tsx`'s existing `isError`/`error` pattern.
+    (5) this CLAUDE.md entry itself, added as part of the same fix wave per this project's own
+    "update docs when a feature changes" rule.
+  - **Verified**: `cd backend && pnpm exec tsc --noEmit && pnpm test` (187/187, including 2 new
+    `parrotFilterLabels.test.ts` cases for finding 2) and `cd frontend && pnpm typecheck` both
+    clean; findings 1 and 3 additionally confirmed against the real 9120-row `dev.db` via curl
+    (not just read as correct) — see the finding-3 numbers above and the mmol/mol conversion math
+    for finding 1.
 
 ## Repo structure
 
@@ -1616,7 +1677,8 @@ Dockerfile, docker-entrypoint.sh, docker-compose.prod.yml, docker-compose.test.y
   `/devices/add` is open, see the scoped-BLE-discovery Project status entry),
   `pollSettings` (`get`, `upsert` — named-device poll interval, DB-backed, see Project status),
   `history` (`list` — the global History page's merged `WateringEvent`/`SyncEvent` feed, see Project
-  status) and `readings`
+  status), `plants` (`search`, `listFilters`, `getById` — the "Base de plantes" browsing page over
+  the already-imported `PlantProfile` rows, see Project status) and `readings`
   (`onReading`, a subscription) into `appRouter`; its type (`AppRouter`) is the single source of
   truth shared with the frontend. `trpc.ts` defines `publicProcedure`/`protectedProcedure`
   (`protectedProcedure` throws `TRPCError({code:'UNAUTHORIZED'})` when there's no session — same
@@ -1703,7 +1765,9 @@ Dockerfile, docker-entrypoint.sh, docker-compose.prod.yml, docker-compose.test.y
   6 — shows the device's current Plant Dr dry/wet thresholds live and a "capture wet point" action,
   gated on a species being assigned), "Historique" (`/history`, global — see the Project status
   entry below for the full design: a day-grouped feed merging `WateringEvent` and `SyncEvent` rows
-  across every named device, filterable by device and by period).
+  across every named device, filterable by device and by period), "Base de plantes"
+  (`/plants` — search/filter grid over all 9120 `PlantProfile` rows, and `/plants/$id` — detail page
+  with nomenclature/description/needs gauges, see the Project status entry of the same name).
 - App shell layout (`components/app-shell.tsx`): the sidebar is pinned to the viewport height
   (`h-svh` + `overflow-hidden` on the root flex row) and only the content `<main>` scrolls
   (`overflow-y-auto`) — fixed 2026-07-28 after the sidebar was found stretching to the full page
@@ -1785,6 +1849,21 @@ Dockerfile, docker-entrypoint.sh, docker-compose.prod.yml, docker-compose.test.y
   Node: `cd node_modules/.pnpm/@abandonware+noble@*/node_modules/@abandonware/noble && pnpm dlx
   node-gyp rebuild` (requires Xcode Command Line Tools, already present on DestCom's machine). Must
   be redone if `pnpm install` reinstalls the package (e.g. after deleting `node_modules`).
+- **TanStack Router silently nests a new route file if its name shadows an existing parent route —
+  check this BEFORE creating any route file, not after `pnpm typecheck` passes.** Naming a new route
+  `<parent>.<segment>.tsx` when `<parent>.tsx` already exists makes the router treat it as a *child*
+  of that parent, requiring an `<Outlet/>` in the parent's component to ever render — which most of
+  this project's single-purpose page routes don't have, so the new page silently renders nothing (or
+  the parent's own content) instead of the intended page, with zero type error anywhere (routing
+  structure isn't something `tsc` can catch). The fix is always the trailing-underscore un-nesting
+  filename, `<parent>_.<segment>.tsx`, which tells the router "same URL segment, don't nest under
+  the sibling route file of the same name." Hit **three separate times** in this project's history
+  without ever being written down as a pattern to watch for proactively:
+  `devices.$deviceId_.calibration.tsx` (Batch 6), `devices.add_.$deviceId.onboarding.tsx`
+  (onboarding stepper), and `plants_.$id.tsx` (Base de plantes) — each time discovered only by
+  noticing the wrong content render, not by a build failure. Before adding a new route file whose
+  name starts with an existing route file's basename plus a dot, stop and check whether a trailing
+  underscore is needed.
 
 ## Infra access
 

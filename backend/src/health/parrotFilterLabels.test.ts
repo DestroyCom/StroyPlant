@@ -59,11 +59,19 @@ describe('resolveFertilizerTypeLabel', () => {
 });
 
 describe('listKnownAttributeFilters', () => {
-  it('lists exactly 7 logical groups across the 6 raw categories, PT split in two', () => {
+  it('lists exactly 6 logical groups, PT split in two, bloomSeason excluded', () => {
     const groups = listKnownAttributeFilters();
-    assert.equal(groups.length, 7);
+    assert.equal(groups.length, 6);
     const groupNames = groups.map((g) => g.group).sort();
-    assert.deepEqual(groupNames, ['bloomColor', 'bloomSeason', 'leafColor', 'lifetime', 'shape', 'specialFeatures', 'type']);
+    assert.deepEqual(groupNames, ['bloomColor', 'leafColor', 'lifetime', 'shape', 'specialFeatures', 'type']);
+  });
+
+  it('never offers bloomSeason as a filter — real "SN" data uses a different code scheme (0/12 overlap)', () => {
+    const groups = listKnownAttributeFilters();
+    assert.equal(
+      groups.some((g) => g.group === 'bloomSeason'),
+      false,
+    );
   });
 
   it('both PT-derived groups carry category "PT"', () => {

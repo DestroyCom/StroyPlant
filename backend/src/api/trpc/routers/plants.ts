@@ -43,13 +43,19 @@ export const plantsRouter = router({
         and.push({ id: { in: await findOrchidProfileIds() } });
       }
 
-      const filtersByCategory = new Map<string, string[]>();
+      // Bucket by the resolved logical group (not the raw category) — PlantProfileAttribute.category
+      // "PT" covers two distinct dimensions (type, lifetime), and grouping by raw category would OR them
+      // together instead of ANDing (see the final-review finding this fixes). A filter value that can't
+      // be resolved is silently dropped here — consistent with "never filter on an unconfirmed code."
+      const filtersByGroup = new Map<string, { category: string; values: string[] }>();
       for (const filter of input.attributeFilters ?? []) {
-        const values = filtersByCategory.get(filter.category) ?? [];
-        values.push(filter.value);
-        filtersByCategory.set(filter.category, values);
+        const resolved = resolveAttributeLabel(filter.category, filter.value);
+        if (!resolved) continue;
+        const bucket = filtersByGroup.get(resolved.group) ?? { category: filter.category, values: [] };
+        bucket.values.push(filter.value);
+        filtersByGroup.set(resolved.group, bucket);
       }
-      for (const [category, values] of filtersByCategory) {
+      for (const { category, values } of filtersByGroup.values()) {
         and.push({ attributes: { some: { category, value: { in: values } } } });
       }
 
