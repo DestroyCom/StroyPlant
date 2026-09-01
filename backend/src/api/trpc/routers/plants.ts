@@ -30,6 +30,12 @@ export const plantsRouter = router({
         search: z.string().optional(),
         tags: z.array(z.number().int()).optional(),
         attributeFilters: z.array(z.object({ category: z.string(), value: z.string() })).optional(),
+        // "Fully compatible with Parrot Pot" — `parrotSpeciesId` is set only for the ~8070 profiles
+        // sourced from Parrot's own scientific_data.json (import batch 2026-08-29), which is exactly
+        // what backs the needs gauges/resolved attributes/fertilizer types on the detail page. A
+        // WatchFlower-only profile (`hasParrotData: false`) shows the degraded card instead — this
+        // filter lets a user skip straight to species with the full experience.
+        parrotOnly: z.boolean().optional(),
         page: z.number().int().min(1),
         pageSize: z.number().int().min(1).max(100),
       }),
@@ -46,6 +52,10 @@ export const plantsRouter = router({
             { searchNames: { some: { locale: 'FR', name: { contains: search } } } },
           ],
         });
+      }
+
+      if (input.parrotOnly) {
+        and.push({ parrotSpeciesId: { not: null } });
       }
 
       if (input.tags && input.tags.length > 0) {
@@ -86,6 +96,7 @@ export const plantsRouter = router({
           id: profile.id,
           name: profile.name,
           commonName: profile.translations[0]?.commonName ?? profile.commonName ?? null,
+          description: profile.translations[0]?.description ?? null,
           hasParrotData: profile.parrotSpeciesId != null,
           tagLabels: resolveTagLabels(profile.tags),
         })),

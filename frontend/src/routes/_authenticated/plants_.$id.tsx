@@ -114,37 +114,46 @@ function PlantDetailPage() {
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex items-center gap-3">
-        <Button type="button" variant="outline" size="icon" onClick={() => router.history.back()} aria-label="Retour à la Base de plantes">
-          <ArrowLeft size={18} />
-        </Button>
-        {wikipedia?.thumbnailUrl ? (
-          <img src={wikipedia.thumbnailUrl} alt="" className="h-12 w-12 rounded-full object-cover" />
-        ) : (
-          <div className="flex h-12 w-12 items-center justify-center rounded-full bg-muted">
-            <Sprout size={22} className="text-muted-foreground" />
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:gap-6">
+        <div className="flex min-w-0 flex-1 flex-col gap-2">
+          <div className="flex items-center gap-3">
+            <Button
+              type="button"
+              variant="outline"
+              size="icon"
+              onClick={() => router.history.back()}
+              aria-label="Retour à la Base de plantes"
+              className="shrink-0"
+            >
+              <ArrowLeft size={18} />
+            </Button>
+            <div className="flex flex-col">
+              <h1 className="text-xl font-bold text-foreground">{title}</h1>
+              <span className="text-sm italic text-muted-foreground">{plant.name}</span>
+            </div>
           </div>
-        )}
-        <div className="flex flex-col">
-          <h1 className="text-xl font-bold text-foreground">{title}</h1>
-          <span className="text-sm italic text-muted-foreground">{plant.name}</span>
+          {plant.tagLabels.length > 0 && <p className="text-xs text-muted-foreground">{plant.tagLabels.join(' · ')}</p>}
           <a
             href={wikipedia?.pageUrl ?? wikipediaSearchUrl(plant.name)}
             target="_blank"
             rel="noreferrer"
-            className="flex items-center gap-1 text-xs text-primary hover:underline"
+            className="flex w-fit items-center gap-1 text-xs text-primary hover:underline"
           >
             {wikipedia ? 'Voir sur Wikipédia' : 'Rechercher sur Wikipédia'}
             <ExternalLink size={11} />
           </a>
         </div>
-        <div className="flex flex-wrap gap-2">
-          {plant.tagLabels.map((label) => (
-            <Badge key={label} variant="secondary">
-              {label}
-            </Badge>
-          ))}
-        </div>
+        {wikipedia?.thumbnailUrl ? (
+          <img
+            src={wikipedia.thumbnailUrl}
+            alt=""
+            className="aspect-square w-full max-w-48 shrink-0 self-center rounded-xl object-cover sm:w-40 sm:self-start"
+          />
+        ) : (
+          <div className="flex aspect-square w-full max-w-48 shrink-0 items-center justify-center self-center rounded-xl bg-muted sm:w-40 sm:self-start">
+            <Sprout size={32} className="text-muted-foreground" />
+          </div>
+        )}
       </div>
 
       {/* Gated on hasParrotData rather than "no FR translation" (the spec's original wording) —

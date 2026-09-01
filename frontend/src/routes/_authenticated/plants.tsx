@@ -2,7 +2,6 @@ import { useQuery } from '@tanstack/react-query';
 import { createFileRoute, Link } from '@tanstack/react-router';
 import { Sprout } from 'lucide-react';
 import { useEffect, useState } from 'react';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -16,6 +15,7 @@ interface PlantsSearch {
   q?: string;
   tags?: number[];
   attrs?: { category: string; value: string }[];
+  parrotOnly?: boolean;
   page?: number;
 }
 
@@ -34,6 +34,7 @@ function validatePlantsSearch(search: Record<string, unknown>): PlantsSearch {
   ) {
     result.attrs = search.attrs as { category: string; value: string }[];
   }
+  if (typeof search.parrotOnly === 'boolean') result.parrotOnly = search.parrotOnly;
   if (typeof search.page === 'number') result.page = search.page;
   return result;
 }
@@ -59,14 +60,21 @@ function PlantsListPage() {
   const [searchInput, setSearchInput] = useState(search.q ?? '');
   const selectedTags = search.tags ?? [];
   const selectedFilters = search.attrs ?? [];
+  const parrotOnly = search.parrotOnly ?? false;
   const page = search.page ?? 1;
 
+  // Only navigates when the debounced value has genuinely diverged from what's already in the URL
+  // — without this guard, this effect firing once on every mount (React's own behavior, sharpened
+  // by StrictMode's synthetic double-invoke in dev, which makes a "skip the first run" ref
+  // unreliable) would overwrite `page` (and everything else) back to its default on load, breaking
+  // both a direct/bookmarked URL with a `page` param and the back button's restore.
   useEffect(() => {
     const timer = setTimeout(() => {
+      if (searchInput === (search.q ?? '')) return;
       navigate({ search: (prev) => ({ ...prev, q: searchInput || undefined, page: undefined }), replace: true });
     }, 300);
     return () => clearTimeout(timer);
-  }, [searchInput, navigate]);
+  }, [searchInput, navigate, search.q]);
 
   const { data: tags } = useQuery(trpc.plants.listTags.queryOptions());
   const { data: filterGroups } = useQuery(trpc.plants.listFilters.queryOptions());
@@ -76,10 +84,15 @@ function PlantsListPage() {
       search: search.q || undefined,
       tags: selectedTags.length > 0 ? selectedTags : undefined,
       attributeFilters: selectedFilters.length > 0 ? selectedFilters : undefined,
+      parrotOnly: parrotOnly || undefined,
       page,
       pageSize: PAGE_SIZE,
     }),
   );
+
+  function toggleParrotOnly(checked: boolean) {
+    navigate({ search: (prev) => ({ ...prev, parrotOnly: checked || undefined, page: undefined }), replace: true });
+  }
 
   function toggleFilter(category: string, value: string, checked: boolean) {
     const next = checked
@@ -102,7 +115,7 @@ function PlantsListPage() {
     navigate({ search: {}, replace: true });
   }
 
-  const hasActiveFilters = Boolean(search.q) || selectedTags.length > 0 || selectedFilters.length > 0;
+  const hasActiveFilters = Boolean(search.q) || selectedTags.length > 0 || selectedFilters.length > 0 || parrotOnly;
 
   const totalPages = data ? Math.max(1, Math.ceil(data.total / PAGE_SIZE)) : 1;
 
@@ -119,6 +132,10 @@ function PlantsListPage() {
           onChange={(event) => setSearchInput(event.target.value)}
           className="max-w-xs"
         />
+        <div className="flex items-center gap-2">
+          <Checkbox id="parrot-only" checked={parrotOnly} onCheckedChange={(checked) => toggleParrotOnly(checked === true)} />
+          <Label htmlFor="parrot-only">Compatible Parrot Pot uniquement</Label>
+        </div>
         <Dialog>
           <DialogTrigger asChild>
             <Button variant="outline">Filtres avancés{selectedFilters.length > 0 ? ` (${selectedFilters.length})` : ''}</Button>
@@ -178,7 +195,14 @@ function PlantsListPage() {
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
         {data?.items.map((item) => (
-          <PlantCard key={item.id} id={item.id} name={item.name} commonName={item.commonName} tagLabels={item.tagLabels} />
+          <PlantCard
+            key={item.id}
+            id={item.id}
+            name={item.name}
+            commonName={item.commonName}
+            description={item.description}
+            tagLabels={item.tagLabels}
+          />
         ))}
       </div>
 
@@ -202,28 +226,41 @@ function PlantsListPage() {
 // A separate component (not inlined in the `.map()` above) so each visible card can independently
 // call `useWikipediaSummary` — React Query then only ever fetches a thumbnail for the ≤24 species
 // actually rendered on the current page, never all 9120 up front.
-function PlantCard({ id, name, commonName, tagLabels }: { id: number; name: string; commonName: string | null; tagLabels: string[] }) {
+function PlantCard({
+  id,
+  name,
+  commonName,
+  description,
+  tagLabels,
+}: {
+  id: number;
+  name: string;
+  commonName: string | null;
+  description: string | null;
+  tagLabels: string[];
+}) {
   const { data: wikipedia } = useWikipediaSummary(name);
 
   return (
-    <Link to="/plants/$id" params={{ id }}>
-      <Card className="flex flex-col gap-1 p-4 hover:bg-muted">
-        <div className="flex items-center gap-2">
+    <Link to="/plants/$id" params={{ id }} className="flex h-full">
+      <Card className="h-full w-full gap-3 overflow-hidden p-0 hover:bg-muted">
+        <div className="aspect-video w-full shrink-0 overflow-hidden bg-muted">
           {wikipedia?.thumbnailUrl ? (
-            <img src={wikipedia.thumbnailUrl} alt="" className="h-8 w-8 rounded-full object-cover" />
+            <img src={wikipedia.thumbnailUrl} alt="" className="h-full w-full object-cover" />
           ) : (
-            <Sprout size={16} className="text-muted-foreground" />
+            <div className="flex h-full w-full items-center justify-center">
+              <Sprout size={28} className="text-muted-foreground" />
+            </div>
           )}
-          <div className="flex flex-wrap items-center gap-2">
-            {tagLabels.map((label) => (
-              <Badge key={label} variant="secondary">
-                {label}
-              </Badge>
-            ))}
-          </div>
         </div>
-        <span className="text-sm font-medium text-foreground">{commonName ?? name}</span>
-        <span className="text-xs italic text-muted-foreground">{name}</span>
+        <div className="flex flex-1 flex-col gap-1 p-4 pt-0">
+          <span className="text-sm font-medium text-foreground">
+            {commonName ?? name}
+            {commonName && <span className="font-normal text-muted-foreground italic"> — {name}</span>}
+          </span>
+          {tagLabels.length > 0 && <p className="text-xs text-muted-foreground">{tagLabels.join(' · ')}</p>}
+          {description && <p className="line-clamp-2 text-xs text-muted-foreground">{description}</p>}
+        </div>
       </Card>
     </Link>
   );
