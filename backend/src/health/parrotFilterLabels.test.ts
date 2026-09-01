@@ -42,6 +42,14 @@ describe('resolveAttributeLabel', () => {
   it('returns null for a known category with an unknown value', () => {
     assert.equal(resolveAttributeLabel('SH', 'ZZ'), null);
   });
+
+  it('returns null for an inherited Object.prototype category instead of crashing', () => {
+    assert.equal(resolveAttributeLabel('toString', 'x'), null);
+  });
+
+  it('returns null for an inherited Object.prototype value on a known category', () => {
+    assert.equal(resolveAttributeLabel('PT', 'constructor'), null);
+  });
 });
 
 describe('resolveFertilizerTypeLabel', () => {

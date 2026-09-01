@@ -104,12 +104,18 @@ const ATTRIBUTE_GROUPS_BY_CATEGORY: Record<string, AttributeGroupDef[]> = {
   SN: [{ group: 'bloomSeason', groupLabel: 'Saison de floraison', values: SN_BLOOM_SEASON_VALUES }],
 };
 
+// `category`/`value` originate from user-controlled tRPC input (plants.search's attributeFilters,
+// plants.getById via stored PlantProfileAttribute rows) — Object.hasOwn guards below reject
+// inherited Object.prototype keys (e.g. category="toString", value="constructor") that would
+// otherwise resolve to a prototype method instead of `undefined`/absent, which is truthy and — for
+// `groups` — not iterable, crashing the request.
 export function resolveAttributeLabel(category: string, value: string): ResolvedAttributeLabel | null {
+  if (!Object.hasOwn(ATTRIBUTE_GROUPS_BY_CATEGORY, category)) return null;
   const groups = ATTRIBUTE_GROUPS_BY_CATEGORY[category];
-  if (!groups) return null;
   for (const groupDef of groups) {
+    if (!Object.hasOwn(groupDef.values, value)) continue;
     const valueLabel = groupDef.values[value];
-    if (valueLabel) return { group: groupDef.group, groupLabel: groupDef.groupLabel, valueLabel };
+    return { group: groupDef.group, groupLabel: groupDef.groupLabel, valueLabel };
   }
   return null;
 }

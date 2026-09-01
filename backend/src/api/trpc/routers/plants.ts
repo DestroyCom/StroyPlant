@@ -29,7 +29,13 @@ export const plantsRouter = router({
       z.object({
         search: z.string().optional(),
         tags: z.array(z.number().int()).optional(),
-        attributeFilters: z.array(z.object({ category: z.string(), value: z.string() })).optional(),
+        // Capped at 39 — the exact total option count across every group `listKnownAttributeFilters`
+        // offers (6 type + 3 lifetime + 9 bloomColor + 12 leafColor + 5 shape + 4 specialFeatures) —
+        // so a legitimate selection is never rejected while an unbounded array can't be sent.
+        attributeFilters: z
+          .array(z.object({ category: z.string(), value: z.string() }))
+          .max(39)
+          .optional(),
         // "Fully compatible with Parrot Pot" — `parrotSpeciesId` is set only for the ~8070 profiles
         // sourced from Parrot's own scientific_data.json (import batch 2026-08-29), which is exactly
         // what backs the needs gauges/resolved attributes/fertilizer types on the detail page. A

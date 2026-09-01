@@ -77,7 +77,12 @@ function PlantsListPage() {
   }, [searchInput, navigate, search.q]);
 
   const { data: tags } = useQuery(trpc.plants.listTags.queryOptions());
-  const { data: filterGroups } = useQuery(trpc.plants.listFilters.queryOptions());
+  const {
+    data: filterGroups,
+    isError: isFilterGroupsError,
+    error: filterGroupsError,
+    refetch: refetchFilterGroups,
+  } = useQuery(trpc.plants.listFilters.queryOptions());
 
   const { data, isFetching, isError, error } = useQuery(
     trpc.plants.search.queryOptions({
@@ -145,24 +150,33 @@ function PlantsListPage() {
               <DialogTitle>Filtres avancés</DialogTitle>
             </DialogHeader>
             <div className="flex max-h-96 flex-col gap-4 overflow-y-auto">
-              {filterGroups?.map((group) => (
-                <div key={group.group} className="flex flex-col gap-1.5">
-                  <span className="text-sm font-semibold text-foreground">{group.groupLabel}</span>
-                  {group.options.map((option) => {
-                    const checked = selectedFilters.some((filter) => filter.category === group.category && filter.value === option.value);
-                    return (
-                      <div key={option.value} className="flex items-center gap-2">
-                        <Checkbox
-                          id={`${group.group}-${option.value}`}
-                          checked={checked}
-                          onCheckedChange={(next) => toggleFilter(group.category, option.value, next === true)}
-                        />
-                        <Label htmlFor={`${group.group}-${option.value}`}>{option.label}</Label>
-                      </div>
-                    );
-                  })}
+              {isFilterGroupsError ? (
+                <div className="flex flex-col items-start gap-2">
+                  <p className="text-sm text-destructive">Impossible de charger les filtres : {filterGroupsError.message}</p>
+                  <Button type="button" variant="outline" size="sm" onClick={() => refetchFilterGroups()}>
+                    Réessayer
+                  </Button>
                 </div>
-              ))}
+              ) : (
+                filterGroups?.map((group) => (
+                  <div key={group.group} className="flex flex-col gap-1.5">
+                    <span className="text-sm font-semibold text-foreground">{group.groupLabel}</span>
+                    {group.options.map((option) => {
+                      const checked = selectedFilters.some((filter) => filter.category === group.category && filter.value === option.value);
+                      return (
+                        <div key={option.value} className="flex items-center gap-2">
+                          <Checkbox
+                            id={`${group.group}-${option.value}`}
+                            checked={checked}
+                            onCheckedChange={(next) => toggleFilter(group.category, option.value, next === true)}
+                          />
+                          <Label htmlFor={`${group.group}-${option.value}`}>{option.label}</Label>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ))
+              )}
             </div>
           </DialogContent>
         </Dialog>
