@@ -4,9 +4,13 @@ import type { WateringConfigRaw, WateringConfigWriteValues } from '../ble/parrot
 export type DeviceKind = 'PARROT_POT' | 'XIAOMI_LYWSD03MMC';
 
 export interface ParrotPotReading {
-  soilMoisturePercent: number;
-  temperatureC: number;
-  luminosity: number;
+  // Independently optional since the 2026-09-01 fa07 outage (docs/superpowers/specs/
+  // 2026-09-01-parrot-fa07-independent-decode-fix.md): a truncated/malformed GATT buffer on any
+  // one of these must not discard the other two — each is decoded and persisted best-effort, like
+  // every other sensor field in this interface.
+  soilMoisturePercent?: number;
+  temperatureC?: number;
+  luminosity?: number;
   waterTankLevelPercent?: number;
   // Plant Dr STATUS_FLAGS (Batch 6, docs/STROYPLANT_SPEC.md section 7.11) — firmware-computed
   // soil/reservoir/probe state. Best-effort (never used by the official app's live mode, behavior

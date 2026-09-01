@@ -78,6 +78,12 @@ export const plantDrRouter = router({
         const reading = await ctx.connectionQueue.run(() => ctx.provider.readSensors(device.id, 'PARROT_POT'));
         if (reading.kind !== 'PARROT_POT') throw new Error('Unexpected reading kind');
         const wetVwcPercent = reading.data.soilMoisturePercent;
+        if (wetVwcPercent == null) {
+          // soilMoisturePercent is independently best-effort since the 2026-09-01 fa07 outage
+          // (docs/superpowers/specs/2026-09-01-parrot-fa07-independent-decode-fix.md) — a
+          // malformed buffer on this one field must not silently proceed with `undefined`.
+          throw new Error('Soil moisture sensor is currently unreadable on this device — try again later');
+        }
 
         if (wetVwcPercent <= dryVwcPercent) {
           throw new Error(

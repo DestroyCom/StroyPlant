@@ -434,25 +434,38 @@ export function createNodeBleProvider(): DeviceProvider {
               result: 'OK',
             });
 
-            const soilChar = await trackedCharacteristic(sensorService, UUIDS.live.soilMoisturePercent, characteristics);
-            const tempChar = await trackedCharacteristic(sensorService, UUIDS.live.temperatureC, characteristics);
-            const luxChar = await trackedCharacteristic(sensorService, UUIDS.live.luminosity, characteristics);
-            const soilMoistureBuf = await soilChar.readValue();
-            const temperatureBuf = await tempChar.readValue();
-            const luminosityBuf = await luxChar.readValue();
-            log({
-              direction: 'READ',
-              label: 'Sensors read',
+            // Independently best-effort since the 2026-09-01 fa07 outage (all 3 real Parrot Pots
+            // stuck for 46h+ on a truncated fa07 buffer that a physical battery-pull did not
+            // resolve — see docs/superpowers/specs/2026-09-01-parrot-fa07-independent-decode-fix.md):
+            // a malformed buffer on any one of these must not discard the other two, which read
+            // fine on the same cycle. Each is decoded right after its own read (not deferred to
+            // reading construction ~300 lines below) so a failure is logged with an accurate label
+            // instead of being misattributed to a connection failure, matching the pattern already
+            // used for every other best-effort field in this function (readRawBestEffort).
+            const soilMoisturePercent = await readRawBestEffort(
+              sensorService,
+              UUIDS.live.soilMoisturePercent,
+              characteristics,
               deviceId,
-              result: 'OK',
-              detail: `soil=${soilMoistureBuf.toString('hex')} temp=${temperatureBuf.toString('hex')} lux=${luminosityBuf.toString('hex')}`,
-            });
-            // Decoded immediately, not deferred to the reading construction ~300 lines below —
-            // a malformed buffer fails fast, before wasting the rest of this attempt's BLE reads,
-            // with an accurate error label instead of being misattributed to a connection failure.
-            const soilMoisturePercent = readFloatLESafe(soilMoistureBuf, 'soilMoisturePercent (fa07)');
-            const temperatureC = readFloatLESafe(temperatureBuf, 'temperatureC (fa09)');
-            const luminosity = readFloatLESafe(luminosityBuf, 'luminosity (fa0b)');
+              'Soil moisture (fa07)',
+              (buf) => readFloatLESafe(buf, 'soilMoisturePercent (fa07)'),
+            );
+            const temperatureC = await readRawBestEffort(
+              sensorService,
+              UUIDS.live.temperatureC,
+              characteristics,
+              deviceId,
+              'Temperature (fa09)',
+              (buf) => readFloatLESafe(buf, 'temperatureC (fa09)'),
+            );
+            const luminosity = await readRawBestEffort(
+              sensorService,
+              UUIDS.live.luminosity,
+              characteristics,
+              deviceId,
+              'Luminosity (fa0b)',
+              (buf) => readFloatLESafe(buf, 'luminosity (fa0b)'),
+            );
 
             let waterTankLevelPercent: number | undefined;
             try {

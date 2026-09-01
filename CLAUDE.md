@@ -424,11 +424,12 @@ production server:
       malformed notification and skip it instead of throwing — the existing "wait for the first
       complete triple" gate in `scheduleFlush` already tolerates a missing value correctly, this just
       extends that same tolerance to an occasional malformed one instead of crashing the session.
-    - **Deliberately not changed**: `ParrotPotReading.soilMoisturePercent`/`temperatureC`/
-      `luminosity` stay non-optional, required fields — widening them to `number | undefined` would
+    - **Deliberately not changed at the time**: `ParrotPotReading.soilMoisturePercent`/`temperatureC`/
+      `luminosity` stayed non-optional, required fields — widening them to `number | undefined` would
       ripple into the Health Engine, MQTT publisher, and every frontend gauge for a fix that doesn't
       need it; a cycle with a malformed buffer still fails that one poll attempt cleanly (as it
       effectively already did), just without the wasted work or the misleading error label.
+      **Reversed the next day** once `fa07` turned from occasional into permanent — see Round 4 below.
     - **Test coverage added**: `backend/src/providers/node-ble/index.test.ts` (the first test file
       for this provider — pure buffer-decode logic, no BLE/D-Bus needed) — `backend/package.json`'s
       `test` script glob widened to include `src/providers/**/*.test.ts`.
@@ -444,6 +445,56 @@ production server:
       Parrot Pot rows, consistent with either the script having run, or with historical moisture
       simply never having been recorded pre-fix. Not confirmed either way — check before relying on
       this column's historical data meaning anything.
+  - **Round 4 — `fa07` outage goes permanent on all 3 real pots, a physical battery pull doesn't fix
+    it, independent-decode fix applied** (2026-09-01, on `main`) — DestCom noticed the 3 pots hadn't
+    synced in 2-3 days; this was the same `fa07` truncated-buffer symptom Round 3 already knew about,
+    but now happening on *every* poll instead of occasionally, so the tout-ou-rien decode Round 3
+    deliberately kept meant zero `Reading` rows (not just soil moisture — temperature/luminosity/tank
+    level too) for 46h+ on all 3 real pots, 2 of which hold real plants. Full investigation and
+    decision rationale: `docs/superpowers/specs/2026-09-01-parrot-fa07-independent-decode-fix.md`.
+    - **Ruled out this time, evidence-based**: BlueZ GATT cache (no per-device bonding folder — these
+      connections were never paired), a `bluetoothd`/`bluez` package restart or update, a code deploy
+      at the right time, and — new for this round — a **full production server reboot**, which reset
+      the USB/HCI driver and `bluetoothd` from scratch and changed nothing (`fa07` truncated again on
+      the very first post-reboot poll). This eliminates the server/BlueZ/kernel side entirely.
+    - **Physical test, DestCom's own idea, confirmed negative**: removed and reinserted both batteries
+      on `87:33` (the test pot, no species assigned, safest to manipulate). Did not fix `fa07` — and
+      surfaced a new, stronger symptom: `temperatureC`/`luminosity` came back bit-for-bit identical
+      across 3 separate connections ~6-9s apart (not live values that happen to be stable — frozen
+      ones), unlike Round 3's observation that `fa09`/`fa0b` read correctly-varying values on the
+      other 2 pots. Root cause (firmware fault vs. genuine hardware failure across all units at once
+      vs. something else) is still **not** confirmed — this fix only contains the blast radius, it
+      doesn't explain `fa07` itself.
+    - **Fix, given 2 real plants had zero automated monitoring for 46h+**: reversed Round 3's explicit
+      "keep non-optional" call — `ParrotPotReading.soilMoisturePercent`/`temperatureC`/`luminosity`
+      (`providers/types.ts`) are now `number | undefined`, and `readSensors` decodes each of the 3 via
+      the same `readRawBestEffort` helper already used for every other best-effort field in that
+      function, instead of the fail-fast `readFloatLESafe` calls Round 3 added. A malformed buffer on
+      one field no longer discards the other two (or the tank level/Plant Dr/raw-sensor-log reads
+      further down) — the `Reading` row persists with whatever succeeded.
+    - **Ripple check, the thing Round 3's note warned about**: turned out to be a non-issue.
+      `Reading.soilMoisturePercent`/`temperatureC`/`luminosity` were already `Float?` nullable at the
+      Prisma level, and `health/scoring.ts` already filters `value != null` everywhere (it has to —
+      Xiaomi devices and `isInAir` readings already produce gaps in these columns). The one real
+      compile break was `plantDr.ts`'s `calibrateWet`, which read live `soilMoisturePercent` assuming
+      a number — fixed with an explicit "sensor unreadable, try again later" guard, same pattern as
+      the existing missing-species-threshold check right above it. MQTT discovery templates reference
+      these fields by name only (HA shows "Unknown" on null, no crash).
+    - **Verified**: `cd backend && pnpm exec tsc --noEmit && pnpm test` (197/197) and
+      `cd frontend && pnpm typecheck` (the real command, not the silent-no-op root `tsc`) both clean.
+      **Not yet deployed/verified against real hardware** — next deploy should confirm `Reading` rows
+      resume for temperature/luminosity/tank level on all 3 real pots even while `soilMoisturePercent`
+      stays null, and that the per-field failure log (`Soil moisture (fa07) indisponible`) replaces
+      the previous whole-cycle `CONNECT` failure.
+    - **Real-plant safety note discovered during this investigation, unrelated to the fix itself**:
+      neither `A0:73` nor `A3:D3` has the device-side autonomous watering algorithm enabled
+      (`Device.autonomousWateringActive = false` for both, confirmed via a read-only prod-DB copy) —
+      their *only* watering safety net is the backend's Batch 5 scheduler, which had been completely
+      blind for 46h+ with no fresh soil-moisture data to evaluate. Last known real readings before the
+      outage (2026-08-30 22:42-43) were comfortably hydrated for both (38.9%/38.0% against a 32%
+      species floor), so no immediate stress was indicated at the time sync broke — but this gap is
+      the direct motivation for treating this fix as urgent rather than deferring further root-cause
+      investigation.
 - **Device location + indoor/outdoor, and post-deploy triage fixes** (commit `3d5b312`, same day as
   the incident above, not previously documented here) — bundled alongside round 1's match-rule fix:
   - `Device` gained `location` (free text) and `environment` (`INDOOR`/`OUTDOOR`, nullable) columns
