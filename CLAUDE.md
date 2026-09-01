@@ -1483,6 +1483,144 @@ production server:
     being tied to the assigned species rather than the mode, but not conclusive on its own). Not yet
     deployed to the real production server or tested against real hardware beyond the Part 2
     checksum-persistence confirmation on pot 8733.
+- **Base de plantes** — nouvelle page de recherche/consultation ✅ (2026-09-01, on branch
+  `worktree-plant-database-page`) — a browsable/searchable UI over the 9120 already-imported
+  `PlantProfile` rows (WatchFlower + Parrot overlay, see the Parrot plant database import entry
+  above), the first consumer this data has ever had beyond the Health Engine's species-assignment
+  picker. New `plants` tRPC router (`search` — name/common-name/French-search-name substring match,
+  `tags`-bitmask and advanced attribute filters, paginated; `listFilters` — the attribute filter
+  groups safe to offer; `listTags` — the 9 confirmed `tags` bit/label pairs; `getById` — full detail
+  incl. resolved attributes/fertilizer types) + two frontend routes,
+  `/plants` (grid, search, filter dialog) and `/plants/$id` (tabs: Description/Entretien, gauges for
+  Arrosage/Ensoleillement/Engrais). Key decisions:
+  - **`sunCategory`/`waterCategory`/`fertilizerCategory` are Parrot's own real categorical ratings
+    (1-4/1-4/1-3), not an invented 0-5 formula** — same "no invention, use the real manufacturer
+    data" principle already established for soil conductivity calibration and the Parrot plant
+    database import. Displayed as a dot gauge (fixed 5-point scale, matching the official app —
+    no species ever reaching 5 on `fertilizerCategory` is a fact of the data, not a bug) next to the
+    real numeric range for the same quantity.
+  - **Attribute code→label mapping is a manual spike, deliberately partial**
+    (`backend/src/health/parrotFilterLabels.ts`) — ~65 of the real `PlantProfileAttribute`/
+    `PlantProfileFertilizerType` codes have a confirmed French label, extracted by hand from the
+    official Flower Power iOS app's own `FilterValues.plist`/`PlantDetailsInfo.plist`/
+    `fr.lproj/Localizable.strings` (same APK/IPA-decompilation-outranks-inference precedent as the
+    Parrot BLE docs hierarchy). A code with no confirmed label is never shown to the user — the
+    module is the single source of truth for which codes are safe to surface, ~50 codes remain
+    uncovered and are just silently omitted from `resolvedAttributes`, not guessed at.
+  - **All 9 real `PlantProfile.tags` bits resolved, not just orchid** (`backend/src/health/
+    parrotTags.ts`, added 2026-09-01 as a same-day follow-up once this was confirmed) — initially
+    shipped orchid-only (bit 256) since that was the only bit this project had confirmed at the
+    time. Reopened the same day: reading `PlantDBManager.java`'s `MASK_*` constants directly in the
+    decompiled Android source already used for the 4-mode watering system's orchid/cactus
+    investigation (`/Users/destcom/Documents/PERSO/parrot-pot-debug/analyse/decoded_jadx/`) gave the
+    exact bit for every category (1=cactus/succulente, 2=feuillage décoratif, 4=fleurie,
+    8=fruits/légumes, 16=intérieur, 32=extérieur, 64=bien-être, 128=arbuste, 256=orchidée), plus its
+    French label from `res/values-fr/strings.xml`'s `tags_categoryName_*` — independently confirmed
+    against this project's own earlier empirical single-bit spot-checks (e.g. bit 1 → real cacti in
+    `dev.db`), which had been correct but left unconfirmed at ship time. A 10th constant,
+    `MASK_CANNABIS=512`, exists in the same source but has no localized label anywhere in the app —
+    deliberately excluded, matching the app's own choice never to surface it. `plants.search`'s
+    `orchidOnly: boolean` generalized to `tags: number[]` (OR semantics — a species can carry
+    several tags at once), and `isOrchid: boolean` generalized to `tagLabels: string[]` on both
+    `search` and `getById`. Frontend: the single "Orchidées uniquement" checkbox replaced by a row
+    of 9 toggleable quick-filter chips on `/plants`, and every card/detail page shows all matching
+    tags as badges instead of a special-cased orchid-only one.
+  - **`plants_.$id.tsx` filename** (not `plants.$id.tsx`) — this project's TanStack Router
+    un-nesting trap, see the new Gotchas bullet below; this is the file that prompted writing that
+    bullet down as a recurring pattern rather than a one-off.
+  - **Not done**: the ~50 uncovered attribute codes above — confirmed genuinely unresolvable while
+    investigating the `tags` bitmask (below), not merely unlooked-for: the Android app's own filter
+    UI (`LibraryFilterAmazingAdapter.java`) offers the exact same 39 options as the iOS resources
+    (6 type + 5 shape + 9 bloom color + 12 leaf color + 3 lifetime + 4 bloom season), and its bloom
+    season filter uses a *third*, still different value scheme (`"spring"/"summer"/"FALL"/"WINTER"`)
+    from both iOS and this project's own imported `SN` codes — two independent official app builds
+    agree these codes were never given a user-facing label anywhere. No plant images (Parrot's
+    dataset has them, deliberately out of scope — see the design doc), and no "assign this species
+    to a device" action from this page — species assignment stays solely on the device detail page's
+    existing `SpeciesPickerDialog`/`species-search.tsx`, this page is browse/consult only.
+  - **Final-review fix wave (2026-09-01)**, 5 findings from the whole-branch review, all fixed in one
+    pass: (1, Critical) the Ensoleillement gauge on `/plants/$id` was passing `lightMinMmol`/
+    `lightMaxMmol` (stored in **mmol**/m²/day) straight into the mol/m²/day display with no /1000
+    conversion — a real species (Ficus benjamina) showed "300–20000 mol/m²/j" instead of
+    "0.3–20.0 mol/m²/j"; fixed to match this project's own existing `devices.$deviceId.tsx`
+    precedent for the same quantity, `formatRange` gained an optional `decimals` parameter for the
+    1-decimal display this needs. (2) `listKnownAttributeFilters()` was unconditionally offering a
+    "Saison de floraison" filter group whose codes (`SN_BLOOM_SEASON_VALUES`) have zero overlap with
+    the real `PlantProfileAttribute` rows for that category (a mismatch the module's own comment
+    already documented but the filter-offering function ignored) — always returned zero results;
+    excluded from `listKnownAttributeFilters()` specifically (kept in
+    `ATTRIBUTE_GROUPS_BY_CATEGORY`/still resolvable by `resolveAttributeLabel`, in case real data
+    ever matches it). (3) `plants.search`'s attribute-filter grouping bucketed by the raw
+    `category` field, so selecting "Arbre" (type) + "Vivace" (lifetime) — both raw category `PT`,
+    which mixes two distinct dimensions — collapsed into one OR'd clause instead of ANDing; fixed by
+    bucketing on `resolveAttributeLabel`'s resolved logical group instead, verified against real
+    data (Arbre alone: 704, Vivace alone: 6094, both together: 683 — a subset of each, confirming
+    AND). (4) `/plants`'s query used bare `{data, isFetching}`, so a genuine query error left the
+    results area blank with no message; matched `history.tsx`'s existing `isError`/`error` pattern.
+    (5) this CLAUDE.md entry itself, added as part of the same fix wave per this project's own
+    "update docs when a feature changes" rule.
+  - **Verified**: `cd backend && pnpm exec tsc --noEmit && pnpm test` (187/187, including 2 new
+    `parrotFilterLabels.test.ts` cases for finding 2) and `cd frontend && pnpm typecheck` both
+    clean; findings 1 and 3 additionally confirmed against the real 9120-row `dev.db` via curl
+    (not just read as correct) — see the finding-3 numbers above and the mmol/mol conversion math
+    for finding 1.
+  - **Post-PR follow-ups** (2026-09-01, same branch, in direct response to user feedback after the
+    PR was pushed): back button + URL-persisted search/filters/page, Wikipedia links/photos,
+    `parrotOnly` filter, and a card/header redesign matching two hand-drawn wireframes.
+    - **List-page state moved from local component state into the route's own URL search params**
+      (`validatePlantsSearch`, hand-rolled like `/login`'s, not zod-based) — `q`/`tags`/`attrs`/
+      `parrotOnly`/`page` all live in the URL, `replace: true` on every update so filtering doesn't
+      spam browser history (one "back" from a detail page restores the list exactly as it was, not
+      one history entry per keystroke/filter click).
+    - **Real bug found and fixed**: the debounced search-sync `useEffect` fired on every mount
+      (React's own behavior, sharpened by `<StrictMode>`'s dev double-invoke — confirmed enabled in
+      `main.tsx`) and its navigate call unconditionally included `page: undefined`, silently
+      resetting the page to 1 on a direct/bookmarked load of e.g. `/plants?page=2`, and on the back
+      button's restore. A first fix attempt (a `useRef` "skip first render" guard) did not work
+      *because of* StrictMode's double-invoke, which defeats mount-order-based ref tricks. Fixed
+      with a value-comparison guard instead (`if (searchInput === (search.q ?? '')) return;` before
+      navigating) — the effect only ever touches the URL when the debounced text has genuinely
+      diverged from what's already there. Verified via Playwright: direct load of `/plants?page=2`
+      stays on page 2, and a full round trip (page 2 → open a detail page → back button) restores
+      `?page=2` correctly.
+    - **Detail-page back button** (`router.history.back()`) — real browser-history back, not a
+      hardcoded `navigate({to: '/plants'})`, so it lands on whatever `/plants` URL (search/filters/
+      page) the user actually came from.
+    - **Wikipedia integration, zero backend/storage involvement**: `frontend/src/lib/
+      use-wikipedia-summary.ts` (`useWikipediaSummary(title)`) calls the public, CORS-enabled
+      `https://fr.wikipedia.org/api/rest_v1/page/summary/<title>` REST API directly from the
+      browser, keyed off the plant's Latin name (higher match rate than the French common name).
+      Powers both a "Voir sur Wikipédia" link under the name (falls back to a pre-filled
+      `wikipediaSearchUrl()` search link when no article matches) and the thumbnail images on cards
+      and the detail page — `retry: false` (a 404 is a normal, expected outcome for the ~50%+ of
+      species/cultivars with no French article, not a transient failure) and `staleTime: Infinity`
+      (static reference data). `WIKIPEDIA_LANGUAGE` is a single named constant, the explicit
+      i18n-readiness seam for a future locale-aware version. **No images are ever stored** — this
+      was the user's explicit constraint (thousands of species, "flemme de stocker 8000+ photos") —
+      and a card only fetches a thumbnail for what's actually rendered (≤24 items, pagination-bound,
+      each card owning its own `useWikipediaSummary` call), never all 9120 up front.
+    - **`parrotOnly` filter** ("Compatible Parrot Pot uniquement" checkbox) — `plants.search` gained
+      a `parrotOnly: z.boolean().optional()` input, pushed into the query as
+      `{ parrotSpeciesId: { not: null } }`. Lets a user skip straight to the ~8070 species with the
+      full Parrot-sourced experience (needs gauges, resolved attributes, fertilizer types) instead
+      of the degraded WatchFlower-only card.
+    - **`plants.search` also returns `description`** (the FR translation's plant description,
+      distinct from Wikipedia's own extract) — shown as a 2-line clamp on each search-result card.
+    - **Card/header redesign to match user-supplied wireframes**: cards are now full-width
+      `aspect-video` image on top (was `aspect-4/3`, which silently failed to compile in this
+      Tailwind v4 setup — bare-fraction shorthand doesn't reliably work here, only bracket
+      (`aspect-[4/3]`) or canonical named utilities like `aspect-video` do), then name/scientific
+      name/tags (plain interpunct-joined text, not badges)/description — and equal-height within a
+      grid row via `Link className="flex h-full"` + `Card className="h-full w-full"` + a `flex-1`
+      content area (CSS Grid's default `align-items: stretch` otherwise leaves shorter cards visibly
+      shorter than their row siblings). The detail-page header is a responsive two-column layout
+      (`flex-col sm:flex-row`) — back button + name/latin/tags/wiki-link on the left, a larger
+      square Wikipedia image (or a `Sprout` icon placeholder) on the right — confirmed on a 390×844
+      mobile viewport via Playwright screenshot, stacking cleanly with no overflow.
+    - **Verified**: `cd backend && pnpm exec tsc --noEmit && pnpm test` (195/195) and
+      `cd frontend && pnpm typecheck` both clean; `npx biome check` clean on all 3 touched files;
+      the debounce-guard fix, the `parrotOnly` filter, and the equal-height card fix were each
+      confirmed live in a real browser (Playwright) against the mock provider, not just typechecked.
 
 ## Repo structure
 
@@ -1616,7 +1754,8 @@ Dockerfile, docker-entrypoint.sh, docker-compose.prod.yml, docker-compose.test.y
   `/devices/add` is open, see the scoped-BLE-discovery Project status entry),
   `pollSettings` (`get`, `upsert` — named-device poll interval, DB-backed, see Project status),
   `history` (`list` — the global History page's merged `WateringEvent`/`SyncEvent` feed, see Project
-  status) and `readings`
+  status), `plants` (`search`, `listFilters`, `getById` — the "Base de plantes" browsing page over
+  the already-imported `PlantProfile` rows, see Project status) and `readings`
   (`onReading`, a subscription) into `appRouter`; its type (`AppRouter`) is the single source of
   truth shared with the frontend. `trpc.ts` defines `publicProcedure`/`protectedProcedure`
   (`protectedProcedure` throws `TRPCError({code:'UNAUTHORIZED'})` when there's no session — same
@@ -1703,7 +1842,9 @@ Dockerfile, docker-entrypoint.sh, docker-compose.prod.yml, docker-compose.test.y
   6 — shows the device's current Plant Dr dry/wet thresholds live and a "capture wet point" action,
   gated on a species being assigned), "Historique" (`/history`, global — see the Project status
   entry below for the full design: a day-grouped feed merging `WateringEvent` and `SyncEvent` rows
-  across every named device, filterable by device and by period).
+  across every named device, filterable by device and by period), "Base de plantes"
+  (`/plants` — search/filter grid over all 9120 `PlantProfile` rows, and `/plants/$id` — detail page
+  with nomenclature/description/needs gauges, see the Project status entry of the same name).
 - App shell layout (`components/app-shell.tsx`): the sidebar is pinned to the viewport height
   (`h-svh` + `overflow-hidden` on the root flex row) and only the content `<main>` scrolls
   (`overflow-y-auto`) — fixed 2026-07-28 after the sidebar was found stretching to the full page
@@ -1785,6 +1926,21 @@ Dockerfile, docker-entrypoint.sh, docker-compose.prod.yml, docker-compose.test.y
   Node: `cd node_modules/.pnpm/@abandonware+noble@*/node_modules/@abandonware/noble && pnpm dlx
   node-gyp rebuild` (requires Xcode Command Line Tools, already present on DestCom's machine). Must
   be redone if `pnpm install` reinstalls the package (e.g. after deleting `node_modules`).
+- **TanStack Router silently nests a new route file if its name shadows an existing parent route —
+  check this BEFORE creating any route file, not after `pnpm typecheck` passes.** Naming a new route
+  `<parent>.<segment>.tsx` when `<parent>.tsx` already exists makes the router treat it as a *child*
+  of that parent, requiring an `<Outlet/>` in the parent's component to ever render — which most of
+  this project's single-purpose page routes don't have, so the new page silently renders nothing (or
+  the parent's own content) instead of the intended page, with zero type error anywhere (routing
+  structure isn't something `tsc` can catch). The fix is always the trailing-underscore un-nesting
+  filename, `<parent>_.<segment>.tsx`, which tells the router "same URL segment, don't nest under
+  the sibling route file of the same name." Hit **three separate times** in this project's history
+  without ever being written down as a pattern to watch for proactively:
+  `devices.$deviceId_.calibration.tsx` (Batch 6), `devices.add_.$deviceId.onboarding.tsx`
+  (onboarding stepper), and `plants_.$id.tsx` (Base de plantes) — each time discovered only by
+  noticing the wrong content render, not by a build failure. Before adding a new route file whose
+  name starts with an existing route file's basename plus a dot, stop and check whether a trailing
+  underscore is needed.
 
 ## Infra access
 
