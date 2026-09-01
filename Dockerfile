@@ -4,7 +4,7 @@
 # nginx/Caddy container. Debian base (not Alpine) to match the production server's own distro —
 # BlueZ/D-Bus behavior is validated against real Debian, not musl libc.
 
-FROM node:22-bookworm-slim AS base
+FROM node:26-bookworm-slim AS base
 ENV PNPM_HOME="/pnpm"
 ENV PATH="$PNPM_HOME/bin:$PATH"
 # pnpm 11 (see pnpm-workspace.yaml's own comment on verifyDepsBeforeRun for the CI build-blocking
