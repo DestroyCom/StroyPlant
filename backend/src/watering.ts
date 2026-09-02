@@ -48,5 +48,13 @@ export async function triggerWatering(
   } catch (error) {
     result = { success: false, errorDetail: error instanceof Error ? error.message : String(error) };
   }
-  return recordWateringOutcome(deviceId, triggerSource, result);
+  try {
+    return await recordWateringOutcome(deviceId, triggerSource, result);
+  } catch (error) {
+    // recordWateringOutcome itself failing (e.g. a DB error) must still resolve to an explicit
+    // failure result, matching this function's documented Promise<WateringResult> contract — never
+    // an uncaught throw, even when the failure is in the recording step rather than the watering
+    // action itself.
+    return { success: false, errorDetail: error instanceof Error ? error.message : String(error) };
+  }
 }
