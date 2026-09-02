@@ -1821,12 +1821,19 @@ production server:
     `mol × 4659.293` + seuils 500/10000 **tirés de la décompilation de l'app officielle**
     (`Utility.convertMolToLux`, `BridgeGraphicView`, `DataKeeper`), pas devinés. La valeur DLI
     principale de la gauge est inchangée.
-  - **Risque connu, non testé sur hardware réel** (déjà signalé par le design spec) : le chemin
-    rapide écrit sur le service `39e1f900` (déclenchement d'arrosage) pendant que des notifications
-    sont actives sur `39e1fa00` (service capteurs) — deux services distincts sur la même connexion
-    BlueZ réelle, jamais validé sur un vrai Parrot Pot. Idem pour `subscribeLive`'s
-    `onConnectionReady` côté `node-ble`. Le repli explicite ci-dessus est précisément le filet
-    prévu pour ce cas.
+  - **Risque du chemin rapide — CONFIRMÉ SUR HARDWARE RÉEL (2026-09-02)**, plus un risque ouvert :
+    écrire sur le service `39e1f900` (déclenchement d'arrosage) pendant que des notifications sont
+    actives sur `39e1fa00` (service capteurs) — deux services distincts sur la même connexion BlueZ
+    réelle — fonctionne. Validé via `backend/scripts/hwtest-live-fast-path-watering-8733.ts`
+    (script jetable, même convention que les hwtest précédents), exécuté sur le pot 8733
+    (`A0:14:3D:CD:87:33`, pas de plante, pot de test dédié) dans un conteneur `node:22-bookworm-slim`
+    jetable sur le serveur de production, `stroyplant` arrêté le temps du test (adaptateur Bluetooth
+    partagé, pratique déjà établie) : 20 échantillons live stables avant le déclenchement,
+    `triggerWatering()` via `onConnectionReady`/`LiveConnectionHandle` réussi en 57ms, puis 16
+    échantillons de plus reçus sans coupure ni erreur GATT après l'écriture — les deux services
+    coexistent bien sur une même connexion réelle. Corroboration physique : l'humidité mesurée est
+    passée de 5.7% à 6.0% juste après le déclenchement. Le repli explicite ci-dessus reste en place
+    comme filet pour les cas non couverts par ce test (ex. échec de connexion initiale, timeout).
   - **La revue finale de branche a trouvé un vrai bug, pas seulement des nits** : le plafond de
     300 points ajouté pour borner le cache s'appliquait au tableau **fusionné** et le tronquait par
     `slice(-300)` — il supprimait donc l'historique POLL réel renvoyé par le serveur. Sur les
@@ -1858,9 +1865,10 @@ production server:
     base restaurée après test) : l'onglet "7 jours" conserve bien sa fenêtre complète après ~150
     échantillons live, et un `CONFLICT` réel sur notre propre session se résout en "Direct" sans
     toast d'erreur ni perte du budget de retry, tandis qu'un état "live mais aucune session côté
-    serveur" est détecté et réparé tout seul en ~9 s. **Non vérifié** : tout le chemin hardware
-    réel (voir le risque ci-dessus) — cette classe de travail BLE n'est pas testable depuis un Mac,
-    conformément à la convention de ce projet.
+    serveur" est détecté et réparé tout seul en ~9 s. Le chemin rapide d'arrosage pendant une
+    session live (le risque signalé plus haut) est maintenant confirmé sur le pot 8733 réel, voir
+    ci-dessus — reste non testé : le reste du chemin `node-ble` en usage normal (sans le fast-path,
+    déjà couvert par les incidents de production précédents documentés dans ce fichier).
 
 ## Repo structure
 
