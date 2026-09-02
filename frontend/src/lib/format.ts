@@ -105,3 +105,14 @@ export function dayBucketLabel(iso: string): string {
   if (diffDays === 1) return 'Hier';
   return `Il y a ${diffDays} jours`;
 }
+
+// Formule et seuils tirés de la décompilation officielle Flower Power (Utility.convertMolToLux +
+// BridgeGraphicView/DataKeeper), pas devinés — voir docs/superpowers/specs/2026-09-02-live-mode-
+// default-design.md, "Evidence this is real". `mol` est notre luminosity/fa0b, déjà en mol/m²/j
+// linéaire (confirmé empiriquement, CLAUDE.md Part H) — pas de transformation log à appliquer.
+export function molToLuxLabel(mol: number): string {
+  const lux = mol * 4659.293;
+  if (lux < 500) return '0 lux';
+  if (lux < 10000) return `${Math.round(lux)} lux`;
+  return `${Math.round(lux / 1000)} klux`;
+}

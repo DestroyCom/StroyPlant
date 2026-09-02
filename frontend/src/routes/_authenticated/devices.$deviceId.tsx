@@ -15,7 +15,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { formatDeviceKind, formatRelativeTime, statusBandClasses, statusDetail, statusHeadline } from '@/lib/format';
+import { formatDeviceKind, formatRelativeTime, molToLuxLabel, statusBandClasses, statusDetail, statusHeadline } from '@/lib/format';
 import { getErrorMessage } from '@/lib/format-error';
 import { trpc } from '@/lib/trpc';
 import type { ParameterHealth, Reading } from '@/lib/types';
@@ -412,7 +412,7 @@ function DeviceDetailPage() {
                           hint={[
                             rangeHint(health?.parameters.luminosity, ' mol/m²/j', 1000),
                             health?.parameters.luminosity?.liveValue != null &&
-                              `Instantané : ${(health.parameters.luminosity.liveValue / 1000).toFixed(2)} mol/m²/j`,
+                              `Instantané : ${molToLuxLabel(health.parameters.luminosity.liveValue / 1000)}`,
                             personalDeviationHint(health?.parameters.luminosity),
                           ]
                             .filter(Boolean)
