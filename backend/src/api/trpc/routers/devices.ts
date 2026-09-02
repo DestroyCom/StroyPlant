@@ -1,13 +1,15 @@
 import type { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { z } from 'zod';
+import { withTimeout } from '../../../ble/parrot/retry.js';
 import { prisma } from '../../../db/client.js';
 import { getCalibration, resolveConductivityValue } from '../../../health/soilConductivityCalibration.js';
+import { getActiveLiveConnectionHandle, stopLiveSession } from '../../../liveSession/manager.js';
 import { log } from '../../../logger.js';
 import { getMqttState } from '../../../mqtt/manager.js';
 import { publishDiscovery } from '../../../mqtt/publisher.js';
 import { persistReading, persistSyncFailure } from '../../../readings.js';
-import { triggerWatering } from '../../../watering.js';
+import { recordWateringOutcome, triggerWatering } from '../../../watering.js';
 import { serializeDate, serializeReading, serializeWateringEvent } from '../serialize.js';
 import { protectedProcedure, router } from '../trpc.js';
 
@@ -27,6 +29,12 @@ async function withLastReading(device: DeviceWithPlantProfile) {
   }
   return { ...device, lastSeenAt: serializeDate(device.lastSeenAt), lastReading: serializeReading(lastReading) };
 }
+
+// Le chemin rapide (écriture sur la connexion live déjà ouverte) doit échouer vite pour ne jamais
+// retarder le repli vers le chemin normal plus que nécessaire — bien plus court que
+// CONNECT_TIMEOUT_MS (18s), qui couvre l'ouverture d'une connexion complète, pas une simple
+// écriture sur une connexion déjà établie.
+const LIVE_WATERING_FAST_PATH_TIMEOUT_MS = 5000;
 
 export const devicesRouter = router({
   // Only devices the user has named are shown on the dashboard — a device the scanner just
@@ -159,6 +167,25 @@ export const devicesRouter = router({
   water: protectedProcedure.input(z.object({ deviceId: z.string() })).mutation(async ({ ctx, input }) => {
     const device = await prisma.device.findUnique({ where: { id: input.deviceId } });
     if (!device) throw new TRPCError({ code: 'NOT_FOUND', message: 'Device not found' });
+
+    // Chemin rapide : une session live est en cours sur ce device, on réutilise sa connexion GATT
+    // déjà ouverte au lieu d'attendre la fin de la session (jusqu'à 5min) pour passer par
+    // connectionQueue (voir docs/superpowers/specs/2026-09-02-live-mode-default-design.md, "Key
+    // constraint"). Un échec ici n'est PAS enregistré comme un échec d'arrosage — ce n'est qu'une
+    // tentative interne, le vrai résultat est celui du repli ci-dessous, qui, lui, est toujours
+    // enregistré (docs/STROYPLANT_SPEC.md section 7.1).
+    const liveHandle = getActiveLiveConnectionHandle(device.id);
+    if (liveHandle) {
+      try {
+        await withTimeout(liveHandle.triggerWatering(), LIVE_WATERING_FAST_PATH_TIMEOUT_MS, 'live-watering-fast-path');
+        await recordWateringOutcome(device.id, 'MANUAL', { success: true });
+        return { ok: true as const };
+      } catch {
+        // Libère la queue au plus vite pour le repli ci-dessous plutôt que de laisser la session
+        // live continuer à la tenir jusqu'à sa fin naturelle.
+        stopLiveSession(device.id);
+      }
+    }
 
     const result = await triggerWatering(device.id, 'MANUAL', ctx.provider, ctx.connectionQueue);
     if (!result.success) throw new TRPCError({ code: 'BAD_GATEWAY', message: result.errorDetail });
