@@ -61,11 +61,28 @@ export function useLiveMode(deviceId: string, _kind: DeviceKind, hours: number):
   // l'effet de réconciliation plus bas, pour ne jamais juger notre état local à partir d'un
   // instantané `liveSession.status` qui pourrait précéder cette action.
   const lastLocalTransitionAtRef = useRef(0);
+  // Passe à false au démontage (voir le dernier useEffect ci-dessous). Un `startMutation` en vol
+  // au moment où l'onglet passe en arrière-plan ou où le composant est démonté n'est annulé par
+  // rien — s'il finit par réussir APRÈS coup, plus aucun effet ne surveille son résultat pour la
+  // couper : sans ce garde-fou, la session nouvellement créée côté serveur resterait orpheline,
+  // tenant connectionQueue jusqu'au cutoff serveur de 5min pour rien.
+  const isMountedRef = useRef(true);
+
+  // Un start qui aboutit alors qu'on n'est plus en mesure de l'observer (démonté, ou onglet déjà
+  // en arrière-plan) doit être arrêté immédiatement plutôt que marqué "live" — sinon rien ne le
+  // coupera jamais.
+  function shouldAbandonSessionOnArrival() {
+    return !isMountedRef.current || document.visibilityState === 'hidden';
+  }
 
   const startMutation = useMutation(
     trpc.liveSession.start.mutationOptions({
       onSuccess: () => {
         lastLocalTransitionAtRef.current = Date.now();
+        if (shouldAbandonSessionOnArrival()) {
+          stopMutation.mutate({ deviceId });
+          return;
+        }
         setUnavailable(false);
         setIsLive(true);
       },
@@ -80,6 +97,10 @@ export function useLiveMode(deviceId: string, _kind: DeviceKind, hours: number):
           const current = await queryClient.fetchQuery(trpc.liveSession.status.queryOptions());
           if (current?.deviceId === deviceId) {
             lastLocalTransitionAtRef.current = Date.now();
+            if (shouldAbandonSessionOnArrival()) {
+              stopMutation.mutate({ deviceId });
+              return;
+            }
             setUnavailable(false);
             setIsLive(true);
             return;
@@ -235,10 +256,16 @@ export function useLiveMode(deviceId: string, _kind: DeviceKind, hours: number):
   }, [isLive, unavailable, deviceId]);
 
   // Quitter la page arrête la session immédiatement plutôt que de la laisser tourner jusqu'au
-  // cutoff sans que personne ne regarde.
+  // cutoff sans que personne ne regarde. Ce stop couvre une session déjà `isLive` au moment du
+  // démontage — s'il y a un `startMutation` encore en vol à cet instant précis, ce stop synchrone
+  // arrive trop tôt (aucune session à couper côté serveur) ; `isMountedRef` (mis à jour ici) est
+  // ce qui permet à `onSuccess`/`onError` de ce start, une fois résolu après coup, de rattraper le
+  // coup et d'arrêter la session tout juste créée (voir shouldAbandonSessionOnArrival).
   // biome-ignore lint/correctness/useExhaustiveDependencies: only re-run this cleanup if deviceId itself changes, not on every stopMutation identity change
   useEffect(() => {
+    isMountedRef.current = true;
     return () => {
+      isMountedRef.current = false;
       stopMutation.mutate({ deviceId });
     };
   }, [deviceId]);

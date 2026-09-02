@@ -1,7 +1,7 @@
 import type { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { z } from 'zod';
-import { withTimeout } from '../../../ble/parrot/retry.js';
+import { CONNECT_TIMEOUT_MS, withTimeout } from '../../../ble/parrot/retry.js';
 import { prisma } from '../../../db/client.js';
 import { getCalibration, resolveConductivityValue } from '../../../health/soilConductivityCalibration.js';
 import { getActiveLiveConnectionHandle, stopLiveSession } from '../../../liveSession/manager.js';
@@ -176,15 +176,28 @@ export const devicesRouter = router({
     // ci-dessous, qui, lui, est toujours enregistré (docs/STROYPLANT_SPEC.md section 7.1).
     const liveHandle = getActiveLiveConnectionHandle(device.id);
     if (liveHandle) {
+      const fastPathAttempt = liveHandle.triggerWatering();
       let fastPathSucceeded = false;
       try {
-        await withTimeout(liveHandle.triggerWatering(), LIVE_WATERING_FAST_PATH_TIMEOUT_MS, 'live-watering-fast-path');
+        await withTimeout(fastPathAttempt, LIVE_WATERING_FAST_PATH_TIMEOUT_MS, 'live-watering-fast-path');
         fastPathSucceeded = true;
       } catch {
-        // Échec de l'écriture physique elle-même — libère la queue au plus vite pour le repli
-        // ci-dessous plutôt que de laisser la session live continuer à la tenir jusqu'à sa fin
-        // naturelle.
+        // La course peut avoir été perdue par le simple timeout du chemin rapide, sans que
+        // l'écriture physique ait réellement échoué — elle peut encore être en vol. Libère la
+        // queue au plus vite pour le repli ci-dessous plutôt que de laisser la session live la
+        // tenir jusqu'à sa fin naturelle — mais node-ble's subscribeLive attend maintenant ce même
+        // write avant de démonter la connexion (pendingTriggerWrite), donc fastPathAttempt reflète
+        // toujours l'issue GATT réelle, jamais un artefact de déconnexion forcée en plein milieu.
+        // On attend donc son vrai résultat (borné par CONNECT_TIMEOUT_MS, cohérent avec le reste
+        // du fichier) avant de décider de retomber sur le chemin normal — sinon un second
+        // arrosage physique serait risqué si le premier avait en fait fini par réussir.
         stopLiveSession(device.id);
+        try {
+          await withTimeout(fastPathAttempt, CONNECT_TIMEOUT_MS, 'live-watering-fast-path-settlement');
+          fastPathSucceeded = true;
+        } catch {
+          fastPathSucceeded = false;
+        }
       }
       if (fastPathSucceeded) {
         // L'arrosage physique a déjà eu lieu sur la connexion live — l'enregistrement de son

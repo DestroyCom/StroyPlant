@@ -972,6 +972,13 @@ export function createNodeBleProvider(): DeviceProvider {
       // sur des objets déjà relâchés — exactement la classe de bug (caractéristique réutilisée
       // après teardown) à l'origine des fuites de match rules D-Bus documentées dans CLAUDE.md.
       let tornDown = false;
+      // Le write d'arrosage du chemin rapide (triggerWatering ci-dessous) en cours, s'il y en a
+      // un — le finally global doit l'attendre avant de libérer les listeners D-Bus/déconnecter,
+      // sinon un stopLiveSession() concurrent (ex. devices.water's fast path qui abandonne après
+      // LIVE_WATERING_FAST_PATH_TIMEOUT_MS) démonterait la connexion PENDANT l'écriture physique,
+      // rendant son issue réelle indéterminable et risquant un double arrosage si l'appelant
+      // retombe ensuite sur le chemin normal en croyant le premier échoué.
+      let pendingTriggerWrite: Promise<void> | null = null;
       try {
         if (signal.aborted) return;
 
@@ -981,17 +988,25 @@ export function createNodeBleProvider(): DeviceProvider {
           onConnectionReady({
             async triggerWatering() {
               if (tornDown) throw new Error('Connexion live déjà fermée — arrosage impossible via cette connexion');
-              const wateringService = await gatt.getPrimaryService(WATERING_SERVICE_UUID);
-              const trigger = await trackedCharacteristic(wateringService, UUIDS.watering.trigger, characteristics);
-              await trigger.writeValueWithResponse(WATER_TRIGGER_PAYLOAD);
-              log({
-                direction: 'WRITE',
-                label: 'Watering trigger (via live connection)',
-                uuid: UUIDS.watering.trigger,
-                deviceId,
-                payloadHex: WATER_TRIGGER_PAYLOAD.toString('hex'),
-                result: 'OK',
-              });
+              const attempt = (async () => {
+                const wateringService = await gatt.getPrimaryService(WATERING_SERVICE_UUID);
+                const trigger = await trackedCharacteristic(wateringService, UUIDS.watering.trigger, characteristics);
+                await trigger.writeValueWithResponse(WATER_TRIGGER_PAYLOAD);
+                log({
+                  direction: 'WRITE',
+                  label: 'Watering trigger (via live connection)',
+                  uuid: UUIDS.watering.trigger,
+                  deviceId,
+                  payloadHex: WATER_TRIGGER_PAYLOAD.toString('hex'),
+                  result: 'OK',
+                });
+              })();
+              pendingTriggerWrite = attempt.catch(() => {});
+              try {
+                await attempt;
+              } finally {
+                pendingTriggerWrite = null;
+              }
             },
           });
         }
@@ -1143,6 +1158,13 @@ export function createNodeBleProvider(): DeviceProvider {
         // Avant toute libération : un triggerWatering() qui arriverait maintenant doit échouer
         // explicitement plutôt que d'opérer sur une connexion en cours de démontage.
         tornDown = true;
+        // Laisser une écriture d'arrosage déjà en vol se terminer avant de démonter la connexion
+        // (voir le commentaire sur pendingTriggerWrite plus haut) — bornée par CONNECT_TIMEOUT_MS,
+        // le même plafond utilisé partout ailleurs dans ce fichier pour une opération GATT, pour ne
+        // jamais bloquer indéfiniment le reste du connectionQueue si ce write venait à rester bloqué.
+        if (pendingTriggerWrite) {
+          await withTimeout(pendingTriggerWrite, CONNECT_TIMEOUT_MS, 'pending-trigger-write-settlement').catch(() => {});
+        }
         for (const characteristic of characteristics) releaseDbusListeners(characteristic);
         await withTimeout(device.disconnect(), CONNECT_TIMEOUT_MS, 'disconnect').catch(() => {});
         releaseDbusListeners(device);

@@ -1910,7 +1910,9 @@ frontend/        Vite + React SPA + TanStack Router/Query + Tailwind v4 + shadcn
   src/components/  Shell (sidebar, responsive — see Project status), DeviceCard, SensorGauge,
                    HistoryChart, shadcn components in ui/
   src/lib/         auth-client (BetterAuth), trpc.ts (tRPC client + TanStack Query options proxy),
-                   use-live-readings (global readings.onReading subscription, POLL rows only),
+                   use-live-readings (global readings.onReading subscription — merges both LIVE and
+                   POLL events into devices.list.lastReading, i.e. the gauges, but only ever appends
+                   POLL rows to devices.history, i.e. the chart),
                    use-live-mode (headless hook owning the device detail page's auto-started live
                    session, see Project status — replaced the LiveModeSection component)
   src/instrument.ts  GlitchTip/Sentry init, DSN fetched at runtime from GET /api/public-config
