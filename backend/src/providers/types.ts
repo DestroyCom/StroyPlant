@@ -94,6 +94,16 @@ export interface DiscoveredDevice {
 
 export type DeviceAction = 'water';
 
+// Permet à un appelant qui a déjà accès à une session live (donc une connexion GATT déjà ouverte)
+// de déclencher une action dessus sans repasser par connectionQueue.run() — ce qui, pour un
+// arrosage, attendrait sinon la fin complète de la session live (jusqu'à 5min, voir
+// docs/superpowers/specs/2026-09-02-live-mode-default-design.md, "Key constraint"). Doit toujours
+// rejeter explicitement en cas d'échec — jamais un no-op silencieux, l'appelant est responsable du
+// repli vers le chemin normal (docs/STROYPLANT_SPEC.md section 7.1).
+export interface LiveConnectionHandle {
+  triggerWatering(): Promise<void>;
+}
+
 export interface DeviceProvider {
   readonly name: string;
 
@@ -114,11 +124,17 @@ export interface DeviceProvider {
   // retry it themselves (a live session that already streamed real samples must not silently
   // restart from scratch). `onSample` is awaited before the provider processes the next
   // notification, so persistence (which it triggers) never races itself.
+  //
+  // `onConnectionReady`, when provided, is called once the GATT connection is established (before
+  // notifications start) with a LiveConnectionHandle for reusing that same connection — only
+  // node-ble and mock implement it for PARROT_POT (see docs/superpowers/specs/2026-09-02-live-mode-
+  // default-design.md); other providers/kinds simply never call it.
   subscribeLive(
     deviceId: string,
     kind: DeviceKind,
     onSample: (reading: SensorReading) => Promise<void>,
     signal: AbortSignal,
+    onConnectionReady?: (handle: LiveConnectionHandle) => void,
   ): Promise<void>;
 
   triggerAction(deviceId: string, action: DeviceAction): Promise<void>;
