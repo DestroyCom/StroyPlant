@@ -7,6 +7,13 @@ import type { DeviceKind, Reading } from './types';
 
 export type LiveModeStatus = 'connecting' | 'live' | 'unavailable';
 
+// Bounds the cached array's size independently of the time-window filter below — without this, a
+// tab left open and visible for hours (indefinite auto-reconnect across many 5-minute cutoff
+// cycles) could accumulate thousands of points for whatever period is currently selected, a real
+// chart-rendering perf risk this task's own new "reconnect indefinitely while visible" behavior
+// introduces. Matches the old LiveModeSection's MAX_BUFFER_SIZE concept (~5min at ~1 sample/s).
+const MAX_CACHED_HISTORY_POINTS = 300;
+
 // Remplace l'ancien composant visuel `LiveModeSection` (docs/superpowers/specs/2026-09-02-live-
 // mode-default-design.md) : plus de zone/bouton séparés, ce hook headless démarre le direct
 // automatiquement à l'ouverture de la page et pousse chaque échantillon directement dans les caches
@@ -100,7 +107,8 @@ export function useLiveMode(deviceId: string, _kind: DeviceKind, hours: number):
           queryClient.setQueryData<Reading[]>(trpc.devices.history.queryKey({ deviceId, hours }), (readings) => {
             if (!readings) return readings;
             const cutoffMs = Date.now() - hours * 3_600_000;
-            return [...readings, event.reading].filter((point) => new Date(point.timestamp).getTime() >= cutoffMs);
+            const trimmed = [...readings, event.reading].filter((point) => new Date(point.timestamp).getTime() >= cutoffMs);
+            return trimmed.length > MAX_CACHED_HISTORY_POINTS ? trimmed.slice(-MAX_CACHED_HISTORY_POINTS) : trimmed;
           });
         },
         onError: () => {
