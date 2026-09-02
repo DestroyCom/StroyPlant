@@ -968,5 +968,13 @@ Cette tâche ne peut être exécutée que par DestCom (accès SSH production, d�
 - [ ] Si le chemin rapide échoue en conditions réelles (log `Watering trigger (via live connection)`
   absent, repli visible dans les logs), documenter l'observation — c'est le scénario que Task 6
   couvre, pas une régression si le repli fonctionne correctement.
+- [ ] **Cas ambigu à surveiller spécifiquement** (relevé par la revue finale de branche, 2026-09-02,
+  volontairement non "corrigé" en code) : si le timeout de 5 s du chemin rapide expire alors que
+  l'écriture GATT réussit physiquement juste après, on retombe sur le chemin normal et le pot peut
+  s'arroser deux fois (2 `WateringEvent`, ou 1 seul pour 2 arrosages physiques). Ce n'est pas
+  spécifique à ce sous-projet — `triggerAction`'s propre politique de retry a déjà exactement le
+  même angle mort ailleurs dans ce codebase — mais c'est ici qu'on peut l'observer pour la première
+  fois. Sur `87:33` (pot de test, sans plante), comparer le nombre de `WateringEvent` écrits au
+  nombre de déclenchements réellement entendus, et noter tout écart.
 
 ---
