@@ -223,18 +223,23 @@ function DeviceDetailPage() {
         </h1>
         <p className="mt-3.5 max-w-md text-base text-muted-foreground">{statusDetail(device)}</p>
         <div className="mt-5.5 flex items-center gap-2.5">
-          {liveStatus === 'live' && (
-            <span className="inline-flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
-              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-teal-500" />
-              Direct
-            </span>
-          )}
-          {liveStatus === 'connecting' && <span className="text-xs font-medium text-muted-foreground">Connexion…</span>}
-          {liveStatus === 'unavailable' && (
-            <Button variant="outline" size="sm" onClick={retryLive}>
-              Réessayer le direct
-            </Button>
-          )}
+          {/* aria-live: le direct change d'état tout seul (connexion, coupure auto à 5min,
+              reconnexion) — un lecteur d'écran doit annoncer ces transitions sans que
+              l'utilisateur ait à revenir explicitement sur cette zone. */}
+          <div aria-live="polite" className="flex items-center gap-2.5">
+            {liveStatus === 'live' && (
+              <span className="inline-flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+                <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-teal-500" />
+                Direct
+              </span>
+            )}
+            {liveStatus === 'connecting' && <span className="text-xs font-medium text-muted-foreground">Connexion…</span>}
+            {liveStatus === 'unavailable' && (
+              <Button variant="outline" size="sm" onClick={retryLive}>
+                Réessayer le direct
+              </Button>
+            )}
+          </div>
           <Button
             variant="outline"
             size="lg"

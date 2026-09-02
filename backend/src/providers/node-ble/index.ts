@@ -965,6 +965,13 @@ export function createNodeBleProvider(): DeviceProvider {
 
       const device = await connectDeviceWithRetry(deviceId, 'subscribeLive');
       const characteristics: GattCharacteristic[] = [];
+      // Passe à true dans le `finally` global ci-dessous, une fois la connexion démontée (listeners
+      // D-Bus libérés, device déconnecté). Le handle LiveConnectionHandle publié ci-dessous peut
+      // survivre à ce démontage entre les mains d'un appelant (devices.water's fast path) : sans
+      // ce garde-fou, un appel arrivant juste après la fin de session tenterait une opération GATT
+      // sur des objets déjà relâchés — exactement la classe de bug (caractéristique réutilisée
+      // après teardown) à l'origine des fuites de match rules D-Bus documentées dans CLAUDE.md.
+      let tornDown = false;
       try {
         if (signal.aborted) return;
 
@@ -973,6 +980,7 @@ export function createNodeBleProvider(): DeviceProvider {
         if (kind === 'PARROT_POT' && onConnectionReady) {
           onConnectionReady({
             async triggerWatering() {
+              if (tornDown) throw new Error('Connexion live déjà fermée — arrosage impossible via cette connexion');
               const wateringService = await gatt.getPrimaryService(WATERING_SERVICE_UUID);
               const trigger = await trackedCharacteristic(wateringService, UUIDS.watering.trigger, characteristics);
               await trigger.writeValueWithResponse(WATER_TRIGGER_PAYLOAD);
@@ -1132,6 +1140,9 @@ export function createNodeBleProvider(): DeviceProvider {
           await measurePeriod.writeValueWithResponse(Buffer.from([0])).catch(() => {});
         }
       } finally {
+        // Avant toute libération : un triggerWatering() qui arriverait maintenant doit échouer
+        // explicitement plutôt que d'opérer sur une connexion en cours de démontage.
+        tornDown = true;
         for (const characteristic of characteristics) releaseDbusListeners(characteristic);
         await withTimeout(device.disconnect(), CONNECT_TIMEOUT_MS, 'disconnect').catch(() => {});
         releaseDbusListeners(device);

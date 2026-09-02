@@ -108,7 +108,11 @@ export function startLiveSession(
   };
 
   connectionQueue
-    .run(() => provider.subscribeLive(deviceId, kind, onSample, controller.signal, (handle) => { liveConnectionHandle = handle; }))
+    .run(() =>
+      provider.subscribeLive(deviceId, kind, onSample, controller.signal, (handle) => {
+        liveConnectionHandle = handle;
+      }),
+    )
     .then(
       () => {
         const event: LiveEndedEvent = { type: 'ended', deviceId, reason: stopReason };
