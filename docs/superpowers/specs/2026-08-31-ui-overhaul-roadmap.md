@@ -219,11 +219,12 @@ conception visuelle de chaque sous-projet plutôt qu'ici.
 - [x] Sous-projet 1 — Base de plantes : spike mapping filtres fait (2026-08-31) → brainstorming →
   spec → plan → **implémenté** (2026-09-01, voir `CLAUDE.md` "Base de plantes", incl. les
   post-PR follow-ups du même jour)
-- [ ] Sous-projet 2 — Mode live par défaut (+ unité luminosité live à corriger, + température live
-  incohérente) : brainstorming fait (2026-09-02) → **spec écrite**
-  (`2026-09-02-live-mode-default-design.md`, en relecture) → plan → implémentation. Le bug de
-  température s'est avéré déjà corrigé sur `main` avant même ce brainstorming (voir la spec, section
-  "Hors scope") — reste à déployer, pas à concevoir.
+- [x] Sous-projet 2 — Mode live par défaut (+ unité luminosité live corrigée, + température live
+  incohérente) : brainstorming (2026-09-02) → spec (`2026-09-02-live-mode-default-design.md`) →
+  plan (`2026-09-02-live-mode-default.md`, 9 tâches) → **implémenté et mergé** (2026-09-02/03, PR
+  mergée sur `main` en `42b75cd`, voir `CLAUDE.md` "Le direct devient la vue par défaut de la page
+  détail"). Le bug de température était déjà corrigé sur `main` avant ce brainstorming (fa07/fa09/
+  fa0a, voir la spec) — reste à confirmer sur les 3 pots réels au prochain déploiement.
 - [ ] Sous-projet 3 — Onglet "Plante" + conseils : spike (extraction des conseils) → brainstorming → spec → plan → implémentation
 - [ ] Sous-projet 4 — Image plante/pot : brainstorming (avec décision d'infra) → spec → plan → implémentation
 - [ ] Sous-projet 5 — Affichage d'erreurs lisible : brainstorming → spec → plan → implémentation (indépendant, peut être avancé n'importe quand)
