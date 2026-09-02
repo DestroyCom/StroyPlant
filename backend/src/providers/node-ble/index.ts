@@ -877,7 +877,7 @@ export function createNodeBleProvider(): DeviceProvider {
     // initial connection (via connectDeviceWithRetry, see connectDevice's own comment above) gets
     // the standard 3-attempt/backoff/adapter-restart retry policy — a mid-session disconnect after
     // that still ends the function outright, with no retry.
-    async subscribeLive(deviceId: string, kind, onSample, signal): Promise<void> {
+    async subscribeLive(deviceId: string, kind, onSample, signal, onConnectionReady): Promise<void> {
       // A signal that's already aborted before this method is even called must return
       // immediately — an `addEventListener('abort', ...)` added afterward never fires for an
       // event that already happened (AbortSignal semantics), which would otherwise hang forever
@@ -969,6 +969,25 @@ export function createNodeBleProvider(): DeviceProvider {
         if (signal.aborted) return;
 
         const gatt = await withTimeout(device.gatt(), CONNECT_TIMEOUT_MS, 'gatt');
+
+        if (kind === 'PARROT_POT' && onConnectionReady) {
+          onConnectionReady({
+            async triggerWatering() {
+              const wateringService = await gatt.getPrimaryService(WATERING_SERVICE_UUID);
+              const trigger = await trackedCharacteristic(wateringService, UUIDS.watering.trigger, characteristics);
+              await trigger.writeValueWithResponse(WATER_TRIGGER_PAYLOAD);
+              log({
+                direction: 'WRITE',
+                label: 'Watering trigger (via live connection)',
+                uuid: UUIDS.watering.trigger,
+                deviceId,
+                payloadHex: WATER_TRIGGER_PAYLOAD.toString('hex'),
+                result: 'OK',
+              });
+            },
+          });
+        }
+
         const sensorService = await gatt.getPrimaryService(SENSOR_SERVICE_UUID);
         if (signal.aborted) return;
 
