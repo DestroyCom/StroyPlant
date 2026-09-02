@@ -171,19 +171,39 @@ export const devicesRouter = router({
     // Chemin rapide : une session live est en cours sur ce device, on réutilise sa connexion GATT
     // déjà ouverte au lieu d'attendre la fin de la session (jusqu'à 5min) pour passer par
     // connectionQueue (voir docs/superpowers/specs/2026-09-02-live-mode-default-design.md, "Key
-    // constraint"). Un échec ici n'est PAS enregistré comme un échec d'arrosage — ce n'est qu'une
-    // tentative interne, le vrai résultat est celui du repli ci-dessous, qui, lui, est toujours
-    // enregistré (docs/STROYPLANT_SPEC.md section 7.1).
+    // constraint"). Un échec de l'ÉCRITURE PHYSIQUE ici n'est PAS enregistré comme un échec
+    // d'arrosage — ce n'est qu'une tentative interne, le vrai résultat est celui du repli
+    // ci-dessous, qui, lui, est toujours enregistré (docs/STROYPLANT_SPEC.md section 7.1).
     const liveHandle = getActiveLiveConnectionHandle(device.id);
     if (liveHandle) {
+      let fastPathSucceeded = false;
       try {
         await withTimeout(liveHandle.triggerWatering(), LIVE_WATERING_FAST_PATH_TIMEOUT_MS, 'live-watering-fast-path');
-        await recordWateringOutcome(device.id, 'MANUAL', { success: true });
-        return { ok: true as const };
+        fastPathSucceeded = true;
       } catch {
-        // Libère la queue au plus vite pour le repli ci-dessous plutôt que de laisser la session
-        // live continuer à la tenir jusqu'à sa fin naturelle.
+        // Échec de l'écriture physique elle-même — libère la queue au plus vite pour le repli
+        // ci-dessous plutôt que de laisser la session live continuer à la tenir jusqu'à sa fin
+        // naturelle.
         stopLiveSession(device.id);
+      }
+      if (fastPathSucceeded) {
+        // L'arrosage physique a déjà eu lieu sur la connexion live — l'enregistrement de son
+        // résultat doit être isolé dans son propre try/catch : un échec ICI (ex. une erreur Prisma
+        // transitoire, ou publishWateringResult qui jette) ne doit JAMAIS retomber vers le chemin
+        // normal, qui redéclencherait un second arrosage physique réel sur du vrai matériel — même
+        // isolation que triggerWatering() dans watering.ts entre l'action et son enregistrement.
+        try {
+          await recordWateringOutcome(device.id, 'MANUAL', { success: true });
+        } catch (error) {
+          log({
+            direction: 'WRITE',
+            label: 'Failed to record fast-path watering outcome (physical watering already succeeded)',
+            deviceId: device.id,
+            result: 'ERROR',
+            detail: error instanceof Error ? error.message : String(error),
+          });
+        }
+        return { ok: true as const };
       }
     }
 
