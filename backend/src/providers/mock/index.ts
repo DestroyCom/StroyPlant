@@ -145,6 +145,33 @@ export function createMockProvider(): DeviceProvider {
   const pots = new Map(createInitialPots().map((p) => [p.id, p]));
   const xiaomiSensors = new Map(createInitialXiaomi().map((x) => [x.id, x]));
 
+  function applyMockWatering(deviceId: string, label: string): void {
+    const pot = pots.get(deviceId);
+    if (!pot) throw new Error(`Mock device ${deviceId} inconnu ou sans actionneur (Xiaomi ne s'arrose pas)`);
+    applyPotDecay(pot);
+
+    if (pot.waterTankLevelPercent <= 0) {
+      log({
+        direction: 'WRITE',
+        label,
+        deviceId,
+        result: 'ERROR',
+        detail: 'Reservoir empty — watering impossible',
+      });
+      throw new Error('Reservoir empty — watering impossible');
+    }
+
+    pot.waterTankLevelPercent = Math.max(0, pot.waterTankLevelPercent - 15);
+    pot.soilMoisturePercent = Math.min(55, pot.soilMoisturePercent + 25);
+    log({
+      direction: 'WRITE',
+      label,
+      deviceId,
+      result: 'OK',
+      detail: `nouveau tank=${pot.waterTankLevelPercent}% soil=${pot.soilMoisturePercent.toFixed(1)}%`,
+    });
+  }
+
   return {
     name: 'mock',
 
@@ -249,7 +276,15 @@ export function createMockProvider(): DeviceProvider {
       };
     },
 
-    async subscribeLive(deviceId: string, kind, onSample, signal): Promise<void> {
+    async subscribeLive(deviceId: string, kind, onSample, signal, onConnectionReady): Promise<void> {
+      if (kind === 'PARROT_POT' && onConnectionReady) {
+        onConnectionReady({
+          async triggerWatering() {
+            applyMockWatering(deviceId, 'Watering trigger (mock, via live connection)');
+          },
+        });
+      }
+
       await new Promise<void>((resolve, reject) => {
         if (signal.aborted) {
           resolve();
@@ -317,30 +352,7 @@ export function createMockProvider(): DeviceProvider {
 
     async triggerAction(deviceId: string, action): Promise<void> {
       if (action !== 'water') throw new Error(`Unsupported action: ${action}`);
-      const pot = pots.get(deviceId);
-      if (!pot) throw new Error(`Mock device ${deviceId} inconnu ou sans actionneur (Xiaomi ne s'arrose pas)`);
-      applyPotDecay(pot);
-
-      if (pot.waterTankLevelPercent <= 0) {
-        log({
-          direction: 'WRITE',
-          label: 'Watering trigger (mock)',
-          deviceId,
-          result: 'ERROR',
-          detail: 'Reservoir empty — watering impossible',
-        });
-        throw new Error('Reservoir empty — watering impossible');
-      }
-
-      pot.waterTankLevelPercent = Math.max(0, pot.waterTankLevelPercent - 15);
-      pot.soilMoisturePercent = Math.min(55, pot.soilMoisturePercent + 25);
-      log({
-        direction: 'WRITE',
-        label: 'Watering trigger (mock)',
-        deviceId,
-        result: 'OK',
-        detail: `nouveau tank=${pot.waterTankLevelPercent}% soil=${pot.soilMoisturePercent.toFixed(1)}%`,
-      });
+      applyMockWatering(deviceId, 'Watering trigger (mock)');
     },
 
     async readPlantDrCalibration(deviceId: string): Promise<PlantDrCalibration> {
