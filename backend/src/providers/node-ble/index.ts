@@ -877,7 +877,7 @@ export function createNodeBleProvider(): DeviceProvider {
     // initial connection (via connectDeviceWithRetry, see connectDevice's own comment above) gets
     // the standard 3-attempt/backoff/adapter-restart retry policy — a mid-session disconnect after
     // that still ends the function outright, with no retry.
-    async subscribeLive(deviceId: string, kind, onSample, signal): Promise<void> {
+    async subscribeLive(deviceId: string, kind, onSample, signal, onConnectionReady): Promise<void> {
       // A signal that's already aborted before this method is even called must return
       // immediately — an `addEventListener('abort', ...)` added afterward never fires for an
       // event that already happened (AbortSignal semantics), which would otherwise hang forever
@@ -965,10 +965,52 @@ export function createNodeBleProvider(): DeviceProvider {
 
       const device = await connectDeviceWithRetry(deviceId, 'subscribeLive');
       const characteristics: GattCharacteristic[] = [];
+      // Passe à true dans le `finally` global ci-dessous, une fois la connexion démontée (listeners
+      // D-Bus libérés, device déconnecté). Le handle LiveConnectionHandle publié ci-dessous peut
+      // survivre à ce démontage entre les mains d'un appelant (devices.water's fast path) : sans
+      // ce garde-fou, un appel arrivant juste après la fin de session tenterait une opération GATT
+      // sur des objets déjà relâchés — exactement la classe de bug (caractéristique réutilisée
+      // après teardown) à l'origine des fuites de match rules D-Bus documentées dans CLAUDE.md.
+      let tornDown = false;
+      // Le write d'arrosage du chemin rapide (triggerWatering ci-dessous) en cours, s'il y en a
+      // un — le finally global doit l'attendre avant de libérer les listeners D-Bus/déconnecter,
+      // sinon un stopLiveSession() concurrent (ex. devices.water's fast path qui abandonne après
+      // LIVE_WATERING_FAST_PATH_TIMEOUT_MS) démonterait la connexion PENDANT l'écriture physique,
+      // rendant son issue réelle indéterminable et risquant un double arrosage si l'appelant
+      // retombe ensuite sur le chemin normal en croyant le premier échoué.
+      let pendingTriggerWrite: Promise<void> | null = null;
       try {
         if (signal.aborted) return;
 
         const gatt = await withTimeout(device.gatt(), CONNECT_TIMEOUT_MS, 'gatt');
+
+        if (kind === 'PARROT_POT' && onConnectionReady) {
+          onConnectionReady({
+            async triggerWatering() {
+              if (tornDown) throw new Error('Connexion live déjà fermée — arrosage impossible via cette connexion');
+              const attempt = (async () => {
+                const wateringService = await gatt.getPrimaryService(WATERING_SERVICE_UUID);
+                const trigger = await trackedCharacteristic(wateringService, UUIDS.watering.trigger, characteristics);
+                await trigger.writeValueWithResponse(WATER_TRIGGER_PAYLOAD);
+                log({
+                  direction: 'WRITE',
+                  label: 'Watering trigger (via live connection)',
+                  uuid: UUIDS.watering.trigger,
+                  deviceId,
+                  payloadHex: WATER_TRIGGER_PAYLOAD.toString('hex'),
+                  result: 'OK',
+                });
+              })();
+              pendingTriggerWrite = attempt.catch(() => {});
+              try {
+                await attempt;
+              } finally {
+                pendingTriggerWrite = null;
+              }
+            },
+          });
+        }
+
         const sensorService = await gatt.getPrimaryService(SENSOR_SERVICE_UUID);
         if (signal.aborted) return;
 
@@ -1113,6 +1155,16 @@ export function createNodeBleProvider(): DeviceProvider {
           await measurePeriod.writeValueWithResponse(Buffer.from([0])).catch(() => {});
         }
       } finally {
+        // Avant toute libération : un triggerWatering() qui arriverait maintenant doit échouer
+        // explicitement plutôt que d'opérer sur une connexion en cours de démontage.
+        tornDown = true;
+        // Laisser une écriture d'arrosage déjà en vol se terminer avant de démonter la connexion
+        // (voir le commentaire sur pendingTriggerWrite plus haut) — bornée par CONNECT_TIMEOUT_MS,
+        // le même plafond utilisé partout ailleurs dans ce fichier pour une opération GATT, pour ne
+        // jamais bloquer indéfiniment le reste du connectionQueue si ce write venait à rester bloqué.
+        if (pendingTriggerWrite) {
+          await withTimeout(pendingTriggerWrite, CONNECT_TIMEOUT_MS, 'pending-trigger-write-settlement').catch(() => {});
+        }
         for (const characteristic of characteristics) releaseDbusListeners(characteristic);
         await withTimeout(device.disconnect(), CONNECT_TIMEOUT_MS, 'disconnect').catch(() => {});
         releaseDbusListeners(device);

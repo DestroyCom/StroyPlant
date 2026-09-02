@@ -39,10 +39,16 @@ export function useLiveReadings(queryClient: QueryClient): void {
           }),
         );
 
-        // The history charts only ever show POLL rows (devices.history filters server-side too,
-        // see CLAUDE.md) — appending a live sample here would inject up to ~300 dense extra points
-        // into whatever chart is currently cached for this device, with nothing to invalidate it
-        // back out once the session ends.
+        // This GLOBAL subscription only ever appends POLL rows (devices.history filters server-side
+        // too, see CLAUDE.md): it fires for every device, including ones whose page nobody has
+        // open, so appending live samples here would inject dense extra points into any cached
+        // chart with nothing scoped to clean them back out.
+        //
+        // Appending live points to devices.history IS done — deliberately, and only for the device
+        // whose detail page is currently open — by frontend/src/lib/use-live-mode.ts, which owns
+        // that behavior: it bounds the live points it adds (see MAX_CACHED_LIVE_POINTS there,
+        // POLL rows are never evicted) and is unmounted with the page. Don't "unify" the two: this
+        // file staying POLL-only is what keeps that bounded, page-scoped.
         if (event.reading.source !== 'POLL') return;
 
         queryClient.setQueriesData<Reading[]>(trpc.devices.history.queryFilter({ deviceId: event.deviceId }), (readings) =>

@@ -4,7 +4,7 @@ import type { SerializedReading } from '../api/trpc/serialize.js';
 import { serializeReading } from '../api/trpc/serialize.js';
 import type { ConnectionQueue } from '../ble/connectionQueue.js';
 import { log } from '../logger.js';
-import type { DeviceProvider, SensorReading } from '../providers/types.js';
+import type { DeviceProvider, LiveConnectionHandle, SensorReading } from '../providers/types.js';
 import { persistReading } from '../readings.js';
 
 // Bounds how long a live session can hold the single shared GATT connection, starving the
@@ -42,12 +42,22 @@ interface ActiveSession {
 // globally at a time (the single shared GATT connection can't do more than one anyway; this makes
 // a second attempt fail fast and clearly instead of silently queuing for up to 5 minutes).
 let activeSession: ActiveSession | null = null;
+let liveConnectionHandle: LiveConnectionHandle | null = null;
 
 export const liveSessionEmitter = new EventEmitter();
 
 export function getActiveLiveSession(): { deviceId: string; startedAt: string } | null {
   if (!activeSession) return null;
   return { deviceId: activeSession.deviceId, startedAt: new Date(activeSession.startedAt).toISOString() };
+}
+
+// Non-null uniquement si une session live est active POUR CE deviceId ET que sa connexion GATT est
+// déjà établie (le provider appelle onConnectionReady après connexion, avant les notifications —
+// il y a donc une brève fenêtre au tout début d'une session où ceci retourne null même si
+// activeSession existe déjà).
+export function getActiveLiveConnectionHandle(deviceId: string): LiveConnectionHandle | null {
+  if (activeSession?.deviceId !== deviceId) return null;
+  return liveConnectionHandle;
 }
 
 // maxDurationMs defaults to the real 5min cutoff — overridable so a test can exercise the
@@ -98,7 +108,11 @@ export function startLiveSession(
   };
 
   connectionQueue
-    .run(() => provider.subscribeLive(deviceId, kind, onSample, controller.signal))
+    .run(() =>
+      provider.subscribeLive(deviceId, kind, onSample, controller.signal, (handle) => {
+        liveConnectionHandle = handle;
+      }),
+    )
     .then(
       () => {
         const event: LiveEndedEvent = { type: 'ended', deviceId, reason: stopReason };
@@ -114,6 +128,7 @@ export function startLiveSession(
     .finally(() => {
       clearTimeout(timeoutHandle);
       activeSession = null;
+      liveConnectionHandle = null;
     })
     .catch((error: unknown) => {
       // Defensive only: a synchronous throw inside a liveSessionEmitter 'event' listener (in

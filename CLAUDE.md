@@ -565,7 +565,11 @@ production server:
   - Hashed static assets served by `api/staticFrontend.ts` now get long-lived cache headers.
 - **Live sensor mode** ✅ (2026-07-29) — real-time GATT sampling (continuous notifications, ~1/s for
   Parrot Pot, firmware-controlled for Xiaomi) instead of waiting for the scanner's ~5min poll.
-  Backend (`src/liveSession/manager.ts`) + frontend (`LiveModeSection` component on device detail page)
+  Backend (`src/liveSession/manager.ts`) + frontend (at the time, a `LiveModeSection` component with
+  its own "Démarrer le mode live" button and mini-charts on the device detail page — **replaced
+  2026-09-02** by the headless `use-live-mode.ts` hook that auto-starts the session and feeds the
+  page's existing gauges/chart, see "Le direct devient la vue par défaut de la page détail" below;
+  everything else in this entry still holds)
   + new `liveSession` tRPC router (`status`, `start`, `stop`, `onSample` subscription). Full design rationale
   in `docs/superpowers/specs/2026-07-29-live-sensor-mode-design.md`. Key implementation decisions, all
   explicit:
@@ -731,8 +735,9 @@ production server:
     `/devices/add`'s "Recherche en cours…" state was local, never synced with backend reality, so it
     kept showing active (and kept refetching `listUnnamed`) forever past the backend's own
     auto-cutoff. Fixed by deriving it from a polled `discoverySession.status` query
-    (`refetchInterval: 5000`), following `live-mode-section.tsx`'s exact precedent for the same
-    class of problem on `liveSession`.
+    (`refetchInterval: 5000`), following the then-existing `live-mode-section.tsx`'s exact precedent
+    for the same class of problem on `liveSession` (that file is gone since 2026-09-02 — the same
+    polled-status pattern now lives in `lib/use-live-mode.ts`).
   - **Final-review fix — progressive backoff for a permanently-failing device** (DestCom's explicit
     request, found while reviewing `addByAddress`'s failure path): a typo'd/unreachable MAC address
     used to get retried at the normal ~5min interval forever, each attempt costing up to ~55s on the
@@ -1783,6 +1788,87 @@ production server:
   `cd backend && pnpm exec tsc --noEmit` and `cd frontend && pnpm typecheck` both clean. **Not yet
   re-verified against the live production CSP** — next deploy should confirm no more
   `errors.<domain>` CSP console errors and that a real error event lands in GlitchTip.
+- **Le direct devient la vue par défaut de la page détail** ✅ (2026-09-02) — sous-projet 2 du
+  `docs/superpowers/specs/2026-08-31-ui-overhaul-roadmap.md`, conçu dans
+  `docs/superpowers/specs/2026-09-02-live-mode-default-design.md`, exécuté via
+  `docs/superpowers/plans/2026-09-02-live-mode-default.md` (9 tâches, subagent-driven-development,
+  revue par tâche + revue finale de branche). Reproduit le comportement de l'app officielle Flower
+  Power : il n'y a plus de vue "live" distincte de la vue normale.
+  - **`LiveModeSection` (composant + ses mini-graphiques) est supprimé**, remplacé par un hook
+    headless `frontend/src/lib/use-live-mode.ts` monté par la page détail. Plus de bouton "Démarrer
+    le mode live" : la session démarre automatiquement à l'ouverture de la page, et ce sont les
+    gauges et le graphique historique **déjà existants** (bloc "Détails techniques") qui se mettent
+    à jour en direct. Les gauges passaient déjà gratuitement par `use-live-readings.ts` (fusion
+    champ par champ dans `devices.list.lastReading`) ; la nouveauté est que le hook pousse aussi
+    chaque échantillon dans le cache `devices.history` de la période affichée.
+  - **Cycle de vie** : reconnexion automatique après le cutoff serveur de 5 min tant que l'onglet
+    est au premier plan (`document.visibilityState`), arrêt immédiat en arrière-plan ou au
+    démontage (la connexion GATT partagée n'est jamais monopolisée pour personne). Sur échec réel :
+    **1 seule tentative auto**, puis un bouton manuel "Réessayer le direct" — jamais de boucle de
+    retry contre un appareil injoignable depuis un onglet resté ouvert.
+  - **`devices.water` gagne un chemin rapide** : la session live tient `connectionQueue` pendant
+    toute sa durée, donc un arrosage passant par le chemin normal aurait pu attendre jusqu'à 5 min.
+    Le provider publie maintenant un `LiveConnectionHandle` (`providers/types.ts`,
+    `subscribeLive`'s 5e paramètre `onConnectionReady`, implémenté par `mock` et `node-ble` ;
+    `noble-bridge` ne supporte déjà pas `subscribeLive`), exposé par
+    `getActiveLiveConnectionHandle(deviceId)` — l'écriture d'arrosage se fait alors sur la connexion
+    GATT déjà ouverte, quasi instantanément. **Le repli reste explicite, jamais silencieux**
+    (section 7.1) : échec ou timeout → `stopLiveSession()` puis retour au `triggerWatering()`
+    existant inchangé, qui écrit toujours son `WateringEvent` et remonte une vraie erreur.
+  - **Correction d'unité** : le sous-titre "Instantané" de la gauge Luminosité affichait la lecture
+    instantanée `fa0b` en `mol/m²/j`, unité qui n'a de sens que pour un total journalier (Part H) —
+    il affiche maintenant des lux/klux via `molToLuxLabel` (`format.ts`), formule
+    `mol × 4659.293` + seuils 500/10000 **tirés de la décompilation de l'app officielle**
+    (`Utility.convertMolToLux`, `BridgeGraphicView`, `DataKeeper`), pas devinés. La valeur DLI
+    principale de la gauge est inchangée.
+  - **Risque du chemin rapide — CONFIRMÉ SUR HARDWARE RÉEL (2026-09-02)**, plus un risque ouvert :
+    écrire sur le service `39e1f900` (déclenchement d'arrosage) pendant que des notifications sont
+    actives sur `39e1fa00` (service capteurs) — deux services distincts sur la même connexion BlueZ
+    réelle — fonctionne. Validé via `backend/scripts/hwtest-live-fast-path-watering-8733.ts`
+    (script jetable, même convention que les hwtest précédents), exécuté sur le pot 8733
+    (`A0:14:3D:CD:87:33`, pas de plante, pot de test dédié) dans un conteneur `node:22-bookworm-slim`
+    jetable sur le serveur de production, `stroyplant` arrêté le temps du test (adaptateur Bluetooth
+    partagé, pratique déjà établie) : 20 échantillons live stables avant le déclenchement,
+    `triggerWatering()` via `onConnectionReady`/`LiveConnectionHandle` réussi en 57ms, puis 16
+    échantillons de plus reçus sans coupure ni erreur GATT après l'écriture — les deux services
+    coexistent bien sur une même connexion réelle. Corroboration physique : l'humidité mesurée est
+    passée de 5.7% à 6.0% juste après le déclenchement. Le repli explicite ci-dessus reste en place
+    comme filet pour les cas non couverts par ce test (ex. échec de connexion initiale, timeout).
+  - **La revue finale de branche a trouvé un vrai bug, pas seulement des nits** : le plafond de
+    300 points ajouté pour borner le cache s'appliquait au tableau **fusionné** et le tronquait par
+    `slice(-300)` — il supprimait donc l'historique POLL réel renvoyé par le serveur. Sur les
+    onglets "7 jours"/"30 jours" (~2000 lignes à 5 min d'intervalle), le graphique retombait à
+    ~25 h dès le **premier** échantillon live, puis à ~0 h après 500 échantillons, alors que l'UI
+    continuait d'annoncer 7 ou 30 jours. Corrigé : le plafond ne compte et n'évince plus que les
+    points `source === 'LIVE'` (identifiés par leur `id`), jamais une ligne POLL.
+  - **Deux autres corrections de cette même revue**, liées : (1) le hook n'avait aucun moyen de
+    récupérer d'un événement terminal manqué par la souscription WS (redémarrage backend, trou de
+    reconnexion) — `isLive` restait vrai indéfiniment sur des données figées, sans bouton de retry,
+    récupérable seulement par un rechargement complet ; un effet de réconciliation réutilise
+    maintenant l'instantané `liveSession.status` **déjà** interrogé toutes les 5 s (aucune requête
+    supplémentaire) et retombe sur le chemin d'échec normal quand le serveur ne connaît plus de
+    session pour cet appareil. (2) `retryLive()` (appelé après un arrosage tant que le direct n'est
+    pas encore établi) pouvait lancer un 2e `start` sur **notre propre** session et se faire
+    légitimement rejeter en `CONFLICT` — traité jusque-là comme une vraie panne, ce qui grillait le
+    budget de retry et pouvait afficher "Réessayer le direct" alors qu'une session saine tournait
+    en dessous ; `onError` interroge maintenant le serveur avant de conclure et résout un
+    self-conflict en succès. Les deux ne peuvent pas se contredire : le chemin `onError` fait
+    autorité immédiatement, l'effet est un filet lent qui ignore tout instantané pouvant précéder
+    notre dernière action locale (`RECONCILE_GRACE_MS`).
+  - **Verified** : `cd backend && pnpm exec tsc --noEmit` + `pnpm test` (197/197) et
+    `cd frontend && pnpm typecheck` (la vraie commande, pas le `tsc` racine muet — voir Gotchas)
+    propres ; `npx biome check` propre sur tous les fichiers touchés par la branche (2 erreurs de
+    formatage subsistent dans le dépôt sur `backend/src/api/server.ts` et
+    `backend/scripts/fixSoilMoistureTemperatureSwap.ts`, préexistantes et identiques sur `main`,
+    non touchées ici). Les deux corrections à plus fort enjeu ont été validées **dans un vrai
+    navigateur** contre le provider mock, avec 7 jours d'historique POLL réel injecté (2040 lignes,
+    base restaurée après test) : l'onglet "7 jours" conserve bien sa fenêtre complète après ~150
+    échantillons live, et un `CONFLICT` réel sur notre propre session se résout en "Direct" sans
+    toast d'erreur ni perte du budget de retry, tandis qu'un état "live mais aucune session côté
+    serveur" est détecté et réparé tout seul en ~9 s. Le chemin rapide d'arrosage pendant une
+    session live (le risque signalé plus haut) est maintenant confirmé sur le pot 8733 réel, voir
+    ci-dessus — reste non testé : le reste du chemin `node-ble` en usage normal (sans le fast-path,
+    déjà couvert par les incidents de production précédents documentés dans ce fichier).
 
 ## Repo structure
 
@@ -1824,7 +1910,11 @@ frontend/        Vite + React SPA + TanStack Router/Query + Tailwind v4 + shadcn
   src/components/  Shell (sidebar, responsive — see Project status), DeviceCard, SensorGauge,
                    HistoryChart, shadcn components in ui/
   src/lib/         auth-client (BetterAuth), trpc.ts (tRPC client + TanStack Query options proxy),
-                   use-live-readings (readings.onReading subscription)
+                   use-live-readings (global readings.onReading subscription — merges both LIVE and
+                   POLL events into devices.list.lastReading, i.e. the gauges, but only ever appends
+                   POLL rows to devices.history, i.e. the chart),
+                   use-live-mode (headless hook owning the device detail page's auto-started live
+                   session, see Project status — replaced the LiveModeSection component)
   src/instrument.ts  GlitchTip/Sentry init, DSN fetched at runtime from GET /api/public-config
                    (never build-time — see Project status), awaited in main.tsx before first render
 noble-bridge/    Native macOS process (outside Docker), exposes the Mac's Bluetooth over HTTP/WS —
@@ -1991,8 +2081,10 @@ Dockerfile, docker-entrypoint.sh, docker-compose.prod.yml, docker-compose.test.y
 - **Currently covered scope**: login, dashboard (device grid with a colored banner based on real
   status — offline / low reservoir / Health Engine health / normal, filtered to named/"claimed"
   devices only), device detail (gauges with tone and expected species range as a legend, 24h-7d-30d
-  history/graph via `recharts`, "Recent waterings" timeline, watering trigger with confirmation for
-  Parrot Pots, "Species" section with picker/removal via `SpeciesPickerDialog` and a
+  history/graph via `recharts` — **both updating live by default**, a live BLE session starts
+  automatically on page open with no separate "Mode live" section or toggle, see the 2026-09-02
+  Project status entry —, "Recent waterings" timeline, watering trigger with confirmation for
+  Parrot Pots (reusing the open live connection when there is one, for a near-instant trigger), "Species" section with picker/removal via `SpeciesPickerDialog` and a
   consumer-friendly explanation of the scoring, "Arrosage automatique" section — Batch 5, active
   toggle + allowed-hours window + cooldown, via `AutoWateringSection`, and a "Calibration Plant Dr"
   link — Batch 6, to its own page), "Add device" (claims a scanner-discovered, not-yet-named device

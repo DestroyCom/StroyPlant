@@ -8,17 +8,17 @@ import { AutonomousWateringSection } from '@/components/autonomous-watering-sect
 import { DeviceKindIcon } from '@/components/device-kind-icon';
 import { EditDeviceDialog } from '@/components/edit-device-dialog';
 import { HistoryChart, type HistoryReferenceLine } from '@/components/history-chart';
-import { LiveModeSection } from '@/components/live-mode-section';
 import { SensorGauge } from '@/components/sensor-gauge';
 import { SpeciesPickerDialog } from '@/components/species-picker-dialog';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { formatDeviceKind, formatRelativeTime, statusBandClasses, statusDetail, statusHeadline } from '@/lib/format';
+import { formatDeviceKind, formatRelativeTime, molToLuxLabel, statusBandClasses, statusDetail, statusHeadline } from '@/lib/format';
 import { getErrorMessage } from '@/lib/format-error';
 import { trpc } from '@/lib/trpc';
 import type { ParameterHealth, Reading } from '@/lib/types';
+import { useLiveMode } from '@/lib/use-live-mode';
 import { cn } from '@/lib/utils';
 
 type Period = '24h' | '7j' | '30j';
@@ -91,6 +91,7 @@ function DeviceDetailPage() {
   const [speciesOpen, setSpeciesOpen] = useState(false);
   const [explainOpen, setExplainOpen] = useState(false);
   const { data: history } = useQuery(trpc.devices.history.queryOptions({ deviceId, hours: PERIOD_HOURS[period] }));
+  const { status: liveStatus, retry: retryLive } = useLiveMode(deviceId, device.kind, PERIOD_HOURS[period]);
   const { data: wateringEvents } = useQuery(trpc.devices.wateringEvents.queryOptions({ deviceId }));
   const { data: health } = useQuery(trpc.health.deviceHealth.queryOptions({ deviceId }, { refetchInterval: 60_000 }));
   const [confirmOpen, setConfirmOpen] = useState(false);
@@ -104,6 +105,7 @@ function DeviceDetailPage() {
         setConfirmOpen(false);
         void queryClient.invalidateQueries({ queryKey: trpc.devices.list.queryKey() });
         void queryClient.invalidateQueries({ queryKey: trpc.devices.wateringEvents.queryKey({ deviceId }) });
+        if (liveStatus !== 'live') retryLive();
       },
       onError: (error) => {
         toast.error("Échec de l'arrosage", { description: getErrorMessage(error) });
@@ -221,6 +223,23 @@ function DeviceDetailPage() {
         </h1>
         <p className="mt-3.5 max-w-md text-base text-muted-foreground">{statusDetail(device)}</p>
         <div className="mt-5.5 flex items-center gap-2.5">
+          {/* aria-live: le direct change d'état tout seul (connexion, coupure auto à 5min,
+              reconnexion) — un lecteur d'écran doit annoncer ces transitions sans que
+              l'utilisateur ait à revenir explicitement sur cette zone. */}
+          <div aria-live="polite" className="flex items-center gap-2.5">
+            {liveStatus === 'live' && (
+              <span className="inline-flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+                <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-teal-500" />
+                Direct
+              </span>
+            )}
+            {liveStatus === 'connecting' && <span className="text-xs font-medium text-muted-foreground">Connexion…</span>}
+            {liveStatus === 'unavailable' && (
+              <Button variant="outline" size="sm" onClick={retryLive}>
+                Réessayer le direct
+              </Button>
+            )}
+          </div>
           <Button
             variant="outline"
             size="lg"
@@ -292,8 +311,6 @@ function DeviceDetailPage() {
           autonomousWateringActive={device.autonomousWateringActive}
         />
       )}
-
-      <LiveModeSection deviceId={deviceId} kind={device.kind} />
 
       {canWater && (
         <div className="my-7 flex items-center justify-between gap-3 rounded-lg border border-border-subtle p-4">
@@ -412,7 +429,7 @@ function DeviceDetailPage() {
                           hint={[
                             rangeHint(health?.parameters.luminosity, ' mol/m²/j', 1000),
                             health?.parameters.luminosity?.liveValue != null &&
-                              `Instantané : ${(health.parameters.luminosity.liveValue / 1000).toFixed(2)} mol/m²/j`,
+                              `Instantané : ${molToLuxLabel(health.parameters.luminosity.liveValue / 1000)}`,
                             personalDeviationHint(health?.parameters.luminosity),
                           ]
                             .filter(Boolean)
