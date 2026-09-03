@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import type { GattCharacteristic, GattService, Device as NodeBleDevice } from 'node-ble';
+import type { GattCharacteristic, GattServer, GattService, Device as NodeBleDevice } from 'node-ble';
 import { createBluetooth } from 'node-ble';
 import { extractParrotManufacturerPayload } from '../../ble/parrot/advertisement.js';
 import { decodePlantDrStatusFlags, type PlantDrCalibration, type PlantDrWriteValues } from '../../ble/parrot/plantDr.js';
@@ -62,6 +62,37 @@ async function trackedCharacteristic(service: GattService, uuid: string, tracked
   const characteristic = await service.getCharacteristic(uuid);
   tracked.push(characteristic);
   return characteristic;
+}
+
+// device.gatt() itself (node_modules/node-ble/src/GattServer.js's init(), verified against the
+// installed 1.13.0 source) enumerates every characteristic on every service of the device to build
+// its internal by-uuid map, calling characteristic.getUUID() on each — and GattCharacteristic
+// hardcodes `usePropsEvents: true` in its constructor, so that single getUUID() call already
+// registers a PropertiesChanged D-Bus listener as a side effect, for every characteristic, whether
+// or not this file ever reads/writes it. Only characteristics fetched via trackedCharacteristic()
+// above were ever released — every other one on the device (fa0c/fa0d/fa0e, standard GAP/GATT/
+// DeviceInfo characteristics, anything in a service this file doesn't otherwise touch) leaked one
+// match rule per successful connect, unconditionally — a second, previously undiscovered source of
+// the same match-rule-leak class that caused the original Round 1 crash (CLAUDE.md), this time
+// surfacing as MaxListenersExceededWarning instead of an immediate crash since only the untouched
+// characteristics leak, not all of them. Found 2026-09-03 via that warning in production on a
+// heavily-polled real pot. Call this once right after device.gatt() succeeds so every characteristic
+// gatt() silently registered a listener for lands in the same `tracked` array the caller's existing
+// finally block already releases — not just the subset the poll/session logic explicitly uses.
+export async function trackAllGattCharacteristics(gattServer: GattServer, tracked: GattCharacteristic[]): Promise<void> {
+  try {
+    const serviceUuids = await gattServer.services();
+    for (const serviceUuid of serviceUuids) {
+      const service = await gattServer.getPrimaryService(serviceUuid);
+      const charUuids = await service.characteristics();
+      for (const charUuid of charUuids) {
+        tracked.push(await service.getCharacteristic(charUuid));
+      }
+    }
+  } catch {
+    // best-effort — enumeration failing must never fail a scan tick, connect attempt, or read/write;
+    // whatever's already in `tracked` still gets released normally by the caller's own finally block.
+  }
 }
 
 // Generic best-effort characteristic read for the raw sensor debug log — every one of these must
@@ -377,8 +408,10 @@ export function createNodeBleProvider(): DeviceProvider {
           restartAdapter,
           attempt: async () => {
             const device = await connectDevice(deviceId);
+            const characteristics: GattCharacteristic[] = [];
             try {
               const gatt = await withTimeout(device.gatt(), CONNECT_TIMEOUT_MS, 'gatt');
+              await trackAllGattCharacteristics(gatt, characteristics);
               const dataService = await gatt.getPrimaryService(XIAOMI_DATA_SERVICE_UUID);
               const tempHumidityChar = await dataService.getCharacteristic(TEMP_HUMIDITY_CHARACTERISTIC_UUID);
               const payload = await waitForFirstNotification(tempHumidityChar, XIAOMI_NOTIFY_TIMEOUT_MS);
@@ -404,6 +437,7 @@ export function createNodeBleProvider(): DeviceProvider {
               // an adapter restart) used to block forever — and since every GATT operation goes
               // through the single sequential connectionQueue, that one hung disconnect froze it
               // permanently, silently killing both polling AND every future manual "water" trigger.
+              for (const characteristic of characteristics) releaseDbusListeners(characteristic);
               await withTimeout(device.disconnect(), CONNECT_TIMEOUT_MS, 'disconnect').catch(() => {});
               releaseDbusListeners(device);
             }
@@ -421,6 +455,7 @@ export function createNodeBleProvider(): DeviceProvider {
           const characteristics: GattCharacteristic[] = [];
           try {
             const gatt = await withTimeout(device.gatt(), CONNECT_TIMEOUT_MS, 'gatt');
+            await trackAllGattCharacteristics(gatt, characteristics);
             const sensorService = await gatt.getPrimaryService(SENSOR_SERVICE_UUID);
 
             const measurePeriod = await trackedCharacteristic(sensorService, UUIDS.live.measurePeriod, characteristics);
@@ -898,10 +933,12 @@ export function createNodeBleProvider(): DeviceProvider {
       // permanently starve every other Parrot/Xiaomi operation in the app.
       if (kind === 'XIAOMI_LYWSD03MMC') {
         const device = await connectDeviceWithRetry(deviceId, 'subscribeLive:xiaomi');
+        const characteristics: GattCharacteristic[] = [];
         try {
           if (signal.aborted) return;
 
           const gatt = await withTimeout(device.gatt(), CONNECT_TIMEOUT_MS, 'gatt');
+          await trackAllGattCharacteristics(gatt, characteristics);
           const dataService = await gatt.getPrimaryService(XIAOMI_DATA_SERVICE_UUID);
           const tempHumidityChar = await dataService.getCharacteristic(TEMP_HUMIDITY_CHARACTERISTIC_UUID);
           try {
@@ -957,6 +994,7 @@ export function createNodeBleProvider(): DeviceProvider {
             releaseDbusListeners(tempHumidityChar);
           }
         } finally {
+          for (const characteristic of characteristics) releaseDbusListeners(characteristic);
           await withTimeout(device.disconnect(), CONNECT_TIMEOUT_MS, 'disconnect').catch(() => {});
           releaseDbusListeners(device);
         }
@@ -983,6 +1021,7 @@ export function createNodeBleProvider(): DeviceProvider {
         if (signal.aborted) return;
 
         const gatt = await withTimeout(device.gatt(), CONNECT_TIMEOUT_MS, 'gatt');
+        await trackAllGattCharacteristics(gatt, characteristics);
 
         if (kind === 'PARROT_POT' && onConnectionReady) {
           onConnectionReady({
@@ -1183,6 +1222,7 @@ export function createNodeBleProvider(): DeviceProvider {
           const characteristics: GattCharacteristic[] = [];
           try {
             const gatt = await withTimeout(device.gatt(), CONNECT_TIMEOUT_MS, 'gatt');
+            await trackAllGattCharacteristics(gatt, characteristics);
             const wateringService = await gatt.getPrimaryService(WATERING_SERVICE_UUID);
             const trigger = await trackedCharacteristic(wateringService, UUIDS.watering.trigger, characteristics);
             await trigger.writeValueWithResponse(WATER_TRIGGER_PAYLOAD);
@@ -1219,6 +1259,7 @@ export function createNodeBleProvider(): DeviceProvider {
           const characteristics: GattCharacteristic[] = [];
           try {
             const gatt = await withTimeout(device.gatt(), CONNECT_TIMEOUT_MS, 'gatt');
+            await trackAllGattCharacteristics(gatt, characteristics);
             const plantDrService = await gatt.getPrimaryService(PLANT_DR_SERVICE_UUID);
             const readU16 = async (uuid: string) =>
               (await (await trackedCharacteristic(plantDrService, uuid, characteristics)).readValue()).readUInt16LE(0);
@@ -1263,6 +1304,7 @@ export function createNodeBleProvider(): DeviceProvider {
           const characteristics: GattCharacteristic[] = [];
           try {
             const gatt = await withTimeout(device.gatt(), CONNECT_TIMEOUT_MS, 'gatt');
+            await trackAllGattCharacteristics(gatt, characteristics);
             const plantDrService = await gatt.getPrimaryService(PLANT_DR_SERVICE_UUID);
 
             const writeU16 = async (uuid: string, value: number, label: string) => {
@@ -1305,6 +1347,7 @@ export function createNodeBleProvider(): DeviceProvider {
           const characteristics: GattCharacteristic[] = [];
           try {
             const gatt = await withTimeout(device.gatt(), CONNECT_TIMEOUT_MS, 'gatt');
+            await trackAllGattCharacteristics(gatt, characteristics);
             const wateringService = await gatt.getPrimaryService(WATERING_SERVICE_UUID);
             const readU16Value = async (uuid: string) =>
               (await (await trackedCharacteristic(wateringService, uuid, characteristics)).readValue()).readUInt16LE(0);
@@ -1355,6 +1398,7 @@ export function createNodeBleProvider(): DeviceProvider {
           const characteristics: GattCharacteristic[] = [];
           try {
             const gatt = await withTimeout(device.gatt(), CONNECT_TIMEOUT_MS, 'gatt');
+            await trackAllGattCharacteristics(gatt, characteristics);
             const wateringService = await gatt.getPrimaryService(WATERING_SERVICE_UUID);
 
             const writeU16 = async (uuid: string, value: number, label: string) => {

@@ -1869,6 +1869,49 @@ production server:
     session live (le risque signalé plus haut) est maintenant confirmé sur le pot 8733 réel, voir
     ci-dessus — reste non testé : le reste du chemin `node-ble` en usage normal (sans le fast-path,
     déjà couvert par les incidents de production précédents documentés dans ce fichier).
+- **Round 6 — nouvelle source de fuite de match rules D-Bus, distincte du Round 1** (2026-09-03) —
+  DestCom a signalé des `MaxListenersExceededWarning` en production sur le pot 8733 (`node:1
+  ... 11 {"path":"...","interface":"org.freedesktop.DBus.Properties","member":"PropertiesChanged"}
+  listeners added`), juste après le déploiement du mode live par défaut. Root-causé en lisant le
+  code source réel de `node-ble@1.13.0`/`dbus-next@0.10.2` installés (pas de supposition) :
+  - **`device.gatt()` lui-même enregistre un listener par characteristic, même pour celles jamais
+    lues/écrites par l'app.** `GattServer.init()` (déclenché à chaque `device.gatt()`, donc à
+    chaque cycle de connexion) énumère toutes les characteristics de tous les services pour
+    construire sa map interne, en appelant `characteristic.getUUID()` sur chacune —
+    `GattCharacteristic` a `usePropsEvents: true` codé en dur dans son constructeur, donc ce simple
+    `getUUID()` enregistre déjà un listener `PropertiesChanged` sur le bus D-Bus partagé
+    (`bus._signals`, confirmé dans `dbus-next/lib/client/proxy-interface.js`). Round 1 (2026-07-29,
+    voir plus haut) n'avait couvert que les characteristics explicitement lues/écrites via
+    `trackedCharacteristic()` — toutes les autres (`fa0c`/`fa0d`/`fa0e`, les characteristics
+    standards GAP/GATT/DeviceInfo, tout ce qui appartient à un service jamais autrement touché)
+    fuyaient un match rule à **chaque connexion réussie**, inconditionnellement — la même classe de
+    bug que le crash original de Round 1 (`max_match_rules_per_connection=512` de BlueZ), en plus
+    lent puisque seules les characteristics non utilisées fuient. Le pot 8733 a été le premier à
+    dépasser le seuil d'avertissement de Node (10) simplement parce qu'il a été connecté/déconnecté
+    très souvent ce jour-là (tests hwtest + mode live + triggers manuels).
+  - **Fix** : `trackAllGattCharacteristics()` (`backend/src/providers/node-ble/index.ts`), appelée
+    une fois juste après chaque `device.gatt()` réussi (les 9 sites de ce fichier qui appellent
+    `device.gatt()`), énumère tous les services/characteristics via l'API publique de node-ble
+    (`gatt.services()`/`getPrimaryService()`/`service.characteristics()`/`getCharacteristic()`) et
+    les ajoute au même tableau `characteristics[]` que le `finally` de chaque site libère déjà —
+    aucun round-trip D-Bus supplémentaire (ces méthodes ne font que relire les structures déjà
+    peuplées par l'énumération que `device.gatt()` a de toute façon déjà effectuée), donc coût
+    quasi nul. Les 2 sites Xiaomi de `subscribeLive`/`readSensors` n'avaient pas encore de tableau
+    `characteristics[]` du tout (seul `device`/`tempHumidityChar` étaient libérés explicitement) —
+    un tableau leur a été ajouté au passage.
+  - **L'échec d'arrosage manuel sur 8733 dans le même log** (3 tentatives `le-connection-abort-by-
+    local`, y compris après un restart d'adaptateur) reste probablement une vraie instabilité BLE
+    réelle à ce moment précis, pas ce bug — géré correctement (`WateringEvent{success:false}`
+    explicite, jamais de fire-and-forget, conforme 7.1). Pas de root cause plus poussée sans plus de
+    données ; 8733 est le pot de test sans plante, sans urgence.
+  - **Test coverage ajouté** : `backend/src/providers/node-ble/index.test.ts` (2 nouveaux cas,
+    `trackAllGattCharacteristics` exportée) — parcourt bien tous les services/characteristics d'un
+    faux `GattServer`, et ne lève jamais même si l'énumération échoue (spec 7.1).
+  - **Verified** : `cd backend && pnpm exec tsc --noEmit && pnpm test` (199/199, +2) et
+    `cd frontend && pnpm typecheck` (la vraie commande) tous deux propres ; `npx biome check` propre
+    sur les 2 fichiers touchés. **Pas encore déployé/vérifié sur le matériel réel** — le prochain
+    déploiement devrait confirmer que le compteur de `MaxListenersExceededWarning` ne grandit plus
+    sur les pots réels après plusieurs dizaines de cycles de connexion.
 
 ## Repo structure
 
