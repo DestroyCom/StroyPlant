@@ -1,5 +1,3 @@
-import type { Reading } from '@prisma/client';
-
 // Window used for the linear-regression watering-date prediction (spec section 7) — deliberately
 // short: a device's drying rate can change quickly (weather, a recent watering), a longer window
 // would smooth over exactly the recent behavior this prediction needs to reflect.
