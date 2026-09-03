@@ -1,11 +1,13 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
+  buildPlantAdvice,
   daysCoveredForReadings,
   estimateDaysUntilWatering,
   hoursUntilDayEnd,
   warmupHoursRemaining,
 } from './plantAdvice.js';
+import type { DeviceHealth } from './scoring.js';
 
 describe('daysCoveredForReadings', () => {
   it('returns 0 for no readings', () => {
@@ -14,10 +16,7 @@ describe('daysCoveredForReadings', () => {
 
   it('returns days since the oldest reading, not the newest', () => {
     const now = Date.now();
-    const readings = [
-      { timestamp: new Date(now - 5 * 24 * 3600_000) },
-      { timestamp: new Date(now - 1 * 24 * 3600_000) },
-    ];
+    const readings = [{ timestamp: new Date(now - 5 * 24 * 3600_000) }, { timestamp: new Date(now - 1 * 24 * 3600_000) }];
     const days = daysCoveredForReadings(readings);
     assert.ok(days > 4.9 && days < 5.1, `expected ~5 days, got ${days}`);
   });
@@ -95,5 +94,121 @@ describe('estimateDaysUntilWatering', () => {
     // Only the last 2 points (both inside the window) should drive the slope — a real decline.
     const days = estimateDaysUntilWatering(readings, 20);
     assert.ok(days != null, 'expected a prediction from the 2 in-window points alone');
+  });
+});
+
+function fakeReading(
+  overrides: Partial<{
+    timestamp: Date;
+    soilMoisturePercent: number | null;
+    waterTankLevelPercent: number | null;
+    temperatureC: number | null;
+    isInAir: boolean | null;
+  }> = {},
+) {
+  return {
+    id: 1,
+    deviceId: 'TEST',
+    timestamp: new Date(),
+    soilMoisturePercent: null,
+    temperatureC: null,
+    luminosity: null,
+    waterTankLevelPercent: null,
+    soilConductivityUsCm: null,
+    isDrySoil: null,
+    isWetSoil: null,
+    isEmptyTank: null,
+    isInAir: null,
+    humidityPercent: null,
+    batteryPercent: null,
+    source: 'POLL' as const,
+    rawSensorLog: null,
+    ...overrides,
+  };
+}
+
+const NO_PROFILE_HEALTH: DeviceHealth = {
+  status: 'no_profile',
+  parameters: {},
+  trend: 'unknown',
+  warningParameters: [],
+  luminosityRecentDaysTooLow: false,
+};
+
+describe('buildPlantAdvice — water', () => {
+  it('is null for a Xiaomi device (no soil probe)', () => {
+    const advice = buildPlantAdvice({ kind: 'XIAOMI_LYWSD03MMC', environment: null }, [], NO_PROFILE_HEALTH, 3, 'UTC', []);
+    assert.equal(advice.water, null);
+  });
+
+  it('shows raw values with no status when no species is assigned', () => {
+    const readings = [fakeReading({ soilMoisturePercent: 42, waterTankLevelPercent: 80 })];
+    const advice = buildPlantAdvice({ kind: 'PARROT_POT', environment: null }, readings, NO_PROFILE_HEALTH, 3, 'UTC', []);
+    assert.deepEqual(advice.water, { kind: 'raw_no_profile', soilMoisturePercent: 42, waterTankLevelPercent: 80 });
+  });
+
+  it('reports too_low with the species threshold', () => {
+    const readings = [fakeReading({ soilMoisturePercent: 15, waterTankLevelPercent: 60 })];
+    const health: DeviceHealth = {
+      status: 'warning',
+      parameters: {
+        soilMoisturePercent: { value: 15, status: 'too_low', speciesRange: [20, 60], personalDeviation: 'normal', liveValue: null },
+      },
+      trend: 'unknown',
+      warningParameters: ['soilMoisturePercent'],
+      luminosityRecentDaysTooLow: false,
+    };
+    const advice = buildPlantAdvice({ kind: 'PARROT_POT', environment: null }, readings, health, 3, 'UTC', []);
+    assert.equal(advice.water?.kind, 'too_low');
+    assert.equal(advice.water?.minPercent, 20);
+  });
+});
+
+describe('buildPlantAdvice — temperature', () => {
+  it('shows the raw value with no comparison on a Xiaomi device (no species assignment possible)', () => {
+    const readings = [fakeReading({ temperatureC: 21 })];
+    const advice = buildPlantAdvice({ kind: 'XIAOMI_LYWSD03MMC', environment: null }, readings, NO_PROFILE_HEALTH, 3, 'UTC', []);
+    assert.deepEqual(advice.temperature, { kind: 'raw_no_species_support', isOutdoor: false, temperatureC: 21 });
+  });
+
+  it('shows no_plant on a Parrot Pot with no species assigned', () => {
+    const advice = buildPlantAdvice({ kind: 'PARROT_POT', environment: null }, [], NO_PROFILE_HEALTH, 3, 'UTC', []);
+    assert.equal(advice.temperature?.kind, 'no_plant');
+  });
+
+  it('shows soon_available with a real countdown while the device is warming up', () => {
+    const readings = [fakeReading({ timestamp: new Date(Date.now() - 24 * 3600_000), temperatureC: 21 })];
+    const health: DeviceHealth = {
+      status: 'warming_up',
+      parameters: { temperatureC: { value: 21, status: 'ok', speciesRange: [15, 25], personalDeviation: 'normal', liveValue: null } },
+      trend: 'unknown',
+      warningParameters: [],
+      luminosityRecentDaysTooLow: false,
+    };
+    const advice = buildPlantAdvice({ kind: 'PARROT_POT', environment: null }, readings, health, 3, 'UTC', []);
+    assert.equal(advice.temperature?.kind, 'soon_available');
+    assert.ok(advice.temperature && advice.temperature.hoursRemaining! > 40 && advice.temperature.hoursRemaining! < 50);
+  });
+});
+
+describe('buildPlantAdvice — fertilizer', () => {
+  it('is null for a Xiaomi device', () => {
+    const advice = buildPlantAdvice({ kind: 'XIAOMI_LYWSD03MMC', environment: null }, [], NO_PROFILE_HEALTH, 3, 'UTC', []);
+    assert.equal(advice.fertilizer, null);
+  });
+
+  it('carries the species type labels for too_low', () => {
+    const health: DeviceHealth = {
+      status: 'warning',
+      parameters: {
+        soilConductivityUsCm: { value: 100, status: 'too_low', speciesRange: [500, 2000], personalDeviation: 'normal', liveValue: null },
+      },
+      trend: 'unknown',
+      warningParameters: [],
+      luminosityRecentDaysTooLow: false,
+    };
+    const advice = buildPlantAdvice({ kind: 'PARROT_POT', environment: null }, [], health, 3, 'UTC', ['Rose', 'Tomate']);
+    assert.equal(advice.fertilizer?.kind, 'too_low');
+    assert.deepEqual(advice.fertilizer?.typeLabels, ['Rose', 'Tomate']);
   });
 });

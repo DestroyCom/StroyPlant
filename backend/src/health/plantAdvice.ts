@@ -69,3 +69,154 @@ export function estimateDaysUntilWatering(
   if (!Number.isFinite(days) || days <= 0) return null;
   return Math.min(Math.round(days), MAX_WATERING_PREDICTION_DAYS);
 }
+
+import type { Device } from '@prisma/client';
+import type { DeviceHealth } from './scoring.js';
+import type { ReadingWithRawLog } from './soilConductivityCalibration.js';
+
+export type WaterAdviceKind = 'too_low' | 'too_high' | 'ok' | 'raw_no_profile';
+export type TemperatureAdviceKind = 'too_low' | 'too_high' | 'ok' | 'soon_available' | 'no_plant' | 'raw_no_species_support';
+export type LightAdviceKind = 'too_low' | 'too_high' | 'ok' | 'soon_available' | 'no_plant';
+export type FertilizerAdviceKind = 'too_low' | 'too_high' | 'ok' | 'not_available' | 'no_plant';
+
+export interface WaterAdvice {
+  kind: WaterAdviceKind;
+  minPercent?: number;
+  daysUntilWatering?: number;
+  soilMoisturePercent: number | null;
+  waterTankLevelPercent: number | null;
+}
+
+export interface TemperatureAdvice {
+  kind: TemperatureAdviceKind;
+  isOutdoor: boolean;
+  hoursRemaining?: number;
+  temperatureC: number | null;
+}
+
+export interface LightAdvice {
+  kind: LightAdviceKind;
+  hoursRemaining?: number;
+}
+
+export interface FertilizerAdvice {
+  kind: FertilizerAdviceKind;
+  typeLabels: string[];
+}
+
+export interface PlantAdvice {
+  water: WaterAdvice | null;
+  temperature: TemperatureAdvice | null;
+  light: LightAdvice | null;
+  fertilizer: FertilizerAdvice | null;
+}
+
+function mostRecentValue<R, K extends keyof R>(readings: R[], key: K): R[K] | null {
+  for (let i = readings.length - 1; i >= 0; i--) {
+    const value = readings[i][key];
+    if (value != null) return value;
+  }
+  return null;
+}
+
+function buildWaterAdvice(device: Pick<Device, 'kind'>, sorted: ReadingWithRawLog[], health: DeviceHealth): WaterAdvice | null {
+  if (device.kind !== 'PARROT_POT') return null;
+  const soilMoisturePercent = mostRecentValue(sorted, 'soilMoisturePercent');
+  const waterTankLevelPercent = mostRecentValue(sorted, 'waterTankLevelPercent');
+
+  const param = health.parameters.soilMoisturePercent;
+  if (!param || param.speciesRange == null) {
+    return { kind: 'raw_no_profile', soilMoisturePercent, waterTankLevelPercent };
+  }
+
+  const minPercent = param.speciesRange[0];
+  if (param.status === 'too_low') return { kind: 'too_low', minPercent, soilMoisturePercent, waterTankLevelPercent };
+  if (param.status === 'too_high') return { kind: 'too_high', minPercent, soilMoisturePercent, waterTankLevelPercent };
+
+  const daysUntilWatering = estimateDaysUntilWatering(sorted, minPercent) ?? undefined;
+  return { kind: 'ok', minPercent, daysUntilWatering, soilMoisturePercent, waterTankLevelPercent };
+}
+
+function buildTemperatureAdvice(
+  device: Pick<Device, 'kind' | 'environment'>,
+  sorted: ReadingWithRawLog[],
+  health: DeviceHealth,
+  globalHoursRemaining: number,
+): TemperatureAdvice | null {
+  const temperatureC = mostRecentValue(sorted, 'temperatureC');
+  const isOutdoor = device.environment === 'OUTDOOR';
+
+  if (device.kind === 'XIAOMI_LYWSD03MMC') return { kind: 'raw_no_species_support', isOutdoor, temperatureC };
+  if (health.status === 'no_profile') return { kind: 'no_plant', isOutdoor, temperatureC };
+  if (health.status === 'warming_up') return { kind: 'soon_available', isOutdoor, hoursRemaining: globalHoursRemaining, temperatureC };
+
+  const param = health.parameters.temperatureC;
+  if (!param || param.status === 'n/a') return null;
+  if (param.status === 'too_low') return { kind: 'too_low', isOutdoor, temperatureC };
+  if (param.status === 'too_high') return { kind: 'too_high', isOutdoor, temperatureC };
+  return { kind: 'ok', isOutdoor, temperatureC };
+}
+
+function buildLightAdvice(
+  device: Pick<Device, 'kind'>,
+  health: DeviceHealth,
+  globalHoursRemaining: number,
+  now: Date,
+  timezone: string,
+): LightAdvice | null {
+  if (device.kind !== 'PARROT_POT') return null;
+  if (health.status === 'no_profile') return { kind: 'no_plant' };
+  if (health.status === 'warming_up') return { kind: 'soon_available', hoursRemaining: globalHoursRemaining };
+
+  const param = health.parameters.luminosity;
+  if (!param || param.status === 'n/a') return null;
+  // Part H's own "zero complete calendar days yet" gate — independent of the device-wide warmup
+  // above, see health/scoring.ts's luminosity branch and health/dailyLightIntegral.ts.
+  if (param.status === 'calibrating') return { kind: 'soon_available', hoursRemaining: hoursUntilDayEnd(now, timezone) };
+  if (param.status === 'too_low') return { kind: 'too_low' };
+  if (param.status === 'too_high') return { kind: 'too_high' };
+  return { kind: 'ok' };
+}
+
+function buildFertilizerAdvice(
+  device: Pick<Device, 'kind'>,
+  health: DeviceHealth,
+  fertilizerTypeLabels: string[],
+): FertilizerAdvice | null {
+  if (device.kind !== 'PARROT_POT') return null;
+  if (health.status === 'no_profile') return { kind: 'no_plant', typeLabels: [] };
+
+  const param = health.parameters.soilConductivityUsCm;
+  if (!param) return null;
+  if (param.status === 'calibrating' || param.status === 'n/a') return { kind: 'not_available', typeLabels: [] };
+  if (param.status === 'too_low') return { kind: 'too_low', typeLabels: fertilizerTypeLabels };
+  if (param.status === 'too_high') return { kind: 'too_high', typeLabels: [] };
+  return { kind: 'ok', typeLabels: [] };
+}
+
+/**
+ * Maps a device's already-computed DeviceHealth (health/scoring.ts's computeDeviceHealth) onto the
+ * 4-category advice structure the "Plante" tab renders — a status key plus data placeholders only,
+ * never composed French text (that lives in the frontend's plantAdviceText.ts). `fertilizerTypeLabels`
+ * is the caller-resolved list of this species' specific (non-"tout usage") fertilizer type labels.
+ */
+export function buildPlantAdvice(
+  device: Pick<Device, 'kind' | 'environment'>,
+  readings: ReadingWithRawLog[],
+  health: DeviceHealth,
+  warmupMinDays: number,
+  timezone: string,
+  fertilizerTypeLabels: string[],
+): PlantAdvice {
+  const sorted = readings.filter((r) => r.isInAir !== true).sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
+  const daysCovered = daysCoveredForReadings(sorted);
+  const globalHoursRemaining = warmupHoursRemaining(daysCovered, warmupMinDays);
+  const now = new Date();
+
+  return {
+    water: buildWaterAdvice(device, sorted, health),
+    temperature: buildTemperatureAdvice(device, sorted, health, globalHoursRemaining),
+    light: buildLightAdvice(device, health, globalHoursRemaining, now, timezone),
+    fertilizer: buildFertilizerAdvice(device, health, fertilizerTypeLabels),
+  };
+}
