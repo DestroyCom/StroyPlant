@@ -3,12 +3,13 @@
 // docs/PARROT_BLE_REVERSE_ENGINEERING.md) characteristic on a real Parrot Pot, to empirically
 // confirm what unit/encoding it uses before trusting it for a liters display (spec section 9 —
 // "no guessing" rule). Target: pot 8733 (A0:14:3D:CD:87:33), the dedicated no-species-assigned test
-// pot. Read-only — never writes anything. Run only with the production `stroyplant` container
-// stopped (shared Bluetooth adapter).
+// pot, by default — any other Parrot Pot MAC can be passed as the first CLI argument (safe on a
+// planted pot too: this script is read-only, it never writes anything). Run only with the production
+// `stroyplant` container stopped (shared Bluetooth adapter).
 import { createBluetooth } from 'node-ble';
 import { CALIBRATION_SERVICE_UUID } from '../src/ble/parrot/uuids.js';
 
-const DEVICE_ID = 'A0:14:3D:CD:87:33';
+const DEVICE_ID = process.argv[2] ?? 'A0:14:3D:CD:87:33';
 const TANK_CAPACITY_CHARACTERISTIC_UUID = '39e1fe05-84a8-11e2-afba-0002a5d5c51b';
 
 async function main() {
