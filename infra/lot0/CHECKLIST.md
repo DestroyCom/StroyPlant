@@ -45,6 +45,45 @@ nearby, the **P0 devices from the spec**:
 The full pipeline (Docker container → capabilities → D-Bus → host BlueZ → adapter →
 BLE scan → detection of the real target devices) is validated end-to-end.
 
+## Required host setup on BlueZ ≥ 5.76 (Debian 13+): disable the `gap` plugin (2026-09-29)
+
+**Mandatory on any host running BlueZ 5.76 or later** (Debian 13 ships 5.82; Debian 12's 5.66 is
+unaffected). Without it, only the first GATT connection to a Parrot Pot after an adapter reset
+succeeds — every later one times out (`TIMEOUT: gatt (18000ms)`), which looks exactly like a
+controller/firmware freeze but isn't one.
+
+- **Root cause, confirmed via `btmon` on real hardware** (not guessed): BlueZ 5.76 added code to its
+  built-in `gap` plugin (`profiles/gap/gas.c`, checked against the 5.66/5.75/5.76/5.82 sources) that
+  reads the peripheral's *Peripheral Preferred Connection Parameters* (`0x2a04`) and loads them
+  into the kernel (`MGMT Load Connection Parameters`). The Parrot Pot advertises 100-200ms
+  interval / 10s supervision — so every connection after the first one requests 100-200ms, the
+  controller picks 200ms, and each ATT round-trip takes ~400ms. Since these pots are never paired,
+  BlueZ redoes full GATT discovery (~175 ATT exchanges) on every connection: **~40s at 200ms vs
+  ~9s at the kernel's default 50ms** — well past node-ble's 18s `gatt()` timeout. The loaded
+  parameters live only in kernel memory (unpaired devices → nothing written to
+  `/var/lib/bluetooth`), which is why a `btusb` reload "fixed" it until the next connection.
+- **Fix** — a systemd drop-in, nothing else changes (no kernel/package/repo change):
+
+  ```bash
+  sudo mkdir -p /etc/systemd/system/bluetooth.service.d
+  printf '[Service]\nExecStart=\nExecStart=/usr/libexec/bluetooth/bluetoothd --noplugin=gap\n' \
+    | sudo tee /etc/systemd/system/bluetooth.service.d/10-stroyplant-noplugin-gap.conf
+  sudo systemctl daemon-reload && sudo systemctl restart bluetooth
+  ```
+
+  Then reset the adapter so the kernel forgets any already-loaded parameters. **Prefer a USB-level
+  reset over `modprobe -r btusb`**: a module reload done right after the `bluetooth` restart left
+  the controller uninitialized (`command 0xfc11 tx timeout`, `HCI Reset failed: -110`, no
+  controller visible to bluetoothd); a USB de/re-authorize recovered it cleanly (full firmware
+  patch reload). Find the device with `readlink -f /sys/class/bluetooth/hci0`, then
+  `echo 0 > /sys/bus/usb/devices/<usb-id>/authorized; sleep 3; echo 1 > .../authorized` as root.
+- **Side effect**: BlueZ no longer reads Device Name/Appearance over GATT — irrelevant here, names
+  come from BLE advertisements. The plugin can't be partially disabled.
+- **Rollback**: remove the drop-in file, `daemon-reload`, restart `bluetooth`.
+- **Verification**: `ps -o args -C bluetoothd` shows `--noplugin=gap`; a `btmon` capture of several
+  successive connections shows `Connection interval: 50.00 msec` and no `Load Connection
+  Parameters` on every one of them.
+
 ## Remaining work once the TP-Link dongle arrives
 
 The Realtek RTL8761B chipset (TP-Link) is different from the already validated Intel

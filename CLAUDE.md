@@ -57,8 +57,11 @@ production server:
   `STROYPLANT_SPEC.md:135`) + 1x black on `VE0.28.5` (older, never tested by this project — no
   known reason it should behave differently given `node-ble`'s existing defensive per-characteristic
   best-effort reads, but not empirically confirmed). Only one MAC identified so far: one of the
-  brick ones is `A0:14:3D:CD:87:33`, already added to production as `Parrot pot 8733` (no species/
-  location set yet). The other 2 units' MACs aren't recorded here yet.
+  brick ones is `A0:14:3D:CD:87:33`, already added to production as `Parrot pot 8733`. **Since
+  2026-09-29 it holds a real plant and is no longer available for tests** — it is no longer the
+  plant-free test pot the entries below refer to; there is currently no safe target for
+  write/watering hardware tests (ask DestCom first). The other 2 units' MACs aren't
+  recorded here yet.
 
 ## Project status (by batch)
 
@@ -1912,6 +1915,33 @@ production server:
     sur les 2 fichiers touchés. **Pas encore déployé/vérifié sur le matériel réel** — le prochain
     déploiement devrait confirmer que le compteur de `MaxListenersExceededWarning` ne grandit plus
     sur les pots réels après plusieurs dizaines de cycles de connexion.
+- **Round 7 — "only the 1st GATT connection works" after a host OS upgrade: BlueZ 5.76+ `gap`
+  plugin, not the controller** (2026-09-29) — after the host moved to a BlueZ ≥ 5.76 release, every
+  Parrot Pot poll failed with `TIMEOUT: gatt (18000ms)` except the first connection after a `btusb`
+  reload, which looked like a Bluetooth controller/firmware freeze. `btmon` captures on real
+  hardware (read-only connects to one planted pot, no writes) disproved that: zero HCI errors, GATT discovery
+  always completing — just slowly. BlueZ ≥ 5.76's built-in `gap` plugin (confirmed by diffing
+  `profiles/gap/gas.c` across 5.66/5.75/5.76/5.82) reads the pot's Peripheral Preferred Connection
+  Parameters (`0x2a04`: 100-200ms interval) and loads them into the kernel, so every later
+  connection runs at 200ms; full re-discovery (unpaired → no GATT attribute cache, ~175 ATT
+  exchanges) then takes ~40s instead of ~9s at the kernel default 50ms. A `btusb` reload only
+  "fixed" it because those parameters live in kernel memory only.
+  - **Fix, host-side only** (no code change): `bluetoothd --noplugin=gap` via a systemd drop-in —
+    exact commands, rollback and verification in `infra/lot0/CHECKLIST.md`. **Mandatory on any
+    future reinstall on BlueZ ≥ 5.76.**
+  - **Verified on real hardware**: 3 successive connections all at 50ms / ~9.0s discovery (vs ~39s
+    before) with no `Load Connection Parameters`; then `stroyplant` read both planted pots
+    successfully on 2 consecutive 15-min poll cycles (the 2nd being the one that always failed).
+  - **Recovery gotcha found while applying it**: a `modprobe -r btusb` right after restarting
+    `bluetooth` left the controller uninitialized (`HCI Reset failed: -110`); a USB-level
+    de/re-authorize recovered it — see the checklist.
+  - **Deliberately not changed**: `CONNECT_TIMEOUT_MS` (18s) still bounds `device.gatt()` — ~9s
+    measured discovery leaves a 2x margin; raising it would only lengthen how long a genuinely
+    failing device blocks the shared `connectionQueue`.
+  - **Still open, minor**: one pot's first attempt of each poll cycle fails with
+    `le-connection-abort-by-local` and succeeds on retry (~15s lost per cycle). Not investigated
+    yet; plausibly the kernel-default 420ms supervision timeout being tight for this pot's link
+    quality — would need a `btmon` capture of a real poll to confirm.
 
 ## Repo structure
 
@@ -2243,6 +2273,12 @@ Dockerfile, docker-entrypoint.sh, docker-compose.prod.yml, docker-compose.test.y
   noticing the wrong content render, not by a build failure. Before adding a new route file whose
   name starts with an existing route file's basename plus a dot, stop and check whether a trailing
   underscore is needed.
+- **A BLE symptom that "only a `btusb` reload fixes" isn't necessarily a controller bug — capture
+  with `btmon` before blaming firmware/kernel.** Round 7 (2026-09-29) looked exactly like a
+  controller freeze and was actually BlueZ ≥ 5.76 loading the Parrot Pot's slow preferred connection
+  parameters into the kernel (cleared by any adapter reset). No sudo needed to capture: a disposable
+  `--privileged --net=host` container running `btmon -w` works when the
+  admin user can run Docker. See `infra/lot0/CHECKLIST.md` for the `--noplugin=gap` host requirement.
 
 ## Infra access
 
