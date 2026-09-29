@@ -16,7 +16,15 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { formatDeviceKind, formatRelativeTime, molToLuxLabel, statusBandClasses, statusDetail, statusHeadline } from '@/lib/format';
+import {
+  formatDeviceKind,
+  formatRelativeTime,
+  molToLuxLabel,
+  statusBandClasses,
+  statusDetail,
+  statusHeadline,
+  tankLitersLabel,
+} from '@/lib/format';
 import { getErrorMessage } from '@/lib/format-error';
 import { trpc } from '@/lib/trpc';
 import type { ParameterHealth, Reading } from '@/lib/types';
@@ -422,7 +430,13 @@ function DeviceDetailPage() {
                         />
                       )}
                       {reading.waterTankLevelPercent != null && (
-                        <SensorGauge label="Réservoir" value={reading.waterTankLevelPercent} tone="accent" icon={<Droplets size={16} />} />
+                        <SensorGauge
+                          label="Réservoir"
+                          value={reading.waterTankLevelPercent}
+                          tone="accent"
+                          icon={<Droplets size={16} />}
+                          hint={tankLitersLabel(reading.waterTankLevelPercent)}
+                        />
                       )}
                       {(health?.parameters.luminosity != null || reading.luminosity != null) &&
                         (health?.parameters.luminosity?.status === 'calibrating' ? (

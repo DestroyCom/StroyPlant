@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Droplets, FlaskConical, Sun, Thermometer } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { Card } from '@/components/ui/card';
+import { tankLitersLabel } from '@/lib/format';
 import { fertilizerAdviceText, lightAdviceText, temperatureAdviceText, waterAdviceText } from '@/lib/plantAdviceText';
 import { trpc } from '@/lib/trpc';
 
@@ -33,7 +34,9 @@ export function PlantAdviceTab({ deviceId, deviceKind }: { deviceId: string; dev
           liveValues={
             [
               advice.water.soilMoisturePercent != null ? `${Math.round(advice.water.soilMoisturePercent)}%` : null,
-              advice.water.waterTankLevelPercent != null ? `Réservoir ${Math.round(advice.water.waterTankLevelPercent)}%` : null,
+              advice.water.waterTankLevelPercent != null
+                ? `Réservoir ${Math.round(advice.water.waterTankLevelPercent)}% (${tankLitersLabel(advice.water.waterTankLevelPercent)})`
+                : null,
             ]
               .filter(Boolean)
               .join(' · ') || undefined

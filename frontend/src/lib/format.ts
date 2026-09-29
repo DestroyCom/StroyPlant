@@ -21,6 +21,17 @@ export function formatDeviceKind(kind: 'PARROT_POT' | 'XIAOMI_LYWSD03MMC'): stri
 // successful read — 2x this interval absorbs a missed cycle without flickering "offline".
 const OFFLINE_THRESHOLD_MS = 10 * 60_000;
 const LOW_TANK_THRESHOLD = 20;
+// Parrot Pot reservoir capacity as marketed by Parrot (2.2 L). Not read from the device: the
+// never-before-read 39e1fe05 (UUID_TANK_CAPACITY) returns a constant 17 on every real pot,
+// regardless of water level, in no unit that reconstructs 2.2 L (hwtest-tank-capacity-8733.ts,
+// 2026-09-29) — so the marketed figure is the only trustworthy source.
+const PARROT_POT_TANK_CAPACITY_LITERS = 2.2;
+
+/** Approximate water left in a Parrot Pot reservoir, e.g. 76 → "~1,7 L". */
+export function tankLitersLabel(percent: number): string {
+  const liters = (percent / 100) * PARROT_POT_TANK_CAPACITY_LITERS;
+  return `~${liters.toLocaleString('fr-FR', { minimumFractionDigits: 1, maximumFractionDigits: 1 })} L`;
+}
 
 export function isDeviceOnline(lastSeenAt: string | null): boolean {
   if (!lastSeenAt) return false;
@@ -84,7 +95,8 @@ export function statusDetail(device: Device): string {
   if (device.kind === 'PARROT_POT') {
     const parts: string[] = [];
     if (reading.soilMoisturePercent != null) parts.push(`Humidité du sol : ${Math.round(reading.soilMoisturePercent)}%`);
-    if (reading.waterTankLevelPercent != null) parts.push(`Réservoir : ${Math.round(reading.waterTankLevelPercent)}%`);
+    if (reading.waterTankLevelPercent != null)
+      parts.push(`Réservoir : ${Math.round(reading.waterTankLevelPercent)}% (${tankLitersLabel(reading.waterTankLevelPercent)})`);
     return parts.join(' · ') || "Aucune lecture pour l'instant.";
   }
 
