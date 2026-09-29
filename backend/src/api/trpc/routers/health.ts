@@ -1,6 +1,9 @@
 import { TRPCError } from '@trpc/server';
 import { z } from 'zod';
 import { prisma } from '../../../db/client.js';
+import { resolveFertilizerTypeLabel } from '../../../health/parrotFilterLabels.js';
+import { buildPlantAdvice } from '../../../health/plantAdvice.js';
+import { resolveEffectiveSchedule } from '../../../health/scheduler.js';
 import { computeDeviceHealth } from '../../../health/scoring.js';
 import { getHealthSettings, upsertHealthSettings } from '../../../health/settings.js';
 import { getCalibration } from '../../../health/soilConductivityCalibration.js';
@@ -118,6 +121,58 @@ export const healthRouter = router({
       healthSettings.warmupMinDays,
       conductivityCalibration,
       healthSettings.timezone,
+    );
+  }),
+
+  plantAdvice: protectedProcedure.input(z.object({ deviceId: z.string() })).query(async ({ input }) => {
+    const device = await prisma.device.findUnique({
+      where: { id: input.deviceId },
+      include: { plantProfile: true, schedule: true },
+    });
+    if (!device) throw new TRPCError({ code: 'NOT_FOUND', message: 'Device not found' });
+
+    // Either the server-side scheduler (Batch 5) or the pot's own on-device algorithm will water it.
+    const autoWateringActive = resolveEffectiveSchedule(device, device.schedule).active || device.autonomousWateringActive;
+
+    const healthSettings = await getHealthSettings();
+    const since = new Date(Date.now() - healthSettings.baselineWindowDays * 24 * 3600_000);
+    const readings = await prisma.reading.findMany({
+      where: { deviceId: device.id, timestamp: { gte: since }, source: 'POLL' },
+      orderBy: { timestamp: 'asc' },
+      include: { rawSensorLog: true },
+    });
+    const conductivityCalibration = await getCalibration(device.id);
+
+    const health = computeDeviceHealth(
+      device,
+      readings,
+      device.plantProfile,
+      healthSettings.warmupMinDays,
+      conductivityCalibration,
+      healthSettings.timezone,
+    );
+
+    // Excludes the generic "tout usage" type (code 1) — matches the official app's own logic
+    // (Utility.java's fertilizer_too_low branch), see this plan's Global Constraints.
+    const fertilizerTypeLabels = device.plantProfile
+      ? (
+          await prisma.plantProfileFertilizerType.findMany({
+            where: { plantProfileId: device.plantProfile.id, code: { not: 1 } },
+            orderBy: { code: 'asc' },
+          })
+        )
+          .map((entry) => resolveFertilizerTypeLabel(entry.code))
+          .filter((label): label is string => label != null)
+      : [];
+
+    return buildPlantAdvice(
+      device,
+      readings,
+      health,
+      healthSettings.warmupMinDays,
+      healthSettings.timezone,
+      fertilizerTypeLabels,
+      autoWateringActive,
     );
   }),
 });

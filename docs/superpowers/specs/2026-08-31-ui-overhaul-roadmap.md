@@ -225,7 +225,11 @@ conception visuelle de chaque sous-projet plutôt qu'ici.
   mergée sur `main` en `42b75cd`, voir `CLAUDE.md` "Le direct devient la vue par défaut de la page
   détail"). Le bug de température était déjà corrigé sur `main` avant ce brainstorming (fa07/fa09/
   fa0a, voir la spec) — reste à confirmer sur les 3 pots réels au prochain déploiement.
-- [ ] Sous-projet 3 — Onglet "Plante" + conseils : spike (extraction des conseils) → brainstorming → spec → plan → implémentation
+- [x] Sous-projet 3 — Onglet "Plante" + conseils : spike → brainstorming → spec
+  (`2026-09-03-plant-tab-advice-design.md`) → plan (`2026-09-03-plant-tab-advice.md`, 8 tâches) →
+  **implémenté** (2026-09-29, branche `worktree-plant-tab-advice`, voir `CLAUDE.md` "Onglet
+  "Plante" + conseils sur la page détail"). `39e1fe05` lu sur 2 pots réels : constante 17,
+  inexploitable — réservoir affiché en `% × 2,2 L` à la place.
 - [ ] Sous-projet 4 — Image plante/pot : brainstorming (avec décision d'infra) → spec → plan → implémentation
 - [ ] Sous-projet 5 — Affichage d'erreurs lisible : brainstorming → spec → plan → implémentation (indépendant, peut être avancé n'importe quand)
 
