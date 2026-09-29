@@ -1,3 +1,7 @@
+import type { Device } from '@prisma/client';
+import type { DeviceHealth } from './scoring.js';
+import type { ReadingWithRawLog } from './soilConductivityCalibration.js';
+
 // Window used for the linear-regression watering-date prediction (spec section 7) — deliberately
 // short: a device's drying rate can change quickly (weather, a recent watering), a longer window
 // would smooth over exactly the recent behavior this prediction needs to reflect.
@@ -68,10 +72,6 @@ export function estimateDaysUntilWatering(
   return Math.min(Math.round(days), MAX_WATERING_PREDICTION_DAYS);
 }
 
-import type { Device } from '@prisma/client';
-import type { DeviceHealth } from './scoring.js';
-import type { ReadingWithRawLog } from './soilConductivityCalibration.js';
-
 export type WaterAdviceKind = 'too_low' | 'too_high' | 'ok' | 'raw_no_profile';
 export type TemperatureAdviceKind = 'too_low' | 'too_high' | 'ok' | 'soon_available' | 'no_plant' | 'raw_no_species_support';
 export type LightAdviceKind = 'too_low' | 'too_high' | 'ok' | 'soon_available' | 'no_plant';
@@ -81,6 +81,9 @@ export interface WaterAdvice {
   kind: WaterAdviceKind;
   minPercent?: number;
   daysUntilWatering?: number;
+  // Whether anything will actually water this pot on its own (server scheduler or the pot's own
+  // on-device algorithm) — picks Parrot's "arrosage automatique" copy vs. its manual-watering copy.
+  autoWateringActive: boolean;
   soilMoisturePercent: number | null;
   waterTankLevelPercent: number | null;
 }
@@ -117,22 +120,27 @@ function mostRecentValue<R, K extends keyof R>(readings: R[], key: K): R[K] | nu
   return null;
 }
 
-function buildWaterAdvice(device: Pick<Device, 'kind'>, sorted: ReadingWithRawLog[], health: DeviceHealth): WaterAdvice | null {
+function buildWaterAdvice(
+  device: Pick<Device, 'kind'>,
+  sorted: ReadingWithRawLog[],
+  health: DeviceHealth,
+  autoWateringActive: boolean,
+): WaterAdvice | null {
   if (device.kind !== 'PARROT_POT') return null;
   const soilMoisturePercent = mostRecentValue(sorted, 'soilMoisturePercent');
   const waterTankLevelPercent = mostRecentValue(sorted, 'waterTankLevelPercent');
 
   const param = health.parameters.soilMoisturePercent;
   if (!param || param.speciesRange == null) {
-    return { kind: 'raw_no_profile', soilMoisturePercent, waterTankLevelPercent };
+    return { kind: 'raw_no_profile', autoWateringActive, soilMoisturePercent, waterTankLevelPercent };
   }
 
   const minPercent = param.speciesRange[0];
-  if (param.status === 'too_low') return { kind: 'too_low', minPercent, soilMoisturePercent, waterTankLevelPercent };
-  if (param.status === 'too_high') return { kind: 'too_high', minPercent, soilMoisturePercent, waterTankLevelPercent };
+  if (param.status === 'too_low') return { kind: 'too_low', minPercent, autoWateringActive, soilMoisturePercent, waterTankLevelPercent };
+  if (param.status === 'too_high') return { kind: 'too_high', minPercent, autoWateringActive, soilMoisturePercent, waterTankLevelPercent };
 
   const daysUntilWatering = estimateDaysUntilWatering(sorted, minPercent) ?? undefined;
-  return { kind: 'ok', minPercent, daysUntilWatering, soilMoisturePercent, waterTankLevelPercent };
+  return { kind: 'ok', minPercent, daysUntilWatering, autoWateringActive, soilMoisturePercent, waterTankLevelPercent };
 }
 
 function buildTemperatureAdvice(
@@ -196,7 +204,8 @@ function buildFertilizerAdvice(
  * Maps a device's already-computed DeviceHealth (health/scoring.ts's computeDeviceHealth) onto the
  * 4-category advice structure the "Plante" tab renders — a status key plus data placeholders only,
  * never composed French text (that lives in the frontend's plantAdviceText.ts). `fertilizerTypeLabels`
- * is the caller-resolved list of this species' specific (non-"tout usage") fertilizer type labels.
+ * is the caller-resolved list of this species' specific (non-"tout usage") fertilizer type labels;
+ * `autoWateringActive` is the caller-resolved "will this pot be watered automatically" flag.
  */
 export function buildPlantAdvice(
   device: Pick<Device, 'kind' | 'environment'>,
@@ -205,6 +214,7 @@ export function buildPlantAdvice(
   warmupMinDays: number,
   timezone: string,
   fertilizerTypeLabels: string[],
+  autoWateringActive = false,
 ): PlantAdvice {
   const sorted = readings.filter((r) => r.isInAir !== true).sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
   const daysCovered = daysCoveredForReadings(sorted);
@@ -212,7 +222,7 @@ export function buildPlantAdvice(
   const now = new Date();
 
   return {
-    water: buildWaterAdvice(device, sorted, health),
+    water: buildWaterAdvice(device, sorted, health, autoWateringActive),
     temperature: buildTemperatureAdvice(device, sorted, health, globalHoursRemaining),
     light: buildLightAdvice(device, health, globalHoursRemaining, now, timezone),
     fertilizer: buildFertilizerAdvice(device, health, fertilizerTypeLabels),

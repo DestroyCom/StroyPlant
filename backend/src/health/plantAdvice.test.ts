@@ -144,7 +144,12 @@ describe('buildPlantAdvice — water', () => {
   it('shows raw values with no status when no species is assigned', () => {
     const readings = [fakeReading({ soilMoisturePercent: 42, waterTankLevelPercent: 80 })];
     const advice = buildPlantAdvice({ kind: 'PARROT_POT', environment: null }, readings, NO_PROFILE_HEALTH, 3, 'UTC', []);
-    assert.deepEqual(advice.water, { kind: 'raw_no_profile', soilMoisturePercent: 42, waterTankLevelPercent: 80 });
+    assert.deepEqual(advice.water, {
+      kind: 'raw_no_profile',
+      autoWateringActive: false,
+      soilMoisturePercent: 42,
+      waterTankLevelPercent: 80,
+    });
   });
 
   it('reports too_low with the species threshold', () => {
@@ -161,6 +166,22 @@ describe('buildPlantAdvice — water', () => {
     const advice = buildPlantAdvice({ kind: 'PARROT_POT', environment: null }, readings, health, 3, 'UTC', []);
     assert.equal(advice.water?.kind, 'too_low');
     assert.equal(advice.water?.minPercent, 20);
+  });
+
+  it('carries the caller-resolved auto-watering flag, defaulting to false', () => {
+    const readings = [fakeReading({ soilMoisturePercent: 40, waterTankLevelPercent: 60 })];
+    const health: DeviceHealth = {
+      status: 'ok',
+      parameters: {
+        soilMoisturePercent: { value: 40, status: 'ok', speciesRange: [20, 60], personalDeviation: 'normal', liveValue: null },
+      },
+      trend: 'unknown',
+      warningParameters: [],
+      luminosityRecentDaysTooLow: false,
+    };
+    const device = { kind: 'PARROT_POT', environment: null } as const;
+    assert.equal(buildPlantAdvice(device, readings, health, 3, 'UTC', []).water?.autoWateringActive, false);
+    assert.equal(buildPlantAdvice(device, readings, health, 3, 'UTC', [], true).water?.autoWateringActive, true);
   });
 });
 

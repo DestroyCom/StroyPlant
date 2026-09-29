@@ -36,13 +36,23 @@ export function waterAdviceText(advice: WaterAdvice): string {
     case 'ok': {
       const base =
         "Votre plante a suffisamment d'eau pour le moment. Bien arroser votre plante est la première chose à faire pour la maintenir resplendissante et en bonne santé.";
-      if (advice.daysUntilWatering != null && advice.minPercent != null) {
-        return `${base} Le prochain arrosage automatique sera déclenché dans ${advice.daysUntilWatering} jour${advice.daysUntilWatering > 1 ? 's' : ''}, après être passé sous le seuil de ${Math.round(advice.minPercent)}% d'humidité.`;
+      if (advice.minPercent == null) return base;
+      const min = `${Math.round(advice.minPercent)}%`;
+      const days = advice.daysUntilWatering;
+      const daysLabel = days != null ? `${days} jour${days > 1 ? 's' : ''}` : null;
+      // Parrot switches copy on whether the pot waters itself: sensorInfo_description_soilMoisture_range
+      // / _rangeWithoutPrediction when it does, sensorInfo_description_soilMoistureManual otherwise —
+      // with agenda_eventInstruction_waterInXDays_Action (which already repeats the "Bien arroser…"
+      // sentence, hence its own opening here) carrying the prediction in the manual case.
+      if (advice.autoWateringActive) {
+        return daysLabel != null
+          ? `${base} Le prochain arrosage automatique sera déclenché dans ${daysLabel}, après être passé sous le seuil de ${min} d'humidité.`
+          : `${base} Le prochain arrosage automatique sera déclenché après être passé sous le seuil de ${min} d'humidité.`;
       }
-      if (advice.minPercent != null) {
-        return `${base} Nous vous conseillons d'arroser votre plante après être passé sous le seuil de ${Math.round(advice.minPercent)}% d'humidité.`;
-      }
-      return base;
+      const manual = `Nous vous conseillons d'arroser votre plante après être passé sous le seuil de ${min} d'humidité.`;
+      return daysLabel != null
+        ? `Votre plante a suffisamment d'eau pour le moment. Prochain arrosage dans ${daysLabel}. Bien arroser votre plante est la première chose à faire pour la maintenir resplendissante et en bonne santé. ${manual}`
+        : `${base} ${manual}`;
     }
     case 'raw_no_profile':
       return 'Assignez une espèce à ce pot pour obtenir un conseil personnalisé sur son besoin en eau.';
