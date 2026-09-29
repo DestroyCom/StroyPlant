@@ -34,7 +34,8 @@ export function waterAdviceText(advice: WaterAdvice): string {
     case 'too_high':
       return "La quantité d'eau dans la terre est restée anormalement élevée pendant une durée trop importante pour votre plante. Trop d'eau dans la terre peut asphyxier votre plante en empêchant les racines d'absorber l'oxygène. Assurez-vous que le drainage est suffisant afin de permettre au surplus d'eau de s'échapper.";
     case 'ok': {
-      const base = "Votre plante a suffisamment d'eau pour le moment. Bien arroser votre plante est la première chose à faire pour la maintenir resplendissante et en bonne santé.";
+      const base =
+        "Votre plante a suffisamment d'eau pour le moment. Bien arroser votre plante est la première chose à faire pour la maintenir resplendissante et en bonne santé.";
       if (advice.daysUntilWatering != null && advice.minPercent != null) {
         return `${base} Le prochain arrosage automatique sera déclenché dans ${advice.daysUntilWatering} jour${advice.daysUntilWatering > 1 ? 's' : ''}, après être passé sous le seuil de ${Math.round(advice.minPercent)}% d'humidité.`;
       }
@@ -54,13 +55,16 @@ export function temperatureAdviceText(advice: TemperatureAdvice, deviceKind: 'PA
     case 'too_low':
       return advice.isOutdoor
         ? "À cause du froid, le métabolisme de votre plante se ralentit. Si vous le pouvez, rentrez votre plante à l'intérieur ou couvrez-la pour augmenter sa température."
-        : "À cause du froid, le métabolisme de votre plante se ralentit. Si vous le pouvez, déplacez votre plante vers un endroit plus chaud.";
+        : 'À cause du froid, le métabolisme de votre plante se ralentit. Si vous le pouvez, déplacez votre plante vers un endroit plus chaud.';
     case 'too_high':
       return 'Le métabolisme de votre plante se ralentit car elle a trop chaud. Si possible, déplacez votre plante vers un endroit plus frais, plus exposé au vent et/ou plus ombragé.';
     case 'ok':
       return "Tout va bien. La température des derniers jours permet à votre plante de s'épanouir pleinement.";
     case 'soon_available': {
-      const base = `Une analyse complète de l'environnement de votre ${product} va être effectuée pendant les premières 24 heures suivant son installation.\nCette période est nécessaire pour vous fournir des conseils de température fiables, et adaptés aux besoins de votre plante.`;
+      // Parrot's original sentence adds "pendant les premières 24 heures suivant son installation" — dropped
+      // (DestCom, 2026-09-29): it contradicted our real warm-up countdown shown right below (several days,
+      // HealthSettings), the shortened sentence mirrors Parrot's own fertilizer variant.
+      const base = `Une analyse complète de l'environnement de votre ${product} va être effectuée.\nCette période est nécessaire pour vous fournir des conseils de température fiables, et adaptés aux besoins de votre plante.`;
       return advice.hoursRemaining != null ? `${base}\nConseil disponible dans ${formatHoursRemaining(advice.hoursRemaining)}.` : base;
     }
     case 'no_plant':
@@ -79,7 +83,11 @@ export function lightAdviceText(advice: LightAdvice): string {
     case 'ok':
       return "L'ensoleillement des derniers jours permet à votre plante de s'épanouir pleinement.";
     case 'soon_available': {
-      const base = "Une analyse complète de l'environnement de votre Parrot Pot doit être effectuée pendant les premières 24 heures suivant son installation.\nCette période est nécessaire pour vous fournir des conseils fiables relatifs à la luminosité la plus adaptée aux besoins de votre plante.";
+      // Parrot's original sentence adds "pendant les premières 24 heures suivant son installation" — dropped
+      // (DestCom, 2026-09-29): it contradicted our real warm-up countdown shown right below (several days,
+      // HealthSettings), the shortened sentence mirrors Parrot's own fertilizer variant.
+      const base =
+        "Une analyse complète de l'environnement de votre Parrot Pot doit être effectuée.\nCette période est nécessaire pour vous fournir des conseils fiables relatifs à la luminosité la plus adaptée aux besoins de votre plante.";
       return advice.hoursRemaining != null ? `${base}\nConseil disponible dans ${formatHoursRemaining(advice.hoursRemaining)}.` : base;
     }
     case 'no_plant':
@@ -91,7 +99,7 @@ export function fertilizerAdviceText(advice: FertilizerAdvice): string {
   const closing = " Lors de l'utilisation d'un engrais, suivez toujours les instructions précisées sur l'emballage.";
   switch (advice.kind) {
     case 'too_low': {
-      const intro = 'Votre plante apprécierait un niveau d\'engrais plus élevé.';
+      const intro = "Votre plante apprécierait un niveau d'engrais plus élevé.";
       if (advice.typeLabels.length === 0) {
         return `${intro} L'ajout d'engrais universel serait bénéfique à votre plante en lui apportant les nutriments nécessaires.${closing}`;
       }
