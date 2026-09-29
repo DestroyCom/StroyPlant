@@ -1942,6 +1942,50 @@ production server:
     `le-connection-abort-by-local` and succeeds on retry (~15s lost per cycle). Not investigated
     yet; plausibly the kernel-default 420ms supervision timeout being tight for this pot's link
     quality — would need a `btmon` capture of a real poll to confirm.
+- **Onglet "Plante" + conseils sur la page détail** ✅ (2026-09-29, branche
+  `worktree-plant-tab-advice`) — sous-projet 3 du `docs/superpowers/specs/2026-08-31-ui-overhaul-roadmap.md`,
+  conçu dans `docs/superpowers/specs/2026-09-03-plant-tab-advice-design.md`, exécuté via
+  `docs/superpowers/plans/2026-09-03-plant-tab-advice.md` (8 tâches). La page détail d'un Parrot Pot
+  a maintenant 2 onglets : "Vue d'ensemble" (tout le contenu existant, inchangé) et "Plante" (fiche
+  de l'espèce assignée + 4 cartes de conseils façon app officielle : humidité, température,
+  lumière, engrais). Un Xiaomi n'a pas d'onglet "Plante" (pas d'assignation d'espèce possible).
+  - **Fiche espèce partagée** : `frontend/src/components/plant-profile-detail.tsx`
+    (`PlantProfileDetail`), extraite de `/plants/$id` pour que la page "Base de plantes" et l'onglet
+    "Plante" n'aient qu'une seule implémentation.
+  - **Backend = statut structuré, jamais de texte** : `backend/src/health/plantAdvice.ts`
+    (`buildPlantAdvice`, fonctions pures, tests `node:test`) mappe la sortie **déjà calculée** de
+    `computeDeviceHealth()` (non modifié) vers une clé de statut + des valeurs à interpoler par carte,
+    exposé par `health.plantAdvice` (tRPC). Calculs nouveaux, tous dérivés de données existantes :
+    décompte réel de la période d'observation (`warmupMinDays - daysCovered`), décompte lumière
+    jusqu'à la fin du jour calendaire (quand Part H n'a encore aucun jour complet), prédiction de la
+    date d'arrosage (régression linéaire sur 5 jours d'humidité `POLL`, plafonnée à 60 jours, rien
+    si la tendance ne baisse pas), et nombre de types d'engrais spécifiques de l'espèce (le type
+    générique "tout usage", code 1, est exclu, comme dans l'app officielle).
+  - **Texte Parrot repris mot pour mot** (`frontend/src/lib/plantAdviceText.ts`, depuis
+    `res/values-fr/strings.xml` de l'APK décompilée). **Risque de propriété intellectuelle signalé
+    explicitement à DestCom, qui a choisi le verbatim en connaissance de cause** (2026-09-03, voir la
+    section "Décision explicite" de la spec) — dépôt public, contenu éditorial tiers : une demande
+    de retrait reste possible. Deux écarts délibérés, commentés dans le fichier : (1) la phrase
+    "pendant les premières 24 heures suivant son installation" est retirée des textes d'attente
+    température/lumière (elle contredisait notre vrai décompte de plusieurs jours juste en dessous) ;
+    (2) la carte Humidité choisit la variante Parrot "arrosage automatique"
+    (`soilMoisture_range`/`_rangeWithoutPrediction`) ou "manuel" (`soilMoistureManual` +
+    `agenda_eventInstruction_waterInXDays_Action`) selon l'état réel — `resolveEffectiveSchedule()`
+    actif **ou** `Device.autonomousWateringActive` — trouvé en revue finale : la première version
+    annonçait "le prochain arrosage automatique" même sur un pot que rien n'arrose tout seul.
+  - **Réservoir en litres approximatifs** : `format.ts`'s `tankLitersLabel()` affiche
+    `% × 2,2 L` (contenance annoncée par Parrot) à côté du % partout où le réservoir apparaît
+    (gauge, sous-titre d'état, carte conseil). **`39e1fe05` (`UUID_TANK_CAPACITY`) lu pour la
+    première fois sur du matériel réel et écarté** (`backend/scripts/hwtest-tank-capacity-8733.ts`,
+    MAC en argument) : 1 octet valant `0x11` = 17 sur A3:D3 (réservoir à 76 %) **et** A0:73 (23 %)
+    — une constante, pas le niveau d'eau, et aucune unité qui redonne 2,2 L. Le pot 8733 (cible par
+    défaut du script) n'émettait plus du tout ce jour-là, déjà avant l'incident BlueZ du 28/09 —
+    piles probablement vides, à vérifier.
+  - **Vérifié** : `cd backend && pnpm exec tsc --noEmit && pnpm test` (217/217) et
+    `cd frontend && pnpm typecheck` propres ; onglets vérifiés dans un vrai navigateur contre le
+    provider mock (pot avec espèce, pot sans espèce, Xiaomi sans onglet). Les 2 corrections de
+    revue finale (variante manuel/auto, litres) ne sont vérifiées que par typecheck/tests, pas
+    revues visuellement. **Pas encore déployé.**
 
 ## Repo structure
 
@@ -2153,7 +2197,7 @@ Dockerfile, docker-entrypoint.sh, docker-compose.prod.yml, docker-compose.test.y
   weights: Regular/Medium/Bold/Black — no italics or variable font, to stay lightweight).
 - **Currently covered scope**: login, dashboard (device grid with a colored banner based on real
   status — offline / low reservoir / Health Engine health / normal, filtered to named/"claimed"
-  devices only), device detail (gauges with tone and expected species range as a legend, 24h-7d-30d
+  devices only), device detail (split since 2026-09-29 into "Vue d'ensemble" — everything below — and, Parrot Pot only, "Plante" — species fiche + 4 Parrot-style advice cards, see the Project status entry of the same name; gauges with tone and expected species range as a legend, 24h-7d-30d
   history/graph via `recharts` — **both updating live by default**, a live BLE session starts
   automatically on page open with no separate "Mode live" section or toggle, see the 2026-09-02
   Project status entry —, "Recent waterings" timeline, watering trigger with confirmation for
