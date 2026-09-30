@@ -2,7 +2,7 @@
 // device, so the triggering mutation (health.assignPlantProfile, schedule.upsert, or the manual
 // wateringConfig.push button) can return immediately instead of blocking on the full BLE
 // read+write sequence — same reasoning and shape as plantDrCalibrationSession.ts (a config push is
-// 3-4 sequential connectionQueue-serialized BLE writes, easily exceeding Cloudflare's ~100s origin
+// 3-4 sequential connectionQueue-serialized BLE writes, easily exceeding the edge proxy's ~100s origin
 // timeout if awaited inline, see docs/superpowers/specs/2026-08-30-parrot-device-side-autonomous-
 // watering-design.md).
 export type WateringConfigPushState =
