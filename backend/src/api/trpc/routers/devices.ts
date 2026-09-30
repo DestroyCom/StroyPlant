@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { CONNECT_TIMEOUT_MS, withTimeout } from '../../../ble/parrot/retry.js';
 import { prisma } from '../../../db/client.js';
 import { getCalibration, resolveConductivityValue } from '../../../health/soilConductivityCalibration.js';
-import { getActiveLiveConnectionHandle, stopLiveSession } from '../../../liveSession/manager.js';
+import { claimLiveConnectionForWatering, stopLiveSession } from '../../../liveSession/manager.js';
 import { log } from '../../../logger.js';
 import { getMqttState } from '../../../mqtt/manager.js';
 import { publishDiscovery } from '../../../mqtt/publisher.js';
@@ -174,7 +174,7 @@ export const devicesRouter = router({
     // constraint"). Un échec de l'ÉCRITURE PHYSIQUE ici n'est PAS enregistré comme un échec
     // d'arrosage — ce n'est qu'une tentative interne, le vrai résultat est celui du repli
     // ci-dessous, qui, lui, est toujours enregistré (docs/STROYPLANT_SPEC.md section 7.1).
-    const liveHandle = getActiveLiveConnectionHandle(device.id);
+    const liveHandle = claimLiveConnectionForWatering(device.id);
     if (liveHandle) {
       const fastPathAttempt = liveHandle.triggerWatering();
       let fastPathSucceeded = false;

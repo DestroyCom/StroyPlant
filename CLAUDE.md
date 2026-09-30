@@ -1824,6 +1824,22 @@ production server:
     `mol × 4659.293` + seuils 500/10000 **tirés de la décompilation de l'app officielle**
     (`Utility.convertMolToLux`, `BridgeGraphicView`, `DataKeeper`), pas devinés. La valeur DLI
     principale de la gauge est inchangée.
+  - **Correctif (2026-09-30) — arrosage pendant que le direct se connecte encore** : tant que la
+    connexion live n'est pas prête (les premières secondes après l'ouverture de la page, puisque le
+    direct démarre tout seul), `getActiveLiveConnectionHandle()` renvoie `null` et l'arrosage
+    passait par `connectionQueue` **derrière la session entière** — jusqu'à 5 min. Mesuré avec la
+    vraie queue et le vrai manager (demande à 0,5 s, arrosage exécuté seulement à la coupure de la
+    session). Sur du vrai matériel : la requête HTTP tombait sur le délai du proxy (~100 s), puis
+    l'arrosage réel partait des minutes plus tard, à l'insu de l'utilisateur, avec un risque de
+    double arrosage s'il recliquait. `devices.water` passe maintenant par
+    `claimLiveConnectionForWatering()` (`liveSession/manager.ts`) : connexion live prête pour ce
+    pot → chemin rapide ; sinon toute session live en cours (qui se connecte, ou sur un autre pot)
+    est arrêtée avant la file normale — l'arrosage manuel est prioritaire sur le direct. Couvert par
+    `backend/src/liveSession/manager.test.ts` (4 tests). Le scheduler CRON et le bouton MQTT
+    appellent toujours `triggerWatering()` directement et peuvent donc encore attendre derrière une
+    session live (pas de requête HTTP en jeu, jugé acceptable). Signalé au départ comme un blocage
+    sur le provider mock, qui ne s'est pas reproduit : l'environnement de ce test tournait en fait
+    en `noble-bridge` sans bridge.
   - **Risque du chemin rapide — CONFIRMÉ SUR HARDWARE RÉEL (2026-09-02)**, plus un risque ouvert :
     écrire sur le service `39e1f900` (déclenchement d'arrosage) pendant que des notifications sont
     actives sur `39e1fa00` (service capteurs) — deux services distincts sur la même connexion BlueZ
