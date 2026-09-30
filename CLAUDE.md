@@ -1987,6 +1987,48 @@ production server:
     revue finale (variante manuel/auto, litres) ne sont vérifiées que par typecheck/tests, pas
     revues visuellement. **Pas encore déployé.**
 
+- **Affichage d'erreurs lisible** ✅ (2026-09-29, branche `worktree-readable-errors`) — sous-projet 5
+  du `docs/superpowers/specs/2026-08-31-ui-overhaul-roadmap.md`, conçu dans
+  `docs/superpowers/specs/2026-09-29-readable-errors-design.md`, exécuté via
+  `docs/superpowers/plans/2026-09-29-readable-errors.md`. L'UI affichait des messages techniques bruts
+  (`le-connection-abort-by-local`, `TIMEOUT: gatt (18000ms)`…) sous des titres génériques.
+  - **3 décisions validées avec DestCom** : (1) le brut reste accessible, replié derrière un bouton
+    « Détails techniques » ; (2) niveau « cause + action » (ce qui s'est passé ET s'il faut agir) ;
+    (3) traduction côté frontend, à l'affichage — la base garde le brut inchangé (aucune migration,
+    les ~3900 `SyncEvent` existants sont traduits gratuitement, la déduplication de
+    `persistSyncFailure` sur `errorDetail` brut n'est pas touchée).
+  - **`frontend/src/lib/describe-error.ts`** (`describeError(raw, context)`, fonction pure) : table
+    ordonnée de 9 regex (première correspondance gagne) couvrant les **11 formes réelles** relevées en
+    production le 2026-09-29 (lecture seule), plus le cas proxy `<!DOCTYPE` (`PROXY_TIMEOUT_MESSAGE`
+    reste la seule source de ce texte). Motif inconnu → « Erreur inattendue. », jamais un message
+    inventé.
+  - **Conseil selon le contexte** (`sync` / `watering` / `action`) : une synchro ratée est retentée
+    automatiquement, un arrosage raté non. Les deux motifs de connexion les plus fréquents ajoutent
+    « le Bluetooth du serveur est probablement en cause » (incident BlueZ du 2026-09-28). Choix du
+    contrôleur en cours d'exécution : une ligne d'historique de source `CONFIG_PUSH` utilise le
+    contexte `action` (ni synchro ni arrosage).
+  - **`components/error-detail.tsx`** (`<ErrorDetail raw context />`) utilisé dans `history.tsx` et
+    dans « Derniers arrosages » de la page détail. **Toasts** : `getErrorMessage()` passe par
+    `describeError(raw, 'action')` ; motif reconnu → message + conseil (brut en `console.error`),
+    **motif inconnu → message gardé tel quel** (dans un toast c'est presque toujours un de nos
+    messages backend, déjà lisible). `plants.tsx` passe aussi par `getErrorMessage`.
+  - **Messages backend traduits à la source** (`TRPCError` en français : « Appareil introuvable »,
+    « Fonction réservée au Parrot Pot », etc.). Hors périmètre, décision du contrôleur :
+    l'erreur interne anglaise `Device-side autonomous watering is Parrot Pot only`
+    (`wateringConfigPush.ts`), les `throw new Error` des providers (ils passent par la table) et les
+    messages du provider mock (ex. « Reservoir empty — watering impossible », affiché tel quel).
+  - **Premier lanceur de tests du frontend** : `cd frontend && pnpm test` (`node:test` via `tsx`,
+    20 tests) ; les `*.test.ts` sont exclus de `tsconfig.app.json` et typechecked via
+    `tsconfig.node.json`.
+  - **Vérifié** : tests + typecheck (voir ci-dessous) et passe navigateur (Playwright) contre le
+    provider mock avec une erreur injectée par forme dans `SyncEvent`/`WateringEvent` : chaque forme
+    affiche son message + conseil, l'inconnue « Erreur inattendue. », « Détails techniques » déplie
+    puis replie le brut exact, « Derniers arrosages » affiche le conseil `watering`, et le toast d'un
+    arrosage échoué sur `MOCK-POT-DECLINE` reste lisible. Base de dev restaurée ensuite.
+    Observation non liée : un premier clic « Arroser maintenant » sur la page détail d'un pot mock
+    avec une session live active est resté sur « Arrosage… » sans réponse (aucune ligne écrite) ;
+    non reproduit après redémarrage du backend, non investigué. **Pas encore déployé.**
+
 ## Repo structure
 
 ```text
@@ -2233,6 +2275,7 @@ Dockerfile, docker-entrypoint.sh, docker-compose.prod.yml, docker-compose.test.y
   quotes, no tabs (custom config in `biome.json`, different from Biome's defaults).
 - **Git** initialized at the root, commits with no Co-Authored-By (global rule).
 - `pnpm` workspace (`pnpm-workspace.yaml`): `backend`, `frontend`, `noble-bridge`.
+- **Tests**: `cd backend && pnpm test` and `cd frontend && pnpm test` (both `node:test` via `tsx`; the frontend runner exists since 2026-09-29 — `*.test.ts` files are excluded from `tsconfig.app.json` and typechecked through `tsconfig.node.json`).
 
 ## Gotchas already encountered (so as not to rediscover them)
 

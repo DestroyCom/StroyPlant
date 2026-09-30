@@ -188,8 +188,8 @@ prise).**
 **Demande de DestCom (2026-08-31)** : capture `docs/flowerpower_screenshot/20260831_ForBetterUI/
 errors_displayed_in_App.png` — la page Historique (et probablement d'autres endroits affichant
 `errorDetail`) montre des messages techniques bruts directement à l'utilisateur : "Unexpected
-token '<', "<!DOCTYPE "... is not valid JSON" (l'erreur Cloudflare 502 déjà documentée dans
-`CLAUDE.md`, gotcha "Cloudflare's origin timeout..."), "le-connection-abort-by-local", etc. — sous
+token '<', "<!DOCTYPE "... is not valid JSON" (l'erreur 502 du proxy déjà documentée dans
+`CLAUDE.md`, le gotcha sur le délai du proxy), "le-connection-abort-by-local", etc. — sous
 des titres génériques ("Échec de la synchronisation"/"Échec de la configuration"). DestCom :
 "à chaque fois qu'il doit afficher des erreurs il recrit de la merde".
 
@@ -198,7 +198,7 @@ tout endroit qui affiche `SyncEvent.errorDetail`/`WateringEvent.errorDetail` bru
 d'erreur tRPC brut — la page Historique en priorité (capture ci-dessus), mais probablement aussi
 les toasts d'erreur (`toast.error(..., { description: error.message })`, plusieurs composants) et
 la page de calibration Plant Dr. Approche à concevoir : une fonction de traduction
-erreur-technique → message humain FR (mapping sur des motifs connus : timeout, erreur Cloudflare,
+erreur-technique → message humain FR (mapping sur des motifs connus : timeout, erreur du proxy,
 `le-connection-abort-by-local`, `GATT_ERROR`, etc.), avec un repli explicite et honnête (pas un
 message inventé) pour un motif non reconnu — probablement le message technique conservé mais dans
 un second niveau (accordéon "détails techniques"), jamais comme titre principal.
@@ -231,7 +231,7 @@ conception visuelle de chaque sous-projet plutôt qu'ici.
   "Plante" + conseils sur la page détail"). `39e1fe05` lu sur 2 pots réels : constante 17,
   inexploitable — réservoir affiché en `% × 2,2 L` à la place.
 - [ ] Sous-projet 4 — Image plante/pot : brainstorming (avec décision d'infra) → spec → plan → implémentation
-- [ ] Sous-projet 5 — Affichage d'erreurs lisible : brainstorming → spec → plan → implémentation (indépendant, peut être avancé n'importe quand)
+- [x] Sous-projet 5 — Affichage d'erreurs lisible : spec `docs/superpowers/specs/2026-09-29-readable-errors-design.md`, plan `docs/superpowers/plans/2026-09-29-readable-errors.md`, entrée CLAUDE.md « Affichage d'erreurs lisible » (2026-09-29)
 
 D'autres idées pourront être ajoutées par DestCom au fil de l'eau — les intégrer ici comme nouvelle
 section datée plutôt que de les perdre dans la conversation.
