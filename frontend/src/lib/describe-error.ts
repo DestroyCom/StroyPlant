@@ -57,7 +57,7 @@ const RULES: Rule[] = [
 
 const CONTEXT_HINT: Record<ErrorContext, string> = {
   sync: 'Nouvelle tentative automatique au prochain cycle.',
-  watering: "L'arrosage n'a pas eu lieu — tu peux réessayer.",
+  watering: "L'arrosage n'a peut-être pas eu lieu — vérifie le pot avant de réessayer.",
   action: 'Réessaie dans un instant.',
 };
 

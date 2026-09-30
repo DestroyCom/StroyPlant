@@ -95,7 +95,7 @@ arrosage raté non :
   connexion les plus fréquents (`le-connection-abort-by-local` et la ligne `TIMEOUT: connect`/
   `operation timed out`/`br-connection-canceled`), en plus : "Si ça dure sur tous les appareils, le
   Bluetooth du serveur est probablement en cause." (exactement l'incident BlueZ du 2026-09-28).
-- `watering` : "L'arrosage n'a pas eu lieu — tu peux réessayer."
+- `watering` : "L'arrosage n'a peut-être pas eu lieu — vérifie le pot avant de réessayer."
 - `action` : "Réessaie dans un instant."
 - Motif proxy `<!doctype` : pas de `hint` séparé (son message contient déjà le conseil).
 - Motif inconnu : pas de `hint` (on ne sait pas quoi conseiller).

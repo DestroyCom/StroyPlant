@@ -26,7 +26,7 @@ describe('getErrorMessage', () => {
   it('passes the context through to the advice', () => {
     assert.equal(
       getErrorMessage(new Error('TIMEOUT: gatt (18000ms)'), 'watering'),
-      "L'appareil s'est connecté mais n'a pas transmis la liste de ses capteurs à temps. L'arrosage n'a pas eu lieu — tu peux réessayer.",
+      "L'appareil s'est connecté mais n'a pas transmis la liste de ses capteurs à temps. L'arrosage n'a peut-être pas eu lieu — vérifie le pot avant de réessayer.",
     );
   });
 });

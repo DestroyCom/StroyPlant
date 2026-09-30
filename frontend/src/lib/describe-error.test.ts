@@ -44,7 +44,10 @@ describe('describeError', () => {
 
   it('picks the hint from the context', () => {
     assert.equal(describeError('TIMEOUT: gatt (18000ms)', 'sync').hint, 'Nouvelle tentative automatique au prochain cycle.');
-    assert.equal(describeError('TIMEOUT: gatt (18000ms)', 'watering').hint, "L'arrosage n'a pas eu lieu — tu peux réessayer.");
+    assert.equal(
+      describeError('TIMEOUT: gatt (18000ms)', 'watering').hint,
+      "L'arrosage n'a peut-être pas eu lieu — vérifie le pot avant de réessayer.",
+    );
     assert.equal(describeError('TIMEOUT: gatt (18000ms)', 'action').hint, 'Réessaie dans un instant.');
   });
 
