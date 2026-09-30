@@ -194,7 +194,7 @@ export function useLiveMode(deviceId: string, _kind: DeviceKind, hours: number):
         onData(event) {
           if (event.type === 'ended') {
             if (event.reason === 'error') {
-              toast.error('Session live interrompue', { description: event.detail });
+              toast.error('Session live interrompue', { description: event.detail ? getErrorMessage(event.detail) : undefined });
               handleFailure();
             } else if (event.reason === 'timeout') {
               // Coupure automatique après 5min (limite serveur) — routine, pas un échec : on

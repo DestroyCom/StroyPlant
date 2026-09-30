@@ -2004,23 +2004,30 @@ production server:
     inventé.
   - **Conseil selon le contexte** (`sync` / `watering` / `action`) : une synchro ratée est retentée
     automatiquement, un arrosage raté non. Les deux motifs de connexion les plus fréquents ajoutent
-    « le Bluetooth du serveur est probablement en cause » (incident BlueZ du 2026-09-28). Choix du
-    contrôleur en cours d'exécution : une ligne d'historique de source `CONFIG_PUSH` utilise le
+    « le Bluetooth du serveur est probablement en cause » (incident BlueZ du 2026-09-28). Décision
+    prise pendant l'implémentation : une ligne d'historique de source `CONFIG_PUSH` utilise le
     contexte `action` (ni synchro ni arrosage).
   - **`components/error-detail.tsx`** (`<ErrorDetail raw context />`) utilisé dans `history.tsx` et
     dans « Derniers arrosages » de la page détail. **Toasts** : `getErrorMessage()` passe par
-    `describeError(raw, 'action')` ; motif reconnu → message + conseil (brut en `console.error`),
-    **motif inconnu → message gardé tel quel** (dans un toast c'est presque toujours un de nos
-    messages backend, déjà lisible). `plants.tsx` passe aussi par `getErrorMessage`.
+    `describeError(raw, context)` (`context` optionnel, défaut `action`, `watering` pour la mutation
+    `devices.water`) ; motif reconnu → message + conseil, **motif inconnu → message gardé tel quel**
+    (dans un toast c'est presque toujours un de nos messages backend, déjà lisible). La fonction est
+    pure (aucun `console.error` : elle est appelée pendant le rendu). `plants.tsx` passe aussi par
+    `getErrorMessage`. La revue finale a fermé les 3 derniers toasts qui affichaient encore du brut
+    (`runState.message` sur la page de calibration et dans `autonomous-watering-section.tsx`,
+    `event.detail` dans `use-live-mode.ts`).
   - **Messages backend traduits à la source** (`TRPCError` en français : « Appareil introuvable »,
-    « Fonction réservée au Parrot Pot », etc.). Hors périmètre, décision du contrôleur :
+    « Fonction réservée au Parrot Pot », etc.), y compris les messages utilisateur de
+    `calibrateWet` (capteur illisible, humidité sous le seuil sec, mesure trop élevée). Hors
+    périmètre, décision prise pendant l'implémentation :
     l'erreur interne anglaise `Device-side autonomous watering is Parrot Pot only`
     (`wateringConfigPush.ts`), les `throw new Error` des providers (ils passent par la table) et les
     messages du provider mock (ex. « Reservoir empty — watering impossible », affiché tel quel).
   - **Premier lanceur de tests du frontend** : `cd frontend && pnpm test` (`node:test` via `tsx`,
-    20 tests) ; les `*.test.ts` sont exclus de `tsconfig.app.json` et typechecked via
+    21 tests) ; les `*.test.ts` sont exclus de `tsconfig.app.json` et typechecked via
     `tsconfig.node.json`.
-  - **Vérifié** : tests + typecheck (voir ci-dessous) et passe navigateur (Playwright) contre le
+  - **Vérifié** : backend `pnpm exec tsc --noEmit` + `pnpm test` (219/219), frontend
+    `pnpm typecheck` + `pnpm test` (21/21), et passe navigateur (Playwright) contre le
     provider mock avec une erreur injectée par forme dans `SyncEvent`/`WateringEvent` : chaque forme
     affiche son message + conseil, l'inconnue « Erreur inattendue. », « Détails techniques » déplie
     puis replie le brut exact, « Derniers arrosages » affiche le conseil `watering`, et le toast d'un
@@ -2275,7 +2282,9 @@ Dockerfile, docker-entrypoint.sh, docker-compose.prod.yml, docker-compose.test.y
   quotes, no tabs (custom config in `biome.json`, different from Biome's defaults).
 - **Git** initialized at the root, commits with no Co-Authored-By (global rule).
 - `pnpm` workspace (`pnpm-workspace.yaml`): `backend`, `frontend`, `noble-bridge`.
-- **Tests**: `cd backend && pnpm test` and `cd frontend && pnpm test` (both `node:test` via `tsx`; the frontend runner exists since 2026-09-29 — `*.test.ts` files are excluded from `tsconfig.app.json` and typechecked through `tsconfig.node.json`).
+- **Tests**: `cd backend && pnpm test` and `cd frontend && pnpm test` (both `node:test` via `tsx`;
+  the frontend runner exists since 2026-09-29 — `*.test.ts` files are excluded from
+  `tsconfig.app.json` and typechecked through `tsconfig.node.json`).
 
 ## Gotchas already encountered (so as not to rediscover them)
 

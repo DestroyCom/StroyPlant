@@ -46,14 +46,14 @@ export const plantDrRouter = router({
   // Deliberately fire-and-poll, not fire-and-forget-forever (docs/STROYPLANT_SPEC.md section 7.1):
   // this used to run its 2 sequential connectionQueue-serialized BLE operations (read then write,
   // each with its own up-to-3-attempt/backoff/adapter-restart retry policy) inline and await the
-  // whole thing before responding. Root-caused from a real production failure (2026-08-29,
-  // Cloudflare 502 shown to the user as an unparseable-HTML "DOCTYPE" error even though the device
-  // had actually been calibrated correctly): the full sequence can exceed Cloudflare's origin
-  // timeout (~100s), which sits well under SWAG's own 240s `proxy_read_timeout` — so Cloudflare
-  // serves its own error page long before the backend would have responded. The outcome is now
-  // tracked in `plantDrCalibrationSession.ts` and exposed via `calibrationRunStatus` above (same
-  // module-singleton-plus-polled-status shape as `liveSession`/`discoverySession`) — never silently
-  // dropped, just no longer tied to one blocking HTTP round trip.
+  // whole thing before responding. Root-caused from a real production failure (2026-08-29, an
+  // edge-proxy 502 shown to the user as an unparseable-HTML "DOCTYPE" error even though the device
+  // had actually been calibrated correctly): the full sequence can exceed the edge proxy's origin
+  // timeout (~100s), which is shorter than the origin reverse proxy's read timeout (240s) — so the
+  // edge proxy serves its own error page long before the backend would have responded. The outcome
+  // is now tracked in `plantDrCalibrationSession.ts` and exposed via `calibrationRunStatus` above
+  // (same module-singleton-plus-polled-status shape as `liveSession`/`discoverySession`) — never
+  // silently dropped, just no longer tied to one blocking HTTP round trip.
   calibrateWet: protectedProcedure.input(z.object({ deviceId: z.string() })).mutation(async ({ ctx, input }) => {
     const device = await prisma.device.findUnique({ where: { id: input.deviceId }, include: { plantProfile: true } });
     if (!device) throw new TRPCError({ code: 'NOT_FOUND', message: 'Appareil introuvable' });
@@ -82,17 +82,17 @@ export const plantDrRouter = router({
           // soilMoisturePercent is independently best-effort since the 2026-09-01 fa07 outage
           // (docs/superpowers/specs/2026-09-01-parrot-fa07-independent-decode-fix.md) — a
           // malformed buffer on this one field must not silently proceed with `undefined`.
-          throw new Error('Soil moisture sensor is currently unreadable on this device — try again later');
+          throw new Error("Le capteur d'humidité du sol est illisible pour le moment sur cet appareil — réessaie plus tard");
         }
 
         if (wetVwcPercent <= dryVwcPercent) {
           throw new Error(
-            `Current soil moisture (${wetVwcPercent.toFixed(1)}%) isn't above the species' dry threshold (${dryVwcPercent}%) — water the plant first, then retry`,
+            `L'humidité actuelle du sol (${wetVwcPercent.toFixed(1)}%) n'est pas au-dessus du seuil sec de l'espèce (${dryVwcPercent}%) — arrose d'abord la plante, puis réessaie`,
           );
         }
         if (wetVwcPercent > MAX_PLAUSIBLE_WET_VWC_PERCENT) {
           throw new Error(
-            `Reading (${wetVwcPercent.toFixed(1)}%) is implausibly high for soil saturation — wait a few minutes after watering for the reading to settle, then retry.`,
+            `Mesure (${wetVwcPercent.toFixed(1)}%) anormalement élevée pour un sol saturé — attends quelques minutes après l'arrosage que la mesure se stabilise, puis réessaie.`,
           );
         }
 

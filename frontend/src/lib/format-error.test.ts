@@ -22,4 +22,11 @@ describe('getErrorMessage', () => {
   it('accepts a non-Error value', () => {
     assert.equal(getErrorMessage('plain string'), 'plain string');
   });
+
+  it('passes the context through to the advice', () => {
+    assert.equal(
+      getErrorMessage(new Error('TIMEOUT: gatt (18000ms)'), 'watering'),
+      "L'appareil s'est connecté mais n'a pas transmis la liste de ses capteurs à temps. L'arrosage n'a pas eu lieu — tu peux réessayer.",
+    );
+  });
 });

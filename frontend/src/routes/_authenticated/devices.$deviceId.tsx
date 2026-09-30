@@ -122,7 +122,7 @@ function DeviceDetailPage() {
         if (liveStatus !== 'live') retryLive();
       },
       onError: (error) => {
-        toast.error("Échec de l'arrosage", { description: getErrorMessage(error) });
+        toast.error("Échec de l'arrosage", { description: getErrorMessage(error, 'watering') });
       },
     }),
   );

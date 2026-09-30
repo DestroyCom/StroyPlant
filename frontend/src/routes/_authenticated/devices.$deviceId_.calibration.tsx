@@ -26,7 +26,7 @@ function CalibrationPage() {
   const dryVwcPercent = device.plantProfile?.soilMoistureMinPercent;
 
   // The mutation itself only confirms the calibration run was queued (see the backend's
-  // calibrateWet doc comment — its 2 sequential BLE operations can take longer than Cloudflare's
+  // calibrateWet doc comment — its 2 sequential BLE operations can take longer than the edge proxy's
   // origin timeout, so the result is no longer carried by the mutation's own HTTP response).
   // Actual completion is observed by polling calibrationRunStatus, same shape as
   // live-mode-section.tsx's precedent for discoverySession/liveSession status.
@@ -48,7 +48,7 @@ function CalibrationPage() {
         description: `Seuil sec ${runState.dryVwcPercent}% · seuil humide ${runState.wetVwcPercent.toFixed(1)}%`,
       });
     } else {
-      toast.error('Échec de la calibration', { description: runState.message });
+      toast.error('Échec de la calibration', { description: getErrorMessage(runState.message) });
     }
   }, [runState, queryClient, deviceId]);
 
