@@ -1998,9 +1998,9 @@ production server:
     les ~3900 `SyncEvent` existants sont traduits gratuitement, la déduplication de
     `persistSyncFailure` sur `errorDetail` brut n'est pas touchée).
   - **`frontend/src/lib/describe-error.ts`** (`describeError(raw, context)`, fonction pure) : table
-    ordonnée de 9 regex (première correspondance gagne) couvrant les **11 formes réelles** relevées en
-    production le 2026-09-29 (lecture seule), plus le cas proxy `<!DOCTYPE` (`PROXY_TIMEOUT_MESSAGE`
-    reste la seule source de ce texte). Motif inconnu → « Erreur inattendue. », jamais un message
+    ordonnée de 9 règles regex (dont le cas proxy `<!DOCTYPE`, `PROXY_TIMEOUT_MESSAGE` restant la seule
+    source de ce texte ; première correspondance gagne) couvrant les **11 formes réelles** relevées en
+    production le 2026-09-29 (lecture seule). Motif inconnu → « Erreur inattendue. », jamais un message
     inventé.
   - **Conseil selon le contexte** (`sync` / `watering` / `action`) : une synchro ratée est retentée
     automatiquement, un arrosage raté non. Les deux motifs de connexion les plus fréquents ajoutent
