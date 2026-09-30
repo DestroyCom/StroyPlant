@@ -153,7 +153,7 @@ function PlantsListPage() {
             <div className="flex max-h-96 flex-col gap-4 overflow-y-auto">
               {isFilterGroupsError ? (
                 <div className="flex flex-col items-start gap-2">
-                  <p className="text-sm text-destructive">Impossible de charger les filtres : {filterGroupsError.message}</p>
+                  <p className="text-sm text-destructive">Impossible de charger les filtres : {getErrorMessage(filterGroupsError)}</p>
                   <Button type="button" variant="outline" size="sm" onClick={() => refetchFilterGroups()}>
                     Réessayer
                   </Button>

@@ -7,6 +7,7 @@ import { AutoWateringSection } from '@/components/auto-watering-section';
 import { AutonomousWateringSection } from '@/components/autonomous-watering-section';
 import { DeviceKindIcon } from '@/components/device-kind-icon';
 import { EditDeviceDialog } from '@/components/edit-device-dialog';
+import { ErrorDetail } from '@/components/error-detail';
 import { HistoryChart, type HistoryReferenceLine } from '@/components/history-chart';
 import { PlantAdviceTab } from '@/components/plant-advice-tab';
 import { PlantProfileDetail } from '@/components/plant-profile-detail';
@@ -374,9 +375,7 @@ function DeviceDetailPage() {
                       </div>
                       <div className="pb-4.5 text-sm text-foreground">
                         {event.success ? 'Arrosage manuel déclenché' : "Échec de l'arrosage"} {formatRelativeTime(event.timestamp)}
-                        {!event.success && event.errorDetail && (
-                          <div className="mt-0.5 text-xs text-muted-foreground">{event.errorDetail}</div>
-                        )}
+                        {!event.success && event.errorDetail && <ErrorDetail raw={event.errorDetail} context="watering" />}
                       </div>
                     </div>
                   ))}
