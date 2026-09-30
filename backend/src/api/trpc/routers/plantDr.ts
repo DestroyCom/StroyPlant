@@ -19,8 +19,8 @@ export const plantDrRouter = router({
   // own calibration (docs/STROYPLANT_SPEC.md section 7.11), no local copy kept.
   getCalibration: protectedProcedure.input(z.object({ deviceId: z.string() })).query(async ({ ctx, input }) => {
     const device = await prisma.device.findUnique({ where: { id: input.deviceId } });
-    if (!device) throw new TRPCError({ code: 'NOT_FOUND', message: 'Device not found' });
-    if (device.kind !== 'PARROT_POT') throw new TRPCError({ code: 'BAD_REQUEST', message: 'Plant Dr is Parrot Pot only' });
+    if (!device) throw new TRPCError({ code: 'NOT_FOUND', message: 'Appareil introuvable' });
+    if (device.kind !== 'PARROT_POT') throw new TRPCError({ code: 'BAD_REQUEST', message: 'Fonction réservée au Parrot Pot' });
 
     try {
       return await ctx.connectionQueue.run(() => ctx.provider.readPlantDrCalibration(device.id));
@@ -56,19 +56,19 @@ export const plantDrRouter = router({
   // dropped, just no longer tied to one blocking HTTP round trip.
   calibrateWet: protectedProcedure.input(z.object({ deviceId: z.string() })).mutation(async ({ ctx, input }) => {
     const device = await prisma.device.findUnique({ where: { id: input.deviceId }, include: { plantProfile: true } });
-    if (!device) throw new TRPCError({ code: 'NOT_FOUND', message: 'Device not found' });
-    if (device.kind !== 'PARROT_POT') throw new TRPCError({ code: 'BAD_REQUEST', message: 'Plant Dr is Parrot Pot only' });
+    if (!device) throw new TRPCError({ code: 'NOT_FOUND', message: 'Appareil introuvable' });
+    if (device.kind !== 'PARROT_POT') throw new TRPCError({ code: 'BAD_REQUEST', message: 'Fonction réservée au Parrot Pot' });
 
     const dryVwcPercent = device.plantProfile?.soilMoistureMinPercent;
     if (dryVwcPercent == null) {
       throw new TRPCError({
         code: 'BAD_REQUEST',
-        message: 'Assign a species with a known soil moisture minimum before calibrating',
+        message: "Assigne d'abord une espèce dont l'humidité minimale est connue",
       });
     }
 
     if (isCalibrationRunning(input.deviceId)) {
-      throw new TRPCError({ code: 'CONFLICT', message: 'A calibration is already running for this device' });
+      throw new TRPCError({ code: 'CONFLICT', message: 'Une calibration est déjà en cours pour cet appareil' });
     }
 
     setCalibrationRunState(input.deviceId, { status: 'running', startedAt: Date.now() });

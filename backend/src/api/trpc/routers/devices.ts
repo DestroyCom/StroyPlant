@@ -52,7 +52,7 @@ export const devicesRouter = router({
 
   rename: protectedProcedure.input(z.object({ deviceId: z.string(), name: z.string().trim().min(1) })).mutation(async ({ input }) => {
     const device = await prisma.device.findUnique({ where: { id: input.deviceId } });
-    if (!device) throw new TRPCError({ code: 'NOT_FOUND', message: 'Device not found' });
+    if (!device) throw new TRPCError({ code: 'NOT_FOUND', message: 'Appareil introuvable' });
 
     const updated = await prisma.device.update({
       where: { id: input.deviceId },
@@ -115,7 +115,7 @@ export const devicesRouter = router({
     )
     .mutation(async ({ input }) => {
       const device = await prisma.device.findUnique({ where: { id: input.deviceId } });
-      if (!device) throw new TRPCError({ code: 'NOT_FOUND', message: 'Device not found' });
+      if (!device) throw new TRPCError({ code: 'NOT_FOUND', message: 'Appareil introuvable' });
 
       const data: Prisma.DeviceUpdateInput = {};
       if (input.name !== undefined) data.name = input.name;
@@ -136,7 +136,7 @@ export const devicesRouter = router({
 
   history: protectedProcedure.input(z.object({ deviceId: z.string(), hours: z.number().optional() })).query(async ({ input }) => {
     const device = await prisma.device.findUnique({ where: { id: input.deviceId } });
-    if (!device) throw new TRPCError({ code: 'NOT_FOUND', message: 'Device not found' });
+    if (!device) throw new TRPCError({ code: 'NOT_FOUND', message: 'Appareil introuvable' });
 
     const hours = input.hours ?? 24;
     const since = new Date(Date.now() - hours * 60 * 60 * 1000);
@@ -154,7 +154,7 @@ export const devicesRouter = router({
 
   wateringEvents: protectedProcedure.input(z.object({ deviceId: z.string() })).query(async ({ input }) => {
     const device = await prisma.device.findUnique({ where: { id: input.deviceId } });
-    if (!device) throw new TRPCError({ code: 'NOT_FOUND', message: 'Device not found' });
+    if (!device) throw new TRPCError({ code: 'NOT_FOUND', message: 'Appareil introuvable' });
 
     const events = await prisma.wateringEvent.findMany({
       where: { deviceId: device.id },
@@ -166,7 +166,7 @@ export const devicesRouter = router({
 
   water: protectedProcedure.input(z.object({ deviceId: z.string() })).mutation(async ({ ctx, input }) => {
     const device = await prisma.device.findUnique({ where: { id: input.deviceId } });
-    if (!device) throw new TRPCError({ code: 'NOT_FOUND', message: 'Device not found' });
+    if (!device) throw new TRPCError({ code: 'NOT_FOUND', message: 'Appareil introuvable' });
 
     // Chemin rapide : une session live est en cours sur ce device, on réutilise sa connexion GATT
     // déjà ouverte au lieu d'attendre la fin de la session (jusqu'à 5min) pour passer par
@@ -233,7 +233,7 @@ export const devicesRouter = router({
   // matching how devices.water already shares triggerWatering() with the auto-watering scheduler.
   sync: protectedProcedure.input(z.object({ deviceId: z.string() })).mutation(async ({ ctx, input }) => {
     const device = await prisma.device.findUnique({ where: { id: input.deviceId } });
-    if (!device) throw new TRPCError({ code: 'NOT_FOUND', message: 'Device not found' });
+    if (!device) throw new TRPCError({ code: 'NOT_FOUND', message: 'Appareil introuvable' });
 
     let reading: Awaited<ReturnType<typeof ctx.provider.readSensors>>;
     try {

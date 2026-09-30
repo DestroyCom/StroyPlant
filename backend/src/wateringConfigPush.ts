@@ -57,7 +57,7 @@ export async function runWateringConfigPush(deps: WateringConfigPushDeps, device
   let intent: 'enable' | 'disable' | 'none' = 'none';
   try {
     const device = await prisma.device.findUnique({ where: { id: deviceId }, include: { plantProfile: true, schedule: true } });
-    if (!device) throw new Error('Device not found');
+    if (!device) throw new Error('Appareil introuvable');
     if (device.kind !== 'PARROT_POT') throw new Error('Device-side autonomous watering is Parrot Pot only');
 
     const resolution = resolveWateringMode(device.schedule, device.plantProfile);

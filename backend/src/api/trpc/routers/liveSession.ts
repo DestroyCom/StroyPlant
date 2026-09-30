@@ -18,7 +18,7 @@ export const liveSessionRouter = router({
 
   start: protectedProcedure.input(z.object({ deviceId: z.string() })).mutation(async ({ ctx, input }) => {
     const device = await prisma.device.findUnique({ where: { id: input.deviceId } });
-    if (!device) throw new TRPCError({ code: 'NOT_FOUND', message: 'Device not found' });
+    if (!device) throw new TRPCError({ code: 'NOT_FOUND', message: 'Appareil introuvable' });
 
     try {
       startLiveSession(device.id, device.kind, ctx.provider, ctx.connectionQueue);
