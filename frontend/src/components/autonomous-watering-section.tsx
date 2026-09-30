@@ -71,7 +71,7 @@ export function AutonomousWateringSection({ deviceId, plantProfile, autonomousWa
   }, [schedule]);
 
   // The mutation only confirms the push was queued (same reasoning as calibrateWet — the BLE
-  // sequence can exceed Cloudflare's origin timeout). Actual completion is observed by polling
+  // sequence can exceed the edge proxy's origin timeout). Actual completion is observed by polling
   // pushRunStatus, same shape as the Plant Dr calibration page's precedent.
   const { data: runState } = useQuery({
     ...trpc.wateringConfig.pushRunStatus.queryOptions({ deviceId }),
@@ -90,7 +90,7 @@ export function AutonomousWateringSection({ deviceId, plantProfile, autonomousWa
       void queryClient.invalidateQueries({ queryKey: trpc.devices.list.queryKey() });
       toast.success(runState.enabled ? 'Arrosage autonome activé sur le pot' : 'Arrosage autonome désactivé sur le pot');
     } else {
-      toast.error('Échec de la configuration', { description: runState.message });
+      toast.error('Échec de la configuration', { description: getErrorMessage(runState.message) });
     }
   }, [runState, queryClient, deviceId]);
 

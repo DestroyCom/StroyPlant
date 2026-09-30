@@ -12,7 +12,7 @@ export const scheduleRouter = router({
   // which is what the "Arrosage automatique" section on the device detail page binds its form to.
   get: protectedProcedure.input(z.object({ deviceId: z.string() })).query(async ({ input }) => {
     const device = await prisma.device.findUnique({ where: { id: input.deviceId } });
-    if (!device) throw new TRPCError({ code: 'NOT_FOUND', message: 'Device not found' });
+    if (!device) throw new TRPCError({ code: 'NOT_FOUND', message: 'Appareil introuvable' });
 
     const schedule = await prisma.schedule.findUnique({ where: { deviceId: input.deviceId } });
     return resolveEffectiveSchedule(device, schedule);
@@ -41,7 +41,7 @@ export const scheduleRouter = router({
     .mutation(async ({ ctx, input }) => {
       const { deviceId, ...data } = input;
       const device = await prisma.device.findUnique({ where: { id: deviceId } });
-      if (!device) throw new TRPCError({ code: 'NOT_FOUND', message: 'Device not found' });
+      if (!device) throw new TRPCError({ code: 'NOT_FOUND', message: 'Appareil introuvable' });
 
       const existingSchedule = await prisma.schedule.findUnique({ where: { deviceId } });
       const wasActive = resolveEffectiveSchedule(device, existingSchedule).active;

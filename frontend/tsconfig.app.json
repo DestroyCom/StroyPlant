@@ -26,5 +26,6 @@
       "@stroyplant/backend/*": ["../backend/src/*"]
     }
   },
-  "include": ["src"]
+  "include": ["src"],
+  "exclude": ["src/**/*.test.ts"]
 }

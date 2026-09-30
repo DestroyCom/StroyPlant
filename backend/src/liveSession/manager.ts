@@ -60,6 +60,20 @@ export function getActiveLiveConnectionHandle(deviceId: string): LiveConnectionH
   return liveConnectionHandle;
 }
 
+// Un arrosage manuel est prioritaire sur le direct. Renvoie la connexion live si elle est déjà
+// prête pour CE device (chemin rapide de devices.water). Sinon, arrête toute session live en cours
+// — encore en train de se connecter, ou sur un autre appareil — avant que l'appelant ne passe par
+// connectionQueue : sans ça, l'arrosage se met en file DERRIÈRE la session entière et n'arrive
+// qu'à sa coupure (jusqu'à 5min), bien après l'abandon de la requête HTTP par le proxy — l'arrosage
+// réel partait alors des minutes plus tard, à l'insu de l'utilisateur, avec un risque de double
+// arrosage s'il recliquait entre-temps.
+export function claimLiveConnectionForWatering(deviceId: string): LiveConnectionHandle | null {
+  const handle = getActiveLiveConnectionHandle(deviceId);
+  if (handle) return handle;
+  if (activeSession) stopLiveSession(activeSession.deviceId);
+  return null;
+}
+
 // maxDurationMs defaults to the real 5min cutoff — overridable so a test can exercise the
 // auto-cutoff path without actually waiting 5 minutes (see Task 6 Step 3's verification script).
 export function startLiveSession(

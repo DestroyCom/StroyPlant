@@ -2,6 +2,7 @@ import { useQuery, useSuspenseQuery } from '@tanstack/react-query';
 import { createFileRoute } from '@tanstack/react-router';
 import { AlertTriangle, ChevronDown, Droplets } from 'lucide-react';
 import { useState } from 'react';
+import { ErrorDetail } from '@/components/error-detail';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { dayBucketLabel } from '@/lib/format';
 import { getErrorMessage } from '@/lib/format-error';
@@ -59,7 +60,14 @@ function HistoryRow({ entry }: { entry: HistoryEntry }) {
       </div>
       <div className="min-w-0 flex-1">
         <div className="text-sm text-foreground">{entryLabel(entry)}</div>
-        {failed && entry.errorDetail && <div className="mt-0.5 text-xs wrap-break-word text-muted-foreground">{entry.errorDetail}</div>}
+        {failed && entry.errorDetail && (
+          // A config push (CONFIG_PUSH) is neither auto-retried like a poll nor a watering —
+          // generic "réessaie" advice fits it best.
+          <ErrorDetail
+            raw={entry.errorDetail}
+            context={entry.type === 'WATERING' ? 'watering' : entry.triggerLabel === 'CONFIG_PUSH' ? 'action' : 'sync'}
+          />
+        )}
       </div>
       <div className="shrink-0 text-xs text-muted-foreground">
         {new Date(entry.timestamp).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}

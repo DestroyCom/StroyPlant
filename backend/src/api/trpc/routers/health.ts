@@ -39,12 +39,12 @@ export const healthRouter = router({
     .input(z.object({ deviceId: z.string(), plantProfileId: z.number().nullable() }))
     .mutation(async ({ ctx, input }) => {
       const device = await prisma.device.findUnique({ where: { id: input.deviceId } });
-      if (!device) throw new TRPCError({ code: 'NOT_FOUND', message: 'Device not found' });
+      if (!device) throw new TRPCError({ code: 'NOT_FOUND', message: 'Appareil introuvable' });
 
       let profile: { id: number; tags: number | null } | null = null;
       if (input.plantProfileId != null) {
         profile = await prisma.plantProfile.findUnique({ where: { id: input.plantProfileId }, select: { id: true, tags: true } });
-        if (!profile) throw new TRPCError({ code: 'NOT_FOUND', message: 'Plant profile not found' });
+        if (!profile) throw new TRPCError({ code: 'NOT_FOUND', message: 'Espèce introuvable' });
       }
 
       // Captured BEFORE the update below overwrites it — needed to tell "this species assignment
@@ -103,7 +103,7 @@ export const healthRouter = router({
 
   deviceHealth: protectedProcedure.input(z.object({ deviceId: z.string() })).query(async ({ input }) => {
     const device = await prisma.device.findUnique({ where: { id: input.deviceId }, include: { plantProfile: true } });
-    if (!device) throw new TRPCError({ code: 'NOT_FOUND', message: 'Device not found' });
+    if (!device) throw new TRPCError({ code: 'NOT_FOUND', message: 'Appareil introuvable' });
 
     const healthSettings = await getHealthSettings();
     const since = new Date(Date.now() - healthSettings.baselineWindowDays * 24 * 3600_000);
@@ -129,7 +129,7 @@ export const healthRouter = router({
       where: { id: input.deviceId },
       include: { plantProfile: true, schedule: true },
     });
-    if (!device) throw new TRPCError({ code: 'NOT_FOUND', message: 'Device not found' });
+    if (!device) throw new TRPCError({ code: 'NOT_FOUND', message: 'Appareil introuvable' });
 
     // Either the server-side scheduler (Batch 5) or the pot's own on-device algorithm will water it.
     const autoWateringActive = resolveEffectiveSchedule(device, device.schedule).active || device.autonomousWateringActive;

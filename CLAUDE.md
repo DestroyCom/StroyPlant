@@ -1824,6 +1824,22 @@ production server:
     `mol × 4659.293` + seuils 500/10000 **tirés de la décompilation de l'app officielle**
     (`Utility.convertMolToLux`, `BridgeGraphicView`, `DataKeeper`), pas devinés. La valeur DLI
     principale de la gauge est inchangée.
+  - **Correctif (2026-09-30) — arrosage pendant que le direct se connecte encore** : tant que la
+    connexion live n'est pas prête (les premières secondes après l'ouverture de la page, puisque le
+    direct démarre tout seul), `getActiveLiveConnectionHandle()` renvoie `null` et l'arrosage
+    passait par `connectionQueue` **derrière la session entière** — jusqu'à 5 min. Mesuré avec la
+    vraie queue et le vrai manager (demande à 0,5 s, arrosage exécuté seulement à la coupure de la
+    session). Sur du vrai matériel : la requête HTTP tombait sur le délai du proxy (~100 s), puis
+    l'arrosage réel partait des minutes plus tard, à l'insu de l'utilisateur, avec un risque de
+    double arrosage s'il recliquait. `devices.water` passe maintenant par
+    `claimLiveConnectionForWatering()` (`liveSession/manager.ts`) : connexion live prête pour ce
+    pot → chemin rapide ; sinon toute session live en cours (qui se connecte, ou sur un autre pot)
+    est arrêtée avant la file normale — l'arrosage manuel est prioritaire sur le direct. Couvert par
+    `backend/src/liveSession/manager.test.ts` (4 tests). Le scheduler CRON et le bouton MQTT
+    appellent toujours `triggerWatering()` directement et peuvent donc encore attendre derrière une
+    session live (pas de requête HTTP en jeu, jugé acceptable). Signalé au départ comme un blocage
+    sur le provider mock, qui ne s'est pas reproduit : l'environnement de ce test tournait en fait
+    en `noble-bridge` sans bridge.
   - **Risque du chemin rapide — CONFIRMÉ SUR HARDWARE RÉEL (2026-09-02)**, plus un risque ouvert :
     écrire sur le service `39e1f900` (déclenchement d'arrosage) pendant que des notifications sont
     actives sur `39e1fa00` (service capteurs) — deux services distincts sur la même connexion BlueZ
@@ -1986,6 +2002,55 @@ production server:
     provider mock (pot avec espèce, pot sans espèce, Xiaomi sans onglet). Les 2 corrections de
     revue finale (variante manuel/auto, litres) ne sont vérifiées que par typecheck/tests, pas
     revues visuellement. **Pas encore déployé.**
+
+- **Affichage d'erreurs lisible** ✅ (2026-09-29, branche `worktree-readable-errors`) — sous-projet 5
+  du `docs/superpowers/specs/2026-08-31-ui-overhaul-roadmap.md`, conçu dans
+  `docs/superpowers/specs/2026-09-29-readable-errors-design.md`, exécuté via
+  `docs/superpowers/plans/2026-09-29-readable-errors.md`. L'UI affichait des messages techniques bruts
+  (`le-connection-abort-by-local`, `TIMEOUT: gatt (18000ms)`…) sous des titres génériques.
+  - **3 décisions validées avec DestCom** : (1) le brut reste accessible, replié derrière un bouton
+    « Détails techniques » ; (2) niveau « cause + action » (ce qui s'est passé ET s'il faut agir) ;
+    (3) traduction côté frontend, à l'affichage — la base garde le brut inchangé (aucune migration,
+    les ~3900 `SyncEvent` existants sont traduits gratuitement, la déduplication de
+    `persistSyncFailure` sur `errorDetail` brut n'est pas touchée).
+  - **`frontend/src/lib/describe-error.ts`** (`describeError(raw, context)`, fonction pure) : table
+    ordonnée de 9 règles regex (dont le cas proxy `<!DOCTYPE`, `PROXY_TIMEOUT_MESSAGE` restant la seule
+    source de ce texte ; première correspondance gagne) couvrant les **11 formes réelles** relevées en
+    production le 2026-09-29 (lecture seule). Motif inconnu → « Erreur inattendue. », jamais un message
+    inventé.
+  - **Conseil selon le contexte** (`sync` / `watering` / `action`) : une synchro ratée est retentée
+    automatiquement, un arrosage raté non. Les deux motifs de connexion les plus fréquents ajoutent
+    « le Bluetooth du serveur est probablement en cause » (incident BlueZ du 2026-09-28). Décision
+    prise pendant l'implémentation : une ligne d'historique de source `CONFIG_PUSH` utilise le
+    contexte `action` (ni synchro ni arrosage).
+  - **`components/error-detail.tsx`** (`<ErrorDetail raw context />`) utilisé dans `history.tsx` et
+    dans « Derniers arrosages » de la page détail. **Toasts** : `getErrorMessage()` passe par
+    `describeError(raw, context)` (`context` optionnel, défaut `action`, `watering` pour la mutation
+    `devices.water`) ; motif reconnu → message + conseil, **motif inconnu → message gardé tel quel**
+    (dans un toast c'est presque toujours un de nos messages backend, déjà lisible). La fonction est
+    pure (aucun `console.error` : elle est appelée pendant le rendu). `plants.tsx` passe aussi par
+    `getErrorMessage`. La revue finale a fermé les 3 derniers toasts qui affichaient encore du brut
+    (`runState.message` sur la page de calibration et dans `autonomous-watering-section.tsx`,
+    `event.detail` dans `use-live-mode.ts`).
+  - **Messages backend traduits à la source** (`TRPCError` en français : « Appareil introuvable »,
+    « Fonction réservée au Parrot Pot », etc.), y compris les messages utilisateur de
+    `calibrateWet` (capteur illisible, humidité sous le seuil sec, mesure trop élevée). Hors
+    périmètre, décision prise pendant l'implémentation :
+    l'erreur interne anglaise `Device-side autonomous watering is Parrot Pot only`
+    (`wateringConfigPush.ts`), les `throw new Error` des providers (ils passent par la table) et les
+    messages du provider mock (ex. « Reservoir empty — watering impossible », affiché tel quel).
+  - **Premier lanceur de tests du frontend** : `cd frontend && pnpm test` (`node:test` via `tsx`,
+    21 tests) ; les `*.test.ts` sont exclus de `tsconfig.app.json` et typechecked via
+    `tsconfig.node.json`.
+  - **Vérifié** : backend `pnpm exec tsc --noEmit` + `pnpm test` (219/219), frontend
+    `pnpm typecheck` + `pnpm test` (21/21), et passe navigateur (Playwright) contre le
+    provider mock avec une erreur injectée par forme dans `SyncEvent`/`WateringEvent` : chaque forme
+    affiche son message + conseil, l'inconnue « Erreur inattendue. », « Détails techniques » déplie
+    puis replie le brut exact, « Derniers arrosages » affiche le conseil `watering`, et le toast d'un
+    arrosage échoué sur `MOCK-POT-DECLINE` reste lisible. Base de dev restaurée ensuite.
+    Observation non liée : un premier clic « Arroser maintenant » sur la page détail d'un pot mock
+    avec une session live active est resté sur « Arrosage… » sans réponse (aucune ligne écrite) ;
+    non reproduit après redémarrage du backend, non investigué. **Pas encore déployé.**
 
 ## Repo structure
 
@@ -2233,6 +2298,9 @@ Dockerfile, docker-entrypoint.sh, docker-compose.prod.yml, docker-compose.test.y
   quotes, no tabs (custom config in `biome.json`, different from Biome's defaults).
 - **Git** initialized at the root, commits with no Co-Authored-By (global rule).
 - `pnpm` workspace (`pnpm-workspace.yaml`): `backend`, `frontend`, `noble-bridge`.
+- **Tests**: `cd backend && pnpm test` and `cd frontend && pnpm test` (both `node:test` via `tsx`;
+  the frontend runner exists since 2026-09-29 — `*.test.ts` files are excluded from
+  `tsconfig.app.json` and typechecked through `tsconfig.node.json`).
 
 ## Gotchas already encountered (so as not to rediscover them)
 

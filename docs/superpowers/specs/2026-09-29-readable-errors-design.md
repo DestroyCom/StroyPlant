@@ -18,6 +18,12 @@ L'UI affiche des messages techniques bruts à l'utilisateur, sous des titres gé
    `frontend/src/lib/format-error.ts`'s `getErrorMessage()`, qui est aussi déjà le point de passage
    unique de tous les toasts d'erreur.
 
+> Note de revue finale : l'inventaire initial supposait que tous les toasts passaient déjà par
+> `getErrorMessage`. La revue finale a trouvé 3 sites qui affichaient encore du texte brut
+> (`runState.message` dans la page de calibration et dans `autonomous-watering-section.tsx`,
+> `event.detail` dans `use-live-mode.ts`), désormais couverts, ainsi que les messages utilisateur
+> anglais de `calibrateWet` (traduits à la source, §5).
+
 ### Inventaire réel (prod, 2026-09-29, lecture seule)
 
 `SyncEvent` : 3888 lignes, toutes avec `errorDetail`. `WateringEvent` : 3 échecs sur 71.
@@ -89,7 +95,7 @@ arrosage raté non :
   connexion les plus fréquents (`le-connection-abort-by-local` et la ligne `TIMEOUT: connect`/
   `operation timed out`/`br-connection-canceled`), en plus : "Si ça dure sur tous les appareils, le
   Bluetooth du serveur est probablement en cause." (exactement l'incident BlueZ du 2026-09-28).
-- `watering` : "L'arrosage n'a pas eu lieu — tu peux réessayer."
+- `watering` : "L'arrosage n'a peut-être pas eu lieu — vérifie le pot avant de réessayer."
 - `action` : "Réessaie dans un instant."
 - Motif proxy `<!doctype` : pas de `hint` séparé (son message contient déjà le conseil).
 - Motif inconnu : pas de `hint` (on ne sait pas quoi conseiller).
@@ -106,10 +112,12 @@ Remplace les 2 affichages bruts d'`errorDetail` :
 
 ### 3. `getErrorMessage()` (toasts, `format-error.ts`)
 
-Passe par `describeError(raw, 'action')`, avec une distinction volontaire :
+Passe par `describeError(raw, context)`, avec `context` en second paramètre optionnel (défaut
+`action` ; `watering` pour la mutation `devices.water`), et une distinction volontaire :
 
-- **motif reconnu** → le toast affiche `message` + `hint` ; le brut part dans `console.error`
-  (un toast ne se prête pas à un repliable) ;
+- **motif reconnu** → le toast affiche `message` + `hint` ; le brut n'est **pas** envoyé à
+  `console.error` (le formateur est pur : il est appelé pendant le rendu, un log y spammerait la
+  console à chaque re-render ; le brut reste dans l'erreur levée / l'onglet réseau) ;
 - **motif inconnu** → le message est gardé **tel quel** : dans un toast, un message non reconnu
   est presque toujours un de nos propres messages backend, déjà lisible (ex. "Un appareil avec
   cette adresse existe déjà") — le remplacer par "Erreur inattendue" serait une régression.

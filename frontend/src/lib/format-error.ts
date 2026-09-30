@@ -1,17 +1,16 @@
-// A slow BLE mutation can exceed an intermediate reverse-proxy's own timeout, which returns its
-// own HTML error page instead of the real backend response — the tRPC client then fails to
-// JSON.parse it, surfacing as a raw `Unexpected token '<', "<!DOCTYPE "... is not valid JSON`
-// SyntaxError. Detected by the literal `<!DOCTYPE` the browser always quotes back in that
-// SyntaxError, regardless of exact wording. Deliberately generic — no infrastructure detail here,
-// see the private ops notes for the real timeout chain this was found against.
-const PROXY_TIMEOUT_PATTERN = /<!doctype/i;
+import { describeError, type ErrorContext } from './describe-error';
 
-const PROXY_TIMEOUT_MESSAGE =
-  "Le serveur met trop de temps à répondre (délai dépassé au niveau du proxy). L'opération est peut-être quand même en cours ou déjà terminée côté appareil — vérifie avant de réessayer.";
-
-// Every mutation error display in this app funnels through this instead of a bare `error.message`,
-// so the proxy-timeout case above never shows raw HTML/JSON-parse noise to the user.
-export function getErrorMessage(error: unknown): string {
+// Every mutation/query error display in this app funnels through this instead of a bare
+// `error.message`. A known technical error (BLE failure, proxy HTML page) becomes the same clear
+// French text the history uses; anything else is shown unchanged, because in a toast an
+// unrecognized message is almost always one of our own backend messages, already readable (e.g.
+// "Un appareil avec cette adresse existe déjà") — replacing it with "Erreur inattendue" would be a
+// regression. Pure on purpose (no logging): it runs during render, and the raw text stays
+// available in the thrown error / network tab. `context` picks the advice (default `action`;
+// `watering` for the water mutation, whose failure is not retried automatically).
+export function getErrorMessage(error: unknown, context: ErrorContext = 'action'): string {
   const raw = error instanceof Error ? error.message : String(error);
-  return PROXY_TIMEOUT_PATTERN.test(raw) ? PROXY_TIMEOUT_MESSAGE : raw;
+  const described = describeError(raw, context);
+  if (!described.known) return raw;
+  return described.hint ? `${described.message} ${described.hint}` : described.message;
 }

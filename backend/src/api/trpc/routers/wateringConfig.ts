@@ -10,8 +10,8 @@ export const wateringConfigRouter = router({
   // plantDr.getCalibration.
   getConfig: protectedProcedure.input(z.object({ deviceId: z.string() })).query(async ({ ctx, input }) => {
     const device = await prisma.device.findUnique({ where: { id: input.deviceId } });
-    if (!device) throw new TRPCError({ code: 'NOT_FOUND', message: 'Device not found' });
-    if (device.kind !== 'PARROT_POT') throw new TRPCError({ code: 'BAD_REQUEST', message: 'Watering config is Parrot Pot only' });
+    if (!device) throw new TRPCError({ code: 'NOT_FOUND', message: 'Appareil introuvable' });
+    if (device.kind !== 'PARROT_POT') throw new TRPCError({ code: 'BAD_REQUEST', message: 'Fonction réservée au Parrot Pot' });
 
     try {
       return await ctx.connectionQueue.run(() => ctx.provider.readWateringConfig(device.id));
@@ -31,10 +31,10 @@ export const wateringConfigRouter = router({
   // of silently skipping, since the user just pressed a button and expects immediate feedback.
   push: protectedProcedure.input(z.object({ deviceId: z.string() })).mutation(async ({ ctx, input }) => {
     const device = await prisma.device.findUnique({ where: { id: input.deviceId } });
-    if (!device) throw new TRPCError({ code: 'NOT_FOUND', message: 'Device not found' });
-    if (device.kind !== 'PARROT_POT') throw new TRPCError({ code: 'BAD_REQUEST', message: 'Watering config is Parrot Pot only' });
+    if (!device) throw new TRPCError({ code: 'NOT_FOUND', message: 'Appareil introuvable' });
+    if (device.kind !== 'PARROT_POT') throw new TRPCError({ code: 'BAD_REQUEST', message: 'Fonction réservée au Parrot Pot' });
     if (isWateringConfigPushRunning(input.deviceId))
-      throw new TRPCError({ code: 'CONFLICT', message: 'A config push is already running for this device' });
+      throw new TRPCError({ code: 'CONFLICT', message: 'Un envoi de configuration est déjà en cours pour cet appareil' });
 
     void runWateringConfigPush({ provider: ctx.provider, connectionQueue: ctx.connectionQueue }, input.deviceId);
     return { status: 'started' as const };
